@@ -119,3 +119,36 @@ func TestFilterScopeValidationAllowsRepairingInvalidFiltersIndividually(t *testi
 		t.Fatalf("repaired draft remains invalid: %v", err)
 	}
 }
+
+func TestFilterScopeIntentPreservesWholeScopeAndExplicitVisualTargets(t *testing.T) {
+	for _, scope := range []string{"report", "page"} {
+		t.Run(scope, func(t *testing.T) {
+			lifecycle, revision, command, model := assignmentFilterCompatibilityFixture(t, false, false)
+			command.AssignField = nil
+			patch := &authoring.SetFilterScopePayload{FilterID: "finance_date", Scope: scope}
+			if scope == "page" {
+				patch.PageID = "overview"
+			}
+			if err := setCompatibleFilterScopeTargets(revision.Document, model, patch); err != nil {
+				t.Fatal(err)
+			}
+			if patch.Targets != nil {
+				t.Fatalf("whole %s scope became an explicit subset: %v", scope, patch.Targets)
+			}
+			command.SetFilterScope = patch
+			if err := validateFilterScopeCompatibility(lifecycle, revision, command, model); err != nil {
+				t.Fatal(err)
+			}
+			// Choosing one visual remains explicit, even on a page with only one chart.
+			if scope == "page" {
+				patch.Targets = []string{"monthly-component"}
+				if err := setCompatibleFilterScopeTargets(revision.Document, model, patch); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(patch.Targets, []string{"monthly-component"}) {
+					t.Fatalf("explicit visual scope widened: %v", patch.Targets)
+				}
+			}
+		})
+	}
+}

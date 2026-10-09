@@ -11,7 +11,7 @@ import (
 
 func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := credentialgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 8; got != want {
+	if got, want := len(contracts), 14; got != want {
 		t.Fatalf("Credential generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range contracts {
@@ -61,6 +61,31 @@ func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	}
 	if got, want := len(apiaggregate.GetAPIGenOperationContracts()), expectedAPIGenAggregateOperationCount; got != want {
 		t.Fatalf("aggregate generated operations = %d, want %d", got, want)
+	}
+}
+
+func TestCredentialRetirementContractsPreserveExactAuthorityAndAtomicAudit(t *testing.T) {
+	contracts := credentialgen.GetAPIGenOperationContracts()
+	for _, spec := range []struct{ read, retire, action, resolver, audit string }{
+		{"getCredentialVersionStatus", "retireCredentialVersion", "connection.manage", "connection", "credential.version.retired_local"},
+		{"getAgentCredentialVersionStatus", "retireAgentCredentialVersion", "platform.settings.update", "instance", "credential.agent_version.retired_local"},
+	} {
+		for _, operation := range []string{spec.read, spec.retire} {
+			contract, ok := contracts[operation]
+			if !ok || contract.Authz == nil || contract.Authz.Action != spec.action || contract.Authz.Resolver != spec.resolver {
+				t.Fatalf("%s lost exact credential retirement authority", operation)
+			}
+			if operation == spec.read {
+				if contract.Command != nil {
+					t.Fatalf("%s must remain a read", operation)
+				}
+				continue
+			}
+			command := contract.Command
+			if command == nil || command.Idempotency != "forbidden" || command.Audit.Guarantee != "transactional" || command.Audit.SuccessAction != spec.audit || command.Audit.Payload == nil || command.Audit.Payload.Schema != "CredentialVersionRetiredAuditPayload" {
+				t.Fatalf("%s lost its non-replayable atomic retirement audit", operation)
+			}
+		}
 	}
 }
 

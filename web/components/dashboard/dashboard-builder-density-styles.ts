@@ -5,7 +5,6 @@ import { css } from 'lit'
 export const dashboardBuilderDensityStyles = css`
   .toolbar { gap: 8px; padding: 6px 12px; }
   .toolbar-actions { gap: 4px; }
-  .arrange-toolbar { gap: 6px; }
   .title { font-size: var(--text-body-size-medium); line-height: 20px; }
   .meta { font-size: var(--text-body-size-small); line-height: 16px; margin-top: 0; }
   .toolbar button, .toolbar summary, .back { font-size: var(--text-body-size-small); }

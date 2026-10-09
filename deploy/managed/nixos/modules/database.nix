@@ -6,6 +6,18 @@
 }:
 let
   cfg = config.leapview.database;
+  fenceRoot = "/var/lib/leapview-recovery";
+  fence = pkgs.writeShellApplication {
+    name = "leapview-postgres-fence";
+    runtimeInputs = [ pkgs.python3 ];
+    text = ''
+      exec python3 ${./postgres_fence.py} \
+        --state ${fenceRoot} \
+        --data ${lib.escapeShellArg config.services.postgresql.dataDir} \
+        --control ${config.services.postgresql.package}/bin/pg_controldata \
+        --systemctl ${pkgs.systemd}/bin/systemctl "$@"
+    '';
+  };
 in
 {
   imports = [ ./common.nix ];
@@ -26,7 +38,12 @@ in
     systemd.services.postgresql = {
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
+      # A physical restore must never reactivate the original writer on reboot
+      # or during deploy-rs rollback. Only a separately reviewed operator action
+      # may remove this recovery fence after replacement is abandoned/fenced.
+      unitConfig.ConditionPathExists = "!${fenceRoot}/postgresql-fence.json";
     };
+    environment.systemPackages = [ fence ];
     services.postgresql = {
       enable = true;
       package = pkgs.postgresql_18;
@@ -79,6 +96,7 @@ in
     environment.etc."pgbackrest/conf.d/credentials.conf".source =
       "/var/lib/leapview-backup-secrets/pgbackrest.conf";
     systemd.tmpfiles.rules = [
+      "d ${fenceRoot} 0700 root root -"
       "d /var/lib/leapview-postgres-tls 0700 postgres postgres -"
       "d /var/lib/leapview-backup-secrets 0750 root pgbackrest -"
     ];

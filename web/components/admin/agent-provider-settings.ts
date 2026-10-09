@@ -108,6 +108,7 @@ export class AgentProviderSettings extends LitElement {
           ${(a.configurationRevision ?? 0) > 1 ? html`<button type="button" @click=${() => { this.restoreRevision = this.draftRevision - 1; this.token = ''; this.send('test') }}>Test previous configuration</button>` : ''}
         </div>
       </fieldset>
+      ${a.credentialVersionId ? html`<details><summary>Credential version</summary><p>${a.credentialVersionId}</p><p>Retained configuration revisions pin this exact version for recovery. Disabling the agent or replacing its key does not revoke the upstream key or retire its history.</p></details>` : ''}
       <p role="status" aria-live="polite">${this.message}</p>
     `
   }

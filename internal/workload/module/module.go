@@ -66,6 +66,12 @@ func Current(ctx context.Context) (Class, string, bool) {
 	return workload.Current(ctx)
 }
 
+// CurrentRequest exposes the complete active accounting identity to bounded
+// composition adapters that reuse an existing admission lease.
+func CurrentRequest(ctx context.Context) (Request, bool) {
+	return workload.CurrentRequest(ctx)
+}
+
 type Module struct {
 	controller *workload.Controller
 	stop       sync.Once

@@ -28,15 +28,16 @@ const (
 // coordinator resolves target bindings, policies, qualification, and the
 // authoritative base fence before persisting a DeliveryPlan.
 type DeliveryPlanIntent struct {
-	ProjectID               projectgraph.ResourceID
-	PrincipalID             string
-	SourceOwnerID           string
-	Environment             string
-	TargetID                string
-	Operation               deployment.DeliveryOperationKind
-	SourceDigest            string
-	SourceAttestationDigest string
-	PipelinePlan            *deployment.PipelinePlan
+	ProjectID                projectgraph.ResourceID
+	PrincipalID              string
+	SourceOwnerID            string
+	Environment              string
+	TargetID                 string
+	Operation                deployment.DeliveryOperationKind
+	SourceDigest             string
+	SourceAttestationDigest  string
+	FirstSourcePreparationID string
+	PipelinePlan             *deployment.PipelinePlan
 }
 
 func decodePlanIntent(project, environment, principalID string, body deploymentgen.DeliveryPlanRequest) (DeliveryPlanIntent, error) {
@@ -44,7 +45,18 @@ func decodePlanIntent(project, environment, principalID string, body deploymentg
 	if err != nil {
 		return DeliveryPlanIntent{}, fmt.Errorf("%w: project", deployment.ErrDeliveryInvalid)
 	}
-	return DeliveryPlanIntent{ProjectID: projectID, PrincipalID: principalID, SourceOwnerID: principalID, Environment: environment, TargetID: body.TargetId, Operation: deployment.DeliveryOperationKind(body.Operation), SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest}, nil
+	preparationID := ""
+	if body.FirstSourcePreparationId != nil {
+		preparationID = *body.FirstSourcePreparationId
+		operation := string(body.Operation)
+		if operation == "" {
+			operation = string(deployment.DeliveryOperationCodeChange)
+		}
+		if err := validateFirstSourcePreparationIntent(preparationID, operation, false); err != nil {
+			return DeliveryPlanIntent{}, err
+		}
+	}
+	return DeliveryPlanIntent{ProjectID: projectID, PrincipalID: principalID, SourceOwnerID: principalID, Environment: environment, TargetID: body.TargetId, Operation: deployment.DeliveryOperationKind(body.Operation), SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest, FirstSourcePreparationID: preparationID}, nil
 }
 
 func (m *Module) deliveryReadReady(w http.ResponseWriter, r *http.Request, project string) bool {
@@ -192,7 +204,7 @@ func (m *Module) CreateDeliveryPlan(w http.ResponseWriter, r *http.Request, proj
 	nativeRequest := NativeDeliveryPlanRequest{
 		ProjectID: intent.ProjectID, TargetID: intent.TargetID, Environment: intent.Environment,
 		PrincipalID: intent.PrincipalID, SourceOwnerID: intent.SourceOwnerID, Operation: string(operation), SourceDigest: intent.SourceDigest,
-		SourceAttestationDigest: intent.SourceAttestationDigest, IdempotencyKey: idempotencyKey, PipelinePlan: intent.PipelinePlan,
+		SourceAttestationDigest: intent.SourceAttestationDigest, FirstSourcePreparationID: intent.FirstSourcePreparationID, IdempotencyKey: idempotencyKey, PipelinePlan: intent.PipelinePlan,
 	}
 	if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {
 		m.writeDeliveryMutationError(w, r, err)

@@ -50,6 +50,9 @@ class RegistryContentTests(unittest.TestCase):
 
     def transport(self, args, **kwargs):
         self.commands.append((args, kwargs))
+        policy = candidate.read_json_file(args[2])
+        self.assertEqual(policy, {'default': [{'type': 'reject'}], 'transports': {
+            'docker': {args[7].removeprefix('docker://').split('@')[0]: [{'type': 'insecureAcceptAnything'}]}}})
         destination = args[-1].removeprefix('oci:').removesuffix(':candidate')
         shutil.copytree(self.root, destination)
         return subprocess.CompletedProcess(args, 0)
@@ -61,7 +64,8 @@ class RegistryContentTests(unittest.TestCase):
         with patch.object(registry.subprocess, 'run', side_effect=self.transport):
             result = self.bind()
         command, options = self.commands[0]
-        self.assertEqual(command[:6], ['skopeo', 'copy', '--all', '--preserve-digests', '--src-tls-verify=true', 'docker://' + self.image])
+        self.assertEqual(command[:2], ['skopeo', '--policy'])
+        self.assertEqual(command[3:8], ['copy', '--all', '--preserve-digests', '--src-tls-verify=true', 'docker://' + self.image])
         self.assertNotIn('shell', options)
         self.assertTrue(options['check'])
         self.assertEqual(options['timeout'], 300)

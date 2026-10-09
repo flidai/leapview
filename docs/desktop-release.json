@@ -35,18 +35,18 @@
     }
   ],
   "release": {
-    "version": "0.1.0-alpha.1",
-    "tag": "desktop-v0.1.0-alpha.1",
-    "notesUrl": "https://github.com/flidai/leapview/releases/tag/desktop-v0.1.0-alpha.1",
-    "evidenceUrl": "https://github.com/flidai/leapview/releases/tag/desktop-v0.1.0-alpha.1",
+    "version": "0.1.1-alpha.1",
+    "tag": "desktop-v0.1.1-alpha.1",
+    "notesUrl": "https://github.com/flidai/leapview/releases/tag/desktop-v0.1.1-alpha.1",
+    "evidenceUrl": "https://github.com/flidai/leapview/releases/tag/desktop-v0.1.1-alpha.1",
     "signingStatus": "unsigned",
     "artifacts": [
       {
         "platform": "darwin",
         "architecture": "arm64",
         "format": "dmg",
-        "fileName": "LeapView-Desktop-0.1.0-alpha.1-macos-arm64.dmg",
-        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.0-alpha.1/LeapView-Desktop-0.1.0-alpha.1-macos-arm64.dmg",
+        "fileName": "LeapView-Desktop-0.1.1-alpha.1-macos-arm64.dmg",
+        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.1-alpha.1/LeapView-Desktop-0.1.1-alpha.1-macos-arm64.dmg",
         "signature": {
           "type": "unsigned",
           "identity": "Unsigned early preview"
@@ -56,8 +56,8 @@
         "platform": "darwin",
         "architecture": "x64",
         "format": "dmg",
-        "fileName": "LeapView-Desktop-0.1.0-alpha.1-macos-x64.dmg",
-        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.0-alpha.1/LeapView-Desktop-0.1.0-alpha.1-macos-x64.dmg",
+        "fileName": "LeapView-Desktop-0.1.1-alpha.1-macos-x64.dmg",
+        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.1-alpha.1/LeapView-Desktop-0.1.1-alpha.1-macos-x64.dmg",
         "signature": {
           "type": "unsigned",
           "identity": "Unsigned early preview"
@@ -67,8 +67,8 @@
         "platform": "win32",
         "architecture": "x64",
         "format": "exe",
-        "fileName": "LeapView-Desktop-0.1.0-alpha.1-windows-x64.exe",
-        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.0-alpha.1/LeapView-Desktop-0.1.0-alpha.1-windows-x64.exe",
+        "fileName": "LeapView-Desktop-0.1.1-alpha.1-windows-x64.exe",
+        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.1-alpha.1/LeapView-Desktop-0.1.1-alpha.1-windows-x64.exe",
         "signature": {
           "type": "unsigned",
           "identity": "Unsigned early preview"
@@ -78,8 +78,8 @@
         "platform": "linux",
         "architecture": "x64",
         "format": "deb",
-        "fileName": "LeapView-Desktop-0.1.0-alpha.1-linux-x64.deb",
-        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.0-alpha.1/LeapView-Desktop-0.1.0-alpha.1-linux-x64.deb",
+        "fileName": "LeapView-Desktop-0.1.1-alpha.1-linux-x64.deb",
+        "downloadUrl": "https://github.com/flidai/leapview/releases/download/desktop-v0.1.1-alpha.1/LeapView-Desktop-0.1.1-alpha.1-linux-x64.deb",
         "signature": {
           "type": "unsigned",
           "identity": "Unsigned early preview"

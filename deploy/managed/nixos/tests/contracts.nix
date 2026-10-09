@@ -47,7 +47,26 @@ let
     (hosts.example-app.extendModules {
       modules = [ ({ lib, ... }: { leapview.operatorCIDRs = lib.mkForce [ "2001:db8::42/128" ]; }) ];
     }).config;
+  uefiApp =
+    (hosts.example-app.extendModules {
+      modules = [ { leapview.bootMode = "uefi"; } ];
+    }).config;
+  uefiDatabase =
+    (hosts.example-database.extendModules {
+      modules = [ { leapview.bootMode = "uefi"; } ];
+    }).config;
   checks = [
+    (app.leapview.bootMode == "bios")
+    (app.disko.devices.disk.system.content.partitions.boot.type == "EF02")
+    (!app.boot.loader.grub.efiSupport)
+    (uefiApp.disko.devices.disk.system.content.partitions.boot.type == "EF00")
+    (uefiApp.fileSystems."/boot".fsType == "vfat")
+    (uefiApp.boot.loader.grub.devices == [ "nodev" ])
+    uefiApp.boot.loader.grub.efiSupport
+    uefiApp.boot.loader.grub.efiInstallAsRemovable
+    (!uefiApp.boot.loader.efi.canTouchEfiVariables)
+    uefiDatabase.boot.loader.grub.efiSupport
+    (uefiDatabase.fileSystems."/boot".fsType == "vfat")
     (!(builtins.all (item: item.assertion) noOperator.assertions))
     rejectedOperatorCIDRs
     (builtins.all (item: item.assertion) validIPv6Operator.assertions)
@@ -74,6 +93,10 @@ let
     (app.virtualisation.oci-containers.containers == { })
     (db.services.postgresql.package.psqlSchema == "18")
     (builtins.elem "network-online.target" db.systemd.services.postgresql.after)
+    (
+      db.systemd.services.postgresql.unitConfig.ConditionPathExists
+      == "!/var/lib/leapview-recovery/postgresql-fence.json"
+    )
     (db.services.postgresql.settings.listen_addresses == "127.0.0.1,10.42.0.20")
     db.services.postgresql.settings.ssl
     (db.services.postgresql.settings.archive_mode == "on")

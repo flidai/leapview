@@ -31,11 +31,10 @@ export const visualizationHostStyles = css`
     padding: var(--base-size-12) var(--base-size-16);
     overflow: hidden;
     background: var(--lv-chart-surface);
-    container-type: inline-size;
+    container-type: size;
   }
   :host(:not([slot='focus-visual'])) .lv-kpi-card[data-mode='compact'][data-layout='wide'] {
     align-content: start;
-    padding-block-start: var(--base-size-32);
   }
   .lv-visualization-label {
     overflow: hidden;
@@ -50,7 +49,7 @@ export const visualizationHostStyles = css`
     display: block;
     overflow: hidden;
     color: var(--lv-fg-default);
-    font-size: clamp(var(--text-title-size-small), 10cqi, var(--text-display-size));
+    font-size: clamp(var(--text-title-size-small), min(10cqi, 30cqb), var(--text-display-size));
     font-weight: var(--base-text-weight-semibold);
     line-height: 1.1;
     text-overflow: ellipsis;

@@ -50,17 +50,18 @@ type publicDashboardRouteDependencies struct {
 }
 
 type authenticatedRouteDependencies struct {
-	access             *accessmodule.Module
-	apiProtocol        *apiprotocol.Protocol
-	projectBrowser     *projecthttp.BrowserHandler
-	agent              *agentmodule.Module
-	admin              *adminmodule.Module
-	dashboard          *dashboardmodule.Module
-	runtimeHost        *runtimehostmodule.Module
-	pageStreams        *uitransport.PageStream
-	rateLimits         apihttpmiddleware.RateLimitConfig
-	candidates         candidateRouteDependencies
-	developmentSession *developmentsessionmodule.Handler
+	firstSourcePreparation *firstSourcePreparationBrowserRoutes
+	access                 *accessmodule.Module
+	apiProtocol            *apiprotocol.Protocol
+	projectBrowser         *projecthttp.BrowserHandler
+	agent                  *agentmodule.Module
+	admin                  *adminmodule.Module
+	dashboard              *dashboardmodule.Module
+	runtimeHost            *runtimehostmodule.Module
+	pageStreams            *uitransport.PageStream
+	rateLimits             apihttpmiddleware.RateLimitConfig
+	candidates             candidateRouteDependencies
+	developmentSession     *developmentsessionmodule.Handler
 }
 
 type apiRouteDependencies struct {
@@ -153,6 +154,7 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 	mux.Group(func(r chi.Router) {
 		r.Use(apihttpmiddleware.PrivateResponse)
 		r.Use(csrf)
+		mountFirstSourceCredentialPreparationRoutes(r, dependencies.firstSourcePreparation, dependencies.access.Authenticate, dependencies.apiProtocol)
 		r.With(dependencies.rateLimits.Updates()).Get("/updates", dependencies.pageStreams.ServeHTTP)
 		if dependencies.projectBrowser != nil {
 			dependencies.projectBrowser.MountAuthenticated(r)

@@ -3,7 +3,7 @@ import { chatPageBrowserFixture, openDashboardTestVisual } from './chat-page-bro
 
 const fixture = chatPageBrowserFixture()
 
-test('shrinking chat switches visual panels without creating an empty dashboard', async () => {
+test('visual panels close explicitly without redundant expand or visual-count controls', async () => {
  const page = await fixture.browser.newPage({viewport:{width:1400,height:900}})
  try {
   let creates = 0
@@ -13,7 +13,10 @@ test('shrinking chat switches visual panels without creating an empty dashboard'
   const chat = page.locator('lv-chat-page')
   await page.getByRole('button',{name:'Close add to dashboard',exact:true}).click()
   expect(await chat.locator('lv-chat-visual-panel').count()).toBe(1)
-  await page.getByRole('button',{name:'Shrink chat',exact:true}).click()
+  expect(await page.getByRole('button',{name:'Shrink chat',exact:true}).count()).toBe(0)
+  expect(await page.getByRole('button',{name:/^Visuals \(/}).count()).toBe(0)
+  await page.getByRole('button',{name:'Close visual details',exact:true}).click()
+  await chat.evaluate(async(e:any)=>{await e.openDashboardPreview()})
   expect(await chat.locator('lv-chat-visual-panel').count()).toBe(0)
   expect(await page.getByRole('region',{name:'Dashboard preview'}).isVisible()).toBe(true)
   expect(creates).toBe(0)

@@ -194,8 +194,8 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		return ui.AdminAgentData{}, err
 	}
 	data := ui.AdminAgentData{
-		Configured: details.Configured,
-		BaseURL:    details.BaseURL, APIMode: details.APIMode, ConfigurationRevision: details.ConfigurationRevision, AdminManaged: details.AdminManaged, CredentialConfigured: details.CredentialConfigured, ConfigurationAvailable: details.ConfigurationAvailable,
+		Configured:          details.Configured,
+		CredentialVersionID: details.CredentialVersionID, BaseURL: details.BaseURL, APIMode: details.APIMode, ConfigurationRevision: details.ConfigurationRevision, AdminManaged: details.AdminManaged, CredentialConfigured: details.CredentialConfigured, ConfigurationAvailable: details.ConfigurationAvailable,
 		Enabled:         details.Enabled,
 		Status:          details.Status,
 		StatusDetail:    details.StatusDetail,

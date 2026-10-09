@@ -62,13 +62,67 @@ whose readiness has not yet been confirmed can also be recovered. Metadata reads
 and explicit retries recheck current authority. Password submissions are never
 automatically replayed.
 
-This browser path manages credentials for an existing connection and active
-project. It does not bootstrap the first production source password, change the
-connection's endpoint or user, or retire historical credential versions.
-The operator must already hold an exact `connection.manage` grant; the standard
-project administrator, editor and initial publisher roles do not include it.
-Provisioning that authority on a fresh production installation remains a
-separate onboarding requirement.
+This connection editor manages an existing active project. First publication
+uses the separate admitted-source page described below. Endpoint/user changes
+and historical version retirement are separate operations. The standard project
+administrator, editor and initial publisher roles do not include
+`connection.manage`; source credential authority must be explicitly provisioned.
+
+## First production source
+
+The first source can be published without a development credential or environment
+password. Claim the project, configure customer ownership and the private keyring,
+and nominate an independent release approver through Access administration. The
+source uploader, credential operator and publisher must be the same currently
+authorized user. Their reviewer must be a different authorized principal.
+
+Stop the application. Prepare a private JSON admission intent using the
+[`FirstSourceAdmissionIntent` contract](../internal/credential/first_source_admission.go).
+It names the real instance, project, environment, customer owner, operator,
+connection and new binding, and includes the current authorization-policy
+revision/digest. `version` is 1 and `expectedBindingRevision` is 0. The complete
+PostgreSQL endpoint includes its existing database user, TLS mode and certificate
+options. `credentialReference` names its logical project/environment/path/key;
+it contains no password. Use a fresh operation UUID and retain this exact file.
+
+Preview and apply against the same stopped instance and maintenance database:
+
+```sh
+leapview admin credentials admit-first-source --intent /private/first-source.json
+leapview admin credentials admit-first-source --intent /private/first-source.json --apply
+```
+
+The command holds the application home lock and the unpublished target fence.
+It checks the current owner, project claim, operator and policy, then atomically
+records the exact binding and narrowly scoped credential grant with audit.
+Replaying the identical applied intent returns its existing result. Conflicting
+intent, an existing binding or an already published target fails closed. Preview
+does not save a binding, grant or password.
+
+Restart production and sign in as the admitted operator. Open
+`/connections/{connection-id}/first-source`. The page shows the admitted endpoint
+and user. **Save draft**, select its returned version, then **Test draft**. The
+password clears immediately, is never returned in signals, and is never replayed
+automatically. The real probe checks the exact destination and current authority.
+
+Upload the intended source using the same user's authenticated normal delivery
+workflow. Enter its retained source digest, attestation digest and the delivery
+plan's idempotency key on the first-source page. **Prepare first publication**
+returns a preparation ID. Keep that ID and create the normal delivery plan with
+`firstSourcePreparationId` set to it and exactly those source identities/key.
+Build and publish that plan, request approval and have the independent reviewer
+approve it. Neither saving, testing, preparing nor building activates a credential.
+The approved worker commits the normal publication and credential journals
+together, installs the exact runtime, and opens admission only after completion.
+
+A lost browser response can be inspected with **Recover preparation** using the
+same ID. Before commit, **Cancel preparation** drains work and records cancellation;
+the consumed validation receipt remains consumed. Test again before preparing a
+new operation. If a pending preparation needs fresh validation, test its same
+version and **Renew preparation after test**. This does not change its immutable
+source or publication intent. A failed or interrupted committed activation stays
+closed until startup or the normal activation retry installs that exact committed
+generation. After publication, use the existing connection credential editor.
 
 Agent Settings uses the same lifecycle behind **Test connection** and **Save and
 activate**. Testing the same pending proposal produces fresh validation for its
@@ -130,8 +184,48 @@ readiness before opening traffic. Database recovery cannot undo an upstream
 credential revocation. A component test or a current-key health check alone does
 not prove retained-backup decryption or installation-specific key custody.
 
-Version retirement must account for retained serving/configuration history,
-rollback references and resumable work, drain its consumers, and deny later use.
-Do not treat activation of a replacement, encryption rewrapping, or elapsed time
-as permission to delete a logical version or recovery key. Record any remaining
-retirement and restore qualification gaps in D12/D13 until verified.
+Local version retirement is described below. Full-profile restore and installation-specific
+key-custody evidence remain separately tracked in D12/D13.
+
+## Inspect and retire a local version
+
+Open the connection's **Credentials** panel, select the saved version and choose
+**Inspect version dependencies**. The result identifies retained candidate,
+release, activation and configuration references, including historical versions.
+A live validation receipt also prevents retirement until it expires. Metadata
+inspection requires current connection manage/use authority; it never returns the
+password, ciphertext, key material or provider secret references.
+
+**Retire version locally** is available after inspection finds no dependencies.
+The command checks current authority and dependencies again under the publication
+and version fences, drains provider work, records an immutable `retired_local`
+state with its audit, and restores current clients before resuming work. A racing
+validation, activation, release or configuration write cannot acquire a retired
+version. An interrupted or repeated request can be resolved by inspecting that
+same version; retirement is irreversible and saving a new draft is the way to
+create a usable version again.
+
+The API uses the same service:
+
+- `GET /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts/{version}/status`
+- `POST /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts/{version}/retire`, with an empty JSON object
+- `GET /api/v1/agent/credential-versions/{version}`
+- `POST /api/v1/agent/credential-versions/{version}/retire`, with an empty JSON object
+
+Agent operations require current instance settings-update authority. Agent
+settings and the configuration API expose the exact credential version ID without
+its key. Every retained configuration revision remains a dependency because
+resumable runs and configuration recovery select historical versions. Current
+and previous native publications likewise remain dependencies even after a
+replacement becomes active. The response bounds the dependency list at 100 and
+sets `moreDependencies` when additional references prevent retirement. These
+commands do not delete retained application history to make a version eligible.
+
+Local retirement does not revoke a credential at its upstream provider, delete
+encrypted envelopes, remove backups or release historical key-custody obligations.
+The independent database-backup test restores a pre-rewrap PostgreSQL dump into a
+separate database and reopens a separately retained key file: the replacement-only
+key fails, while the historical key decrypts the selected stored version. This
+proves that recovery path in the disposable fixture; an installation still needs
+its own custodian, backup identity, protected independent recovery copy and
+full-profile restore evidence.

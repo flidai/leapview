@@ -110,6 +110,16 @@
           modules = self.nixosModules;
           deployRs = deploy-rs;
         };
+        fresh-install-bios = import ./tests/fresh-install.nix {
+          inherit pkgs disko;
+          host = self.nixosConfigurations.example-app;
+          bootMode = "bios";
+        };
+        fresh-install-uefi = import ./tests/fresh-install.nix {
+          inherit pkgs disko;
+          host = self.nixosConfigurations.example-app;
+          bootMode = "uefi";
+        };
       };
       formatter.${system} = pkgs.nixfmt;
       devShells.${system}.default = pkgs.mkShell {

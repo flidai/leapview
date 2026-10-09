@@ -22,6 +22,7 @@ import (
 )
 
 type credentialLifecycleConfig struct {
+	FirstSourceBuild                   *firstSourceNativeBuild
 	Services                           *credentialmodule.Services
 	Pool                               *pgxpool.Pool
 	Graph                              *postgresauthority.PostgresAuthorityGraph
@@ -120,7 +121,21 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 	if err = c.CandidateBindings.ConfigureLocalCredentials(source.LocalCredentialPin, c.Analytics); err != nil {
 		return nil, err
 	}
-	if err = lifecycle.configure(source, source, c.TargetID); err != nil {
+	var sourceAuthority credentialmodule.ActivationAuthority = source
+	if c.FirstSourceBuild != nil {
+		sourceAuthority = &firstSourceBuildActivation{ActivationAuthority: source, build: c.FirstSourceBuild}
+		lifecycle.firstPublication = &firstSourcePublication{
+			source: source, build: c.FirstSourceBuild, activation: lifecycle.activationService,
+			repository: func(row credentialmodule.ActivationRequestRecord, authorize credentialmodule.ActivationCommitAuthorizer) (*deploymentpostgres.Repository, error) {
+				return appdeploymentpostgres.NewFirstSourcePublicationRepository(c.Pool, appdeploymentpostgres.Authorities{Access: c.Graph.AccessAudit, Events: c.Graph.Events, Lineage: lineage}, c.Services.ActivationRepository(), row, authorize)
+			},
+		}
+		sourceAuthority = &firstSourcePublicationAuthority{ActivationAuthority: sourceAuthority, publication: lifecycle.firstPublication}
+	}
+	if err = lifecycle.configure(sourceAuthority, source, c.TargetID); err != nil {
+		return nil, err
+	}
+	if err = lifecycle.coordinator.ConfigureRetirement(&credentialVersionRetirement{config: c}); err != nil {
 		return nil, err
 	}
 	return lifecycle, nil

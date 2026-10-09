@@ -121,8 +121,10 @@ landed in [PR #803](https://github.com/flidai/leapview/pull/803), merge
 Reuse that exact historical closeout; automatic site activation remains deferred.
 It is not a current live-health claim or acceptance of a Nix site replacement.
 
-The deployment proposal removed by
-[PR #922](https://github.com/flidai/leapview/pull/922) remains under independent
-decision review. [PR #921](https://github.com/flidai/leapview/pull/921) is
-reference-only. This runbook records operational handover requirements and does
-not reconstruct that proposal or accept its deployment/credential contract.
+On 9 October 2026 the project owner accepted the bounded maintenance application
+update design: stop the old version, start and verify its replacement, then
+reopen service. See the [decision record](managed/decision-reconciliation-20261009.md).
+The deployment proposal removed by [PR #922](https://github.com/flidai/leapview/pull/922)
+is not reinstated; [PR #921](https://github.com/flidai/leapview/pull/921) remains
+reference-only. Owner acceptance does not replace independent implementation
+review or any profile qualification, observation and retirement evidence above.

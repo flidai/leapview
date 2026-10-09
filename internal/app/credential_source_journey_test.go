@@ -38,9 +38,14 @@ type sourceCredentialHTTPJourney struct {
 	source         sourceCredentialUpstream
 	snapshot       projectdevloop.Snapshot
 	control        *postgrestest.Database
+	production     bool
 }
 
 func newSourceCredentialHTTPJourney(t *testing.T) *sourceCredentialHTTPJourney {
+	return newSourceCredentialHTTPJourneyProfile(t, false)
+}
+
+func newSourceCredentialHTTPJourneyProfile(t *testing.T, production bool) *sourceCredentialHTTPJourney {
 	t.Helper()
 	h := postgrestest.StartTLS(t)
 	roles := provisionPostgresOnboardingRoles(t, h)
@@ -51,18 +56,25 @@ func newSourceCredentialHTTPJourney(t *testing.T) *sourceCredentialHTTPJourney {
 	grantPostgresOnboardingDatabases(t, h, control, catalog, roles)
 	extensions := extensionfixture.New(t, "ducklake", "postgres")
 	cfg := postgresOnboardingConfig(t, h, control, catalog, roles, extensions)
-	cfg.DevelopmentCredentialVariables = sourceJourneyCredentialVariable
-	cfg.RequireActiveDeployment = true
-	cfg.LocalCheckoutID = "checkout:credential-journey"
-	cfg.LocalOwnerID = "runtime:credential-journey"
-	cfg.DevelopmentProfileName = "credential-journey"
-	cfg.DevelopmentGraphDigest = snapshot.ConnectionCatalogDigest
-	cfg.DevelopmentProfileDigest = source.profileDigest(t, cfg.DevelopmentProfileName)
-	credentialJSON, err := json.Marshal(map[string]string{"password": source.password})
-	if err != nil {
-		t.Fatal(err)
+	if production {
+		cfg.LocalAuth = true
+		cfg.APITokenOnlyAuth = false
 	}
-	t.Setenv(sourceJourneyCredentialVariable, string(credentialJSON))
+	if !production {
+		cfg.DevelopmentCredentialVariables = sourceJourneyCredentialVariable
+		cfg.RequireActiveDeployment = true
+		cfg.LocalCheckoutID = "checkout:credential-journey"
+		cfg.LocalOwnerID = "runtime:credential-journey"
+		cfg.DevelopmentProfileName = "credential-journey"
+		cfg.DevelopmentGraphDigest = snapshot.ConnectionCatalogDigest
+		cfg.DevelopmentProfileDigest = source.profileDigest(t, cfg.DevelopmentProfileName)
+		credentialJSON, err := json.Marshal(map[string]string{"password": source.password})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(sourceJourneyCredentialVariable, string(credentialJSON))
+	}
+	cfg.RequireActiveDeployment = true
 	operations := adminpostgres.New(adminpostgres.Dependencies{LoadConfig: func() (config.Config, error) { return cfg, nil }})
 	var output bytes.Buffer
 	if err := operations.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &output); err != nil {
@@ -118,7 +130,7 @@ func newSourceCredentialHTTPJourney(t *testing.T) *sourceCredentialHTTPJourney {
 		t.Fatal(err)
 	}
 	setupPostgresOnboardingCustomerCredentials(t, &cfg)
-	journey := &sourceCredentialHTTPJourney{config: cfg, graph: graph, initial: initial, instance: instance, source: source, snapshot: snapshot, control: control}
+	journey := &sourceCredentialHTTPJourney{config: cfg, graph: graph, initial: initial, instance: instance, source: source, snapshot: snapshot, control: control, production: production}
 	journey.start(t)
 	t.Cleanup(func() {
 		if journey.target != nil {
@@ -130,7 +142,11 @@ func newSourceCredentialHTTPJourney(t *testing.T) *sourceCredentialHTTPJourney {
 
 func (f *sourceCredentialHTTPJourney) start(t *testing.T) {
 	t.Helper()
-	target, err := BuildDevelopment(t.Context(), f.config)
+	build := BuildDevelopment
+	if f.production {
+		build = BuildProduction
+	}
+	target, err := build(t.Context(), f.config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,4 +228,5 @@ func TestPostgresSourceCredentialHTTPJourney(t *testing.T) {
 	if f.querySource(t, token, "50") != productionSnapshot {
 		t.Fatal("production restart query lost the exact committed snapshot")
 	}
+	f.verifySourceCredentialRetirement(t, token, activated.VersionId, productionActivation.VersionId)
 }

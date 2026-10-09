@@ -69,11 +69,12 @@ func newActivationPublicationFixture(t *testing.T, candidateVersionMatches bool)
 }
 
 type activationPublicationFixtureOptions struct {
-	candidateVersionMatches bool
-	prepareCredential       bool
-	localPin                bool
-	extraLocalPin           bool
-	editInput               func(*GenerationAdmissionInput)
+	candidateVersionMatches  bool
+	prepareCredential        bool
+	localPin                 bool
+	extraLocalPin            bool
+	reserveCredentialRequest bool
+	editInput                func(*GenerationAdmissionInput)
 }
 
 func newActivationPublicationFixtureWithOptions(t *testing.T, options activationPublicationFixtureOptions) activationPublicationFixture {
@@ -215,9 +216,27 @@ func newActivationPublicationFixtureWithOptions(t *testing.T, options activation
 	if err != nil {
 		t.Fatal(err)
 	}
+	var requestRow credential.ActivationRequestRecord
+	requestAuthority := func(ctx context.Context, tx pgx.Tx) error {
+		return credentialPreparationTargetFence(delivery)(ctx, tx, preparation)
+	}
+	if options.reserveCredentialRequest {
+		requestRow, err = credentials.ReserveActivationRequestTx(t.Context(), prepareTx, receipt, credential.ActivationRequest{OperationID: operationID, VersionID: versionID, ReceiptID: receipt.ReceiptID, ExpectedBindingRevision: bindingRevision}, requestAuthority)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := credentials.PrepareActivationTx(t.Context(), prepareTx, preparation, credentialPreparationTargetFence(delivery)); err != nil {
 		_ = prepareTx.Rollback(context.Background())
 		t.Fatalf("prepare credential activation: %v", err)
+	}
+	if options.reserveCredentialRequest {
+		next := requestRow
+		next.State, next.PlanID, next.CandidateID, next.GenerationID, next.PublicationID = "prepared", input.Generation.PlanID, publication.CandidateID, publication.GenerationID, publication.PublicationID
+		requestRow, err = credentials.TransitionActivationRequestTx(t.Context(), prepareTx, requestRow, next, actorID, "", requestAuthority)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := prepareTx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
@@ -236,6 +255,13 @@ func newActivationPublicationFixtureWithOptions(t *testing.T, options activation
 	if err != nil {
 		_ = switchTx.Rollback(context.Background())
 		t.Fatalf("begin credential activation switching: %v", err)
+	}
+	if options.reserveCredentialRequest {
+		next := requestRow
+		next.State = "switching"
+		if _, err := credentials.TransitionActivationRequestTx(t.Context(), switchTx, requestRow, next, actorID, "", requestAuthority); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := switchTx.Commit(t.Context()); err != nil {
 		t.Fatal(err)

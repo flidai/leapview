@@ -20,6 +20,8 @@ type ConnectionCredentialCommand func(context.Context, string, string, string, p
 type ConnectionCredentialInput = projectsignals.ConnectionCredentialCommandSignal
 type ConnectionCredentialResult = projectsignals.ConnectionCredentialSignal
 type ConnectionCredentialDraft = projectsignals.ConnectionCredentialDraftSignal
+type CredentialVersionStatus = projectsignals.CredentialVersionStatusSignal
+type CredentialVersionDependency = projectsignals.CredentialVersionDependencySignal
 type ConnectionCredentialStatus = projectsignals.ConnectionAdministrationStatusSignal
 
 func (h *BrowserHandler) ConnectionCredentialQuery(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -57,7 +59,7 @@ func (h *BrowserHandler) connectionCredentialCommand(w stdhttp.ResponseWriter, r
 			fail("The credential command is invalid.")
 			return
 		}
-	} else if (command.Action != "list" && command.Action != "status") || command.Username != "" || command.Password != "" {
+	} else if (command.Action != "list" && command.Action != "status" && command.Action != "version_status") || command.Username != "" || command.Password != "" {
 		fail("The credential query is invalid.")
 		return
 	}

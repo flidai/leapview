@@ -50,6 +50,7 @@ type ActivationCoordinator struct {
 	serial         chan struct{}
 	drainTime      time.Duration
 	readyOperation atomic.Pointer[string]
+	retirement     RetirementAuthority
 }
 
 var _ ActivationService = (*ActivationCoordinator)(nil)
