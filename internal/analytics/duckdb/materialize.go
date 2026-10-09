@@ -133,7 +133,7 @@ func loadAdmittedExtensionStatement(admitted AdmittedExtension) string {
 	if admitted.Builtin {
 		// validateAdmittedExtension restricts this to the compiled registry;
 		// activate it separately in every session without loading a file.
-		return "LOAD " + admitted.Name
+		return "LOAD " + extensiondomain.ArtifactFilenameStem(admitted.Name)
 	}
 	return loadExtensionStatement(admitted.Path)
 }

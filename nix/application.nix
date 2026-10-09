@@ -94,7 +94,7 @@ pkgs.stdenv.mkDerivation {
     flags="-w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
       if dirty then "true" else "false"
     } -X ${buildInfo}.release=${if purpose == "compose" then "true" else "false"}"
-    # Use reviewed source-built DuckDB with patched, statically linked Lance.
+    # Use source-built DuckDB with patched, statically linked Lance and SQLite.
     # A link group retains dependency resolution without unsigned extension
     # loading or a new extension signing-key custody requirement.
     nativeLibraries=$(find ${duckdb.lib}/lib -maxdepth 1 -name '*.a' ! -name 'libdummy_static_extension_loader.a' -type f | LC_ALL=C sort)
@@ -105,6 +105,15 @@ pkgs.stdenv.mkDerivation {
     go build -tags="$tags" -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply
     go build -trimpath -buildvcs=false -o "$tools/bin/mapassets" ./internal/app/tools/mapassets
     runHook postBuild
+  '';
+  doCheck = true;
+  checkPhase = ''
+    runHook preCheck
+    # Test the same engine archives and compile-time registry as the shipped
+    # binaries, including independent-session readback and linked SQLite ID.
+    go test -count=1 -tags="$tags" ./internal/extension \
+      ./internal/deployment/extensionsupply ./internal/analytics/duckdbsession
+    runHook postCheck
   '';
   installPhase = ''
     mkdir -p "$out/share/leapview"

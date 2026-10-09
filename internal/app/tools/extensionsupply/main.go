@@ -1,7 +1,7 @@
 // Command extensionsupply builds LeapView's production DuckDB extension
 // supply. It is packaging tooling only: all network acquisition happens at
 // image build time. File artifacts retain exact-path official signature checks;
-// source-built Lance requires the closed compiled-input descriptor and actual
+// source-built extensions require the closed compiled-input descriptor and actual
 // static engine registration. The runtime consumes the manifest offline.
 package main
 
@@ -291,7 +291,7 @@ func prepareOne(ctx context.Context, installRoot, outputRoot, version, platform,
 		if err := duckdbsession.VerifyCompiledBuiltin(ctx, db, identity); err != nil {
 			return extensionsupply.Artifact{}, err
 		}
-		path := filepath.Join(outputRoot, name+"-"+identity.ExtensionVersion+"-"+platform+".duckdb_extension")
+		path := filepath.Join(outputRoot, extension.ArtifactFilenameStem(name)+"-"+identity.ExtensionVersion+"-"+platform+".duckdb_extension")
 		if err := copyPrivateFile(path, builtin.Bytes()); err != nil {
 			return extensionsupply.Artifact{}, err
 		}

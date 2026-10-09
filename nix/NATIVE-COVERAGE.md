@@ -145,7 +145,13 @@ Lance C++ wrapper at `350060612087e1138ffa1bbb11a535013558241a` statically linke
 compatible aws-smithy-types 1.4.9 and runtime-api 1.12.3 plus their schema/macro
 dependencies. ethnum 1.5.3 replaces 1.5.2 because the locked Rust compiler rejects
 the older conversion-error representation. These are ordinary dependency fixes;
-the remaining locked Linux runtime package versions are retained.
+the TLS/HTTP remediation also updates rustls 0.23.45, rustls-webpki 0.103.14,
+aws-lc-rs 1.18.0 / aws-lc-sys 0.44.0, h2 0.4.16 and quinn-proto 0.11.15.
+Both selected quick-xml versions retain their original archive identities and
+receive hash-verified source backports through the actual Cargo vendor input.
+See [the backport receipt and tests](quick-xml/README.md). The patched vendor
+derivation and its offline four-test parser smoke hook passed; this is source
+and parser evidence, not a completed FFI or engine build.
 
 Lance uses the hash-pinned official Rust 1.98.1 compiler/Cargo distributions
 already packaged by the locked Nixpkgs input. The default Nix source-built
@@ -157,7 +163,8 @@ dependency or admission checks.
 
 The application enables this implementation only with `leapview_static_lance`
 and the external static-library binding mode. A closed registry binds the
-engine revision, Lance revision, platform and exact Cargo-lock SHA256. Packaging
+engine revision, Lance revision, platform, exact Cargo-lock SHA256 and backport
+receipt SHA256. Packaging
 and runtime admission require the canonical descriptor and actual DuckDB
 `STATICALLY_LINKED` / `(BUILT-IN)` state before loading the fixed name. Ordinary
 builds cannot enable a builtin from manifest flags. The other extensions retain
@@ -165,7 +172,7 @@ their pinned official signed payloads and exact file loads; no signing key or
 unsigned loading mode is introduced.
 
 Both replacement supply NAR hashes were computed from the retained official
-sets with only Lance replaced by its canonical descriptor and the manifest
+sets with Lance and SQLite replaced by their canonical descriptors and the manifest
 updated. Production Go serialization independently byte-matches both resulting
 manifests and descriptors. That reconstruction establishes the exact desired
 bytes, not successful execution of a new engine or either architecture's build.
@@ -200,8 +207,11 @@ the database built 2026-10-09T06:32:32Z returns zero matches for that component.
 This scoped result covers the compiled SQLite smoke component, not the smoke
 binary's system dependencies or the LeapView output's complete native closure.
 
-The actual source-built DuckDB SQLite attach/write/reopen test, protected
-two-architecture qualification and replacement supply hashes remain pending.
-Existing Lance-only reconstructed supply hashes are not valid replacement
-SQLite supply hashes; no complete-coverage or application-admission claim is
-made by this source recipe or component scan.
+The actual source-built DuckDB SQLite attach/write/reopen test and protected
+two-architecture qualification remain pending. The current supply hashes were
+reconstructed with both replacements using the production Go descriptors and
+manifest serialization, after verifying every retained original artifact
+digest. The publisher and verifier use the canonical `sqlite_scanner` filename.
+These desired-byte hashes are not publisher execution evidence; no
+complete-coverage or application-admission claim is made by this source recipe,
+reconstruction or component scan.
