@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { gzipSync, brotliCompressSync, constants } from 'node:zlib'
 import { join } from 'node:path'
 import { ensureDashboardVisualizationsMounted } from './dashboard_visualization_readiness'
+import { collectBrowserHealth } from './movielens_performance'
 
 const routes = [
   { name: 'dense', path: '/dashboards/dashboard:visual-showcase/pages/overview' },
@@ -122,6 +123,15 @@ export async function runBrowserProfile() {
       const client = await page.context().newCDPSession(page)
       const pageErrors: string[] = []
       const streams = new Map<any, boolean>()
+      let tearingDown = false
+      const expectedTeardownAborts: string[] = []
+      const health = collectBrowserHealth(page, request => {
+        if (tearingDown && streams.has(request) && request.failure()?.errorText === 'net::ERR_ABORTED') {
+          expectedTeardownAborts.push(new URL(request.url()).pathname)
+          return true
+        }
+        return false
+      })
       const tiles: Array<{ visual: string, zoom: number, status: number }> = []
       page.on('pageerror', error => pageErrors.push(error.message))
       page.on('request', request => { if (new URL(request.url()).pathname === '/updates') streams.set(request, false) })
@@ -162,13 +172,20 @@ export async function runBrowserProfile() {
         const after = await metrics(client)
         const delivery = await page.evaluate(() => ({ navigation: performance.getEntriesByType('navigation').map(item => item.toJSON()),
           resources: performance.getEntriesByType('resource').map(item => item.toJSON()) }))
+        if (health.consoleErrors.length || health.failedNetworkResponses.length || pageErrors.length) {
+          throw new Error('browser delivery/correctness errors before teardown: ' + JSON.stringify({ health, pageErrors }))
+        }
         const teardownStart = performance.now()
+        tearingDown = true
         await page.goto('about:blank')
         for (let wait = 0; wait < 50 && [...streams.values()].some(closed => !closed); wait++) await new Promise(resolve => setTimeout(resolve, 100))
         if (!streams.size || [...streams.values()].some(closed => !closed)) throw new Error('owned browser SSE requests did not close on teardown')
-        if (pageErrors.length) throw new Error('browser correctness errors: ' + pageErrors.join('; '))
+        if (health.consoleErrors.length || health.failedNetworkResponses.length || pageErrors.length) {
+          throw new Error('browser delivery/correctness errors: ' + JSON.stringify({ health, pageErrors }))
+        }
         records.push({ route: route.path, name: route.name, html: payloadProfile(body), contentEncoding: response.headers()['content-encoding'] ?? null,
-          routeReadyMs, before, after, mounted, scrolling, tiles, delivery, teardown: { measuredMs: performance.now() - teardownStart, streams: streams.size, allClientRequestsClosed: true },
+          routeReadyMs, before, after, mounted, scrolling, tiles, delivery, health,
+          teardown: { measuredMs: performance.now() - teardownStart, streams: streams.size, expectedTeardownAborts, allClientRequestsClosed: true },
           trace: await trace(client, join(output, route.name + '-trace.json')) })
       } finally { await page.close() }
     }

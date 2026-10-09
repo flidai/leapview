@@ -71,6 +71,20 @@ class NativeFixtureAdmissionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'listening port'):
                     admit_server(source)
 
+    def test_same_port_on_a_different_loopback_address_does_not_admit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, receipt, path, data = self.fixture(Path(directory))
+            other = socket.socket()
+            other.bind(('127.0.0.2', 0))
+            other.listen()
+            self.addCleanup(other.close)
+            receipt['baseURL'] = 'http://127.0.0.1:' + str(other.getsockname()[1])
+            path.write_text(json.dumps(receipt))
+            with patch.dict(os.environ, {'LEAPVIEW_BASE_URL': receipt['baseURL'], 'LEAPVIEW_BROWSER_PROFILE_SERVER_RECEIPT': str(path)}), \
+                    patch('performance_browser_profile.subprocess.check_output', return_value=json.dumps({'product': 'leapview', 'revision': source['commit'], 'dirty': False})):
+                with self.assertRaisesRegex(ValueError, 'listening port'):
+                    admit_server(source)
+
 
 if __name__ == '__main__':
     unittest.main()

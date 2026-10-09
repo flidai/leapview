@@ -2,6 +2,7 @@
 """Three fresh instrumented route profiles of an admitted owned native fixture."""
 import json
 import os
+import socket
 from pathlib import Path
 import subprocess
 import sys
@@ -31,7 +32,7 @@ def admit_server(source):
     if digest(actual / 'exe') != binary['sha256'] or actual.joinpath('stat').read_text().rsplit(')', 1)[1].split()[19] != receipt['processStart']:
         raise ValueError('admitted native server process changed')
     url = urlparse(os.environ['LEAPVIEW_BASE_URL'])
-    if url.scheme != 'http' or url.hostname not in ('localhost', '127.0.0.1', '::1') or receipt['baseURL'] != os.environ['LEAPVIEW_BASE_URL']:
+    if url.scheme != 'http' or url.hostname not in ('127.0.0.1', '::1') or receipt['baseURL'] != os.environ['LEAPVIEW_BASE_URL']:
         raise ValueError('study requires the exact admitted local native fixture URL')
     inodes = set()
     for fd in actual.joinpath('fd').iterdir():
@@ -42,11 +43,22 @@ def admit_server(source):
         except FileNotFoundError:
             pass
     port = url.port or 80
+    # A literal loopback address avoids admitting one of two different servers
+    # sharing a port behind localhost's IPv4/IPv6 resolution order.
+    targets = {url.hostname}
     owns_port = False
     for protocol in ('tcp', 'tcp6'):
         for line in actual.joinpath('net', protocol).read_text().splitlines()[1:]:
             row = line.split()
-            if row[3] == '0A' and int(row[1].split(':')[1], 16) == port and row[9] in inodes:
+            address_hex, port_hex = row[1].split(':')
+            if protocol == 'tcp':
+                address = socket.inet_ntop(socket.AF_INET, bytes.fromhex(address_hex)[::-1])
+            else:
+                raw = bytes.fromhex(address_hex)
+                address = socket.inet_ntop(socket.AF_INET6, b''.join(raw[index:index + 4][::-1] for index in range(0, 16, 4)))
+            matches = address in targets or (protocol == 'tcp' and address == '0.0.0.0' and any(':' not in target for target in targets)) \
+                or (protocol == 'tcp6' and address == '::' and any(':' in target for target in targets))
+            if row[3] == '0A' and matches and int(port_hex, 16) == port and row[9] in inodes:
                 owns_port = True
     if not owns_port:
         raise ValueError('admitted native server does not own the fixture listening port')
