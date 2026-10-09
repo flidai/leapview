@@ -142,7 +142,8 @@ func actualPinnedPGBackRestFrontier(t *testing.T, layout string) {
 		t.Fatal(err)
 	}
 	var lsn, systemID string
-	if err := admin.QueryRow(ctx, "SELECT pg_current_wal_insert_lsn()::text,(SELECT system_identifier::text FROM pg_control_system())").Scan(&lsn, &systemID); err != nil {
+	var timeline uint32
+	if err := admin.QueryRow(ctx, "SELECT pg_current_wal_insert_lsn()::text,(SELECT system_identifier::text FROM pg_control_system()),(SELECT timeline_id FROM pg_control_checkpoint())").Scan(&lsn, &systemID, &timeline); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := control.Exec(ctx, "INSERT INTO physical_adapter_regression VALUES(2,'after-selected-frontier')"); err != nil {
@@ -152,7 +153,7 @@ func actualPinnedPGBackRestFrontier(t *testing.T, layout string) {
 		t.Fatal(err)
 	}
 	run(ctx, program, "--config="+configFile, "--stanza=managed", "check")
-	frontier := PGFrontier{Stanza: "managed", BackupSet: info[0].Backup[0].Label, TargetLSN: lsn, SystemID: systemID}
+	frontier := PGFrontier{Stanza: "managed", BackupSet: info[0].Backup[0].Label, TargetLSN: lsn, SystemID: systemID, Timeline: timeline}
 	identity, err := frontier.RecoveryIdentity()
 	if err != nil {
 		t.Fatal(err)

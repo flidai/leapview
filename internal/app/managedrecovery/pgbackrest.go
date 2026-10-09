@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,10 +26,11 @@ type PGFrontier struct {
 	BackupSet string `json:"backupSet"`
 	TargetLSN string `json:"targetLsn"`
 	SystemID  string `json:"systemId"`
+	Timeline  uint32 `json:"timeline"`
 }
 
 func (frontier PGFrontier) RecoveryIdentity() (string, error) {
-	if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`).MatchString(frontier.Stanza) ||
+	if frontier.Timeline == 0 || !regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`).MatchString(frontier.Stanza) ||
 		!regexp.MustCompile(`^[0-9]{8}-[0-9]{6}F(_[0-9]{8}-[0-9]{6}[DI])?$`).MatchString(frontier.BackupSet) ||
 		!regexp.MustCompile(`^[0-9A-F]{1,8}/[0-9A-F]{1,8}$`).MatchString(frontier.TargetLSN) ||
 		!regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(frontier.SystemID) {
@@ -146,7 +148,7 @@ func (restorer *PGBackRest) RestoreCluster(ctx context.Context, request provider
 		return nil, err
 	}
 	defer os.RemoveAll(stage)
-	args := []string{"--config=" + restorer.config.ConfigFile, "--stanza=" + restorer.config.Frontier.Stanza, "--set=" + restorer.config.Frontier.BackupSet, "--pg1-path=" + stage, "--type=lsn", "--target=" + restorer.config.Frontier.TargetLSN, "--target-action=pause", "--tablespace-map-all=" + filepath.Join(stage, ".managed-tablespaces"), "--no-link-all", "--log-level-console=off", "--log-level-file=off", "restore"}
+	args := []string{"--config=" + restorer.config.ConfigFile, "--stanza=" + restorer.config.Frontier.Stanza, "--set=" + restorer.config.Frontier.BackupSet, "--pg1-path=" + stage, "--type=lsn", "--target=" + restorer.config.Frontier.TargetLSN, "--target-timeline=" + strconv.FormatUint(uint64(restorer.config.Frontier.Timeline), 10), "--target-action=pause", "--tablespace-map-all=" + filepath.Join(stage, ".managed-tablespaces"), "--no-link-all", "--log-level-console=off", "--log-level-file=off", "restore"}
 	cluster := &PGStagingCluster{directory: stage, bubblewrap: restorer.config.Bubblewrap}
 	args = append(cluster.arguments(), append([]string{restorer.config.PGBackRest}, args...)...)
 	if err := restorer.execute(ctx, restorer.config.Bubblewrap, args, lock.InheritedFile()); err != nil {

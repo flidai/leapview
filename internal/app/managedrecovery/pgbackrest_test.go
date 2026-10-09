@@ -12,6 +12,23 @@ import (
 	"github.com/flidai/leapview/internal/recoveryset"
 )
 
+func TestPGFrontierRequiresRetainedTimeline(t *testing.T) {
+	frontier := PGFrontier{Stanza: "managed", BackupSet: "20261009-080000F", TargetLSN: "0/1700000", SystemID: "7620001234567890123"}
+	if _, err := frontier.RecoveryIdentity(); err == nil {
+		t.Fatal("missing retained WAL timeline accepted")
+	}
+	frontier.Timeline = 1
+	first, err := frontier.RecoveryIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontier.Timeline = 2
+	second, err := frontier.RecoveryIdentity()
+	if err != nil || first == second {
+		t.Fatal("retained WAL timelines share recovery identity")
+	}
+}
+
 func pgBackRestFixture(t *testing.T) (*PGBackRest, providerrestore.DatabaseRequest) {
 	t.Helper()
 	root := t.TempDir()
@@ -20,7 +37,7 @@ func pgBackRestFixture(t *testing.T) (*PGBackRest, providerrestore.DatabaseReque
 	if err := os.WriteFile(file, contents, 0600); err != nil {
 		t.Fatal(err)
 	}
-	frontier := PGFrontier{Stanza: "managed", BackupSet: "20261009-080000F", TargetLSN: "0/1700000", SystemID: "7620001234567890123"}
+	frontier := PGFrontier{Stanza: "managed", BackupSet: "20261009-080000F", TargetLSN: "0/1700000", SystemID: "7620001234567890123", Timeline: 1}
 	identity, err := frontier.RecoveryIdentity()
 	if err != nil {
 		t.Fatal(err)
