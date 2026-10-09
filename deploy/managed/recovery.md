@@ -85,6 +85,106 @@ returning a previously completed operation. Lease ownership is checked again
 after a potentially slow remote fence observation. Generic provider component
 tests using `providerrestore.New` do not establish managed fencing.
 
+## Independent managed-local recovery authority
+
+`leapviewctl host restore-managed` composes the retained pgBackRest/WAL frontier,
+exact encrypted Restic snapshots, native PostgreSQL TLS readback, runtime
+credentials and the original-writer fence. It requires a separately available
+PostgreSQL authority containing the prepared RecoverySet and pending recovery
+occurrence. The source database cannot supply that authority after it is fenced.
+Use the following order before attempting a managed-local restore.
+
+1. Provision an empty database on an independent PostgreSQL system. Retain its
+   actual `pg_control_system()` system identifier and explicit TLS trust, along
+   with the original system identifier. The bootstrap login must be authorized
+   to create the dedicated roles and database schemas. This command does not
+   provision another host or PostgreSQL server:
+
+   ```sh
+   leapviewctl host init-managed-recovery-authority \
+     --input /private/managed-authority-init.json
+   ```
+
+   The strict input document has `schemaVersion: 1`, `originalSystemIdentifier`,
+   `ownerRole`, `bootstrap`, `operator`, and `receiptFile`. Both connection objects
+   contain `urlFile`, `rootCaFile`, `role`, and `systemIdentifier`; they must name
+   the same independent endpoint/database, system identifier and CA bytes. URL
+   files contain an explicit password and `sslmode=verify-full`. Use an owner
+   role named `leapview_recovery_owner` and an operator named
+   `leapview_recovery_operator`, optionally with a lowercase identifier suffix
+   beginning with `_` to separate authorities on one system.
+
+   Initialization installs the maintained jobs, recovery ledger and RecoverySet
+   schemas in one transaction, with a non-login owner and dedicated login
+   operator. The operator can maintain the recovery occurrence and frontier;
+   it cannot assume the owner, create application objects, edit the authority
+   marker, delete the ledger or use job-history authority. Ordinary application
+   roles receive no access to these independent schemas. Existing application
+   data, previously claimed dedicated roles or a conflicting initialization
+   receipt cause refusal. Retry the exact input and retained operator password
+   if acknowledgement or receipt persistence is interrupted. A different schema
+   digest or identity requires a separately reviewed authority migration.
+
+2. While the source instance is quiescent, prepare and retain one exact source
+   RecoverySet through the existing administrative recovery command. Retain its
+   full frontier digest, finite live retention-root identity and expiration,
+   immutable artifact identity and source system identifier. Then enroll that
+   prepared checkpoint before fencing the source:
+
+   ```sh
+   leapviewctl host enroll-managed-recovery \
+     --input /private/managed-recovery-enrollment.json
+   ```
+
+   The strict input has `schemaVersion: 1`, `source`, `authority`, `request`,
+   and `receiptFile`. `source` and `authority` use the connection fields above.
+   The request binds `instanceHome`, `recoverySetId`, `frontierDigest`,
+   `retentionRootId`, `sourceSystemId`, `authoritySystemId`, `artifactIdentity`,
+   `actor`, `plannedAt`, and `expiresAt`. Use canonical UTC timestamps with no
+   precision finer than microseconds; the retained source hold must cover the
+   entire requested interval. The command holds the instance-home lock and
+   authenticates both independent systems. It reads the exact prepared source
+   set and live retention row, then atomically installs unchanged canonical set
+   bytes and a pending restore intent in the independent authority. It imports
+   neither source validation success nor publication authority. Retain the
+   private receipt; an exact retry recovers the same receipt after interruption.
+
+3. Run the restore under the provisioned unprivileged PostgreSQL/recovery owner
+   using a strict `managed-local` input document:
+
+   ```sh
+   leapviewctl host restore-managed \
+     --input /private/managed-recovery-restore.json
+   ```
+
+   Bind the enrollment receipt and its occurrence, set, instance home and
+   immutable artifact without substitution. Retain explicit paths and digests
+   for pinned PostgreSQL, pgBackRest, bubblewrap, provider configuration and TLS
+   server credentials; the exact backup label, PostgreSQL system identity,
+   timeline and WAL restore target; every full Restic snapshot ID and content
+   manifest; the native DuckLake closure; private retained runtime credentials
+   and keyring; and the original-primary SSH enrollment. Each restore destination
+   must preserve the enrolled root location. An off-host SFTP repository also
+   requires the exact address, port, user, pinned SSH executable, private
+   identity file and enrolled known-hosts file. SSH ignores ambient config,
+   agents and passwords and requires the pinned host key.
+
+   The coordinator claims the exact pending occurrence and maintains its lease
+   while restoring. It verifies fencing around provider effects and final
+   publication, confines native PostgreSQL restore/readback, verifies every
+   retained file and the production object-store envelope, and publishes only
+   the exact successful validation attempt. Missing or conflicting identities,
+   credentials, files, trust or lease ownership fail closed. Completed retries
+   still check original-writer fencing. This command does not reopen traffic or
+   automatically remove the original fence.
+
+Input documents and credential files must be owned, private regular files;
+receipt and secret directories must be private canonical paths. Receipts cannot
+overwrite inputs or credentials. The initializer and enrollment inputs are
+bounded to 64 KiB; the restore input is bounded to 16 MiB. Unknown fields,
+duplicate JSON keys and trailing documents are rejected. Keep private inputs
+and encrypted repository keys out of public evidence, PR descriptions and logs.
+
 ## Qualification boundaries
 
 The existing NixOS boot fixture now includes an off-host component recovery
