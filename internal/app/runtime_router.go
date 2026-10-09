@@ -1090,7 +1090,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					if marker, admitted := developmentProfileBootstrapAuthority(ctx, runtimeConfig.Production); admitted && developmentProfileBootstrapBindingMatches(marker, principalID, permission, binding, storage.instanceID, runtimeConfig.DefaultEnvironment) {
 						credential, found := accessmodule.APICredentialFromContext(ctx)
-						if found && bootstrapBindingCredentialAllows(credential, principalID, binding, storage.instanceID, action) {
+						if found && developmentProfileBootstrapCredentialAllows(credential, principalID, permission, binding, storage.instanceID) {
 							return nil
 						}
 					}
