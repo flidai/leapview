@@ -30,6 +30,10 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 	if c == nil || c.repository == nil || c.artifactRecovery == nil || c.contract == nil || c.attemptTermination == nil || c.generationAdmission == nil {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
+	planConnections, err := c.selectPlanConnections(ctx, plan.DeliveryPlan)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 	contract, err := c.contract.Resolve(ctx, NativeBuildContractRequest{PhysicalPoolID: c.physicalPoolID, CompatibilityDigest: c.compatibilityDigest})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -138,7 +142,7 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	bindingRequest := nativeCandidateConnectionRequest(prepared.CandidateID, request.PrincipalID, request.TargetID, artifacts)
-	bindingEvidence, bindingDigest, err := resolveNativeCandidateBindingEvidence(ctx, c.bindingEvidence, bindingRequest)
+	bindingEvidence, bindingDigest, err := resolveNativeCandidateBindingEvidence(ctx, planConnections.BindingEvidence, bindingRequest)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}

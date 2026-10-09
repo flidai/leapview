@@ -104,6 +104,8 @@ class LeapViewConnectionCredentials extends LitElement {
   render() {
     if (!this.available) return nothing
     const value = this.current
+    const versionStatus = value?.versionStatus?.versionId === this.versionId ? value.versionStatus : undefined
+    const retired = versionStatus?.state === 'retired_local'
     const operation = this.operation
     const inFlight = Boolean(this.operationId) && !this.terminal
     const receiptCurrent = Boolean(value?.receiptId) && value?.command.versionId === this.versionId && Date.parse(value?.receiptExpiresAt ?? '') > Date.now()
@@ -133,10 +135,21 @@ class LeapViewConnectionCredentials extends LitElement {
             <div class="actions">
               <button type="button" ?disabled=${this.busy} @click=${() => this.emit('list', {}, true)}>Refresh drafts</button>
               ${value?.nextBeforeVersionId ? html`<button type="button" ?disabled=${this.busy} @click=${() => this.emit('list', { beforeVersionId: value.nextBeforeVersionId }, true)}>Older drafts</button>` : nothing}
-              <button type="button" ?disabled=${!this.versionId || this.busy || operation?.phase === 'not_found'} @click=${() => this.emit('validate')}>Test draft</button>
+              <button type="button" ?disabled=${!this.versionId || retired || this.busy || operation?.phase === 'not_found'} @click=${() => this.emit('validate')}>Test draft</button>
             </div>
             ${receiptCurrent ? html`<p>Draft tested. Activation requires a separate confirmation.</p>` : nothing}
-            ${!inFlight ? html`<button type="button" ?disabled=${!receiptCurrent || this.busy} @click=${this.prepare}>Prepare activation</button>` : nothing}
+            ${!inFlight ? html`<button type="button" ?disabled=${!receiptCurrent || retired || this.busy} @click=${this.prepare}>Prepare activation</button>` : nothing}
+          </section>
+          <section>
+            <h2>Version dependencies and retirement</h2>
+            <p class="hint">Retiring a version blocks its future use on this instance. It does not revoke the upstream password or remove encrypted backup history. Retained activations, releases and agent configuration can prevent retirement.</p>
+            <button type="button" ?disabled=${!this.versionId || this.busy} @click=${() => this.emit('version_status', {}, true)}>Inspect version dependencies</button>
+            ${versionStatus ? html`<p>Version state: ${versionStatus.state}</p>
+              ${versionStatus.dependencies.length ? html`<ul>${versionStatus.dependencies.map(dependency => html`<li>${dependency.kind} · ${dependency.id}</li>`)}</ul>` : nothing}
+              ${versionStatus.moreDependencies ? html`<p>Additional retained dependencies also prevent retirement.</p>` : nothing}
+              ${!inFlight && versionStatus.state === 'available' && !versionStatus.dependencies.length && !versionStatus.moreDependencies ? html`<button type="button" ?disabled=${this.busy} @click=${() => this.emit('retire')}>Retire version locally</button>` : nothing}
+              ${retired ? html`<p>This version cannot be re-enabled. Save a new draft to use credentials again.</p>` : nothing}
+            ` : nothing}
           </section>
           <section>
             <h2>Recover an activation</h2>

@@ -514,6 +514,8 @@ model DeliveryPlanRequest {
   sourceDigest: string;
   // Opaque target-issued source attestation selected during retention.
   sourceAttestationDigest: string;
+  // Explicit server-owned initial-source preparation; never a credential pin.
+  firstSourcePreparationId?: string;
   // Target-owned policy, bindings, qualification, and current CAS fence are
   // resolved by the server. Callers submit intent, never internal evidence.
 }

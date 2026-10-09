@@ -212,6 +212,7 @@ model AgentConfigUpdateRequest {
 }
 
 model AgentConfigResponse {
+ credentialVersionId?: string;
  baseUrl?: string;
  apiMode?: string;
  configurationRevision: int64;

@@ -308,6 +308,72 @@ func chatVisualPlacementSize(visualType document.DashboardVisualType) (int32, in
 	}
 }
 
+// CopyChatVisualFilters retains visual-scoped controls and their dependencies.
+// Report controls belong to the dashboard and already apply when adding back a
+// chart; copying them independently would duplicate those controls.
+func CopyChatVisualFilters(filters []document.DashboardFilter, sourceVisualID string) ([]document.DashboardFilter, error) {
+	applicable := map[string]bool{}
+	needed := map[string]bool{}
+	for _, filter := range filters {
+		applicable[filter.ID] = filter.Targets == nil
+		if filter.Targets != nil {
+			for _, target := range *filter.Targets {
+				if target == sourceVisualID || target == "page/visual" {
+					applicable[filter.ID] = true
+					needed[filter.ID] = true
+				}
+			}
+		}
+	}
+	scoped := make([]document.DashboardFilter, 0, len(filters))
+	for _, filter := range filters {
+		copy, err := cloneChatFilter(filter)
+		if err != nil {
+			return nil, err
+		}
+		// Canonical option dependencies only apply to shared consumers.
+		// Keep the control when its parent targets a different chart, without
+		// introducing a dependency that was inactive on this placement.
+		for _, options := range chatFilterOptions(copy) {
+			if options.DependsOn == nil {
+				continue
+			}
+			dependencies := []string{}
+			for _, dependency := range *options.DependsOn {
+				if applies, known := applicable[dependency]; !known || applies {
+					dependencies = append(dependencies, dependency)
+				}
+			}
+			options.DependsOn = &dependencies
+		}
+		scoped = append(scoped, copy)
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, filter := range scoped {
+			if !needed[filter.ID] {
+				continue
+			}
+			for _, dependency := range chatFilterOptionDependencies(filter) {
+				if !needed[dependency] {
+					needed[dependency] = true
+					changed = true
+				}
+			}
+		}
+	}
+	for index := range scoped {
+		if scoped[index].Targets == nil && !needed[scoped[index].ID] {
+			scoped[index].Targets = stringSlicePointer([]string{})
+		}
+	}
+	value := document.DashboardDocument{}
+	if err := appendChatVisualFilters(&value, scoped, sourceVisualID, sourceVisualID); err != nil {
+		return nil, err
+	}
+	return value.Spec.Filters, nil
+}
+
 func appendChatVisualFilters(value *document.DashboardDocument, filters []document.DashboardFilter, sourceVisualID, importedVisualID string) error {
 	type importedFilter struct {
 		sourceID string

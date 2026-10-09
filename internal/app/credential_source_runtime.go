@@ -17,6 +17,9 @@ func (a *sourceCredentialActivation) withRuntimeAdmission(ctx context.Context, r
 	if a.config.CandidateAdmission == nil || run == nil {
 		return credentialmodule.ErrValidationUnavailable
 	}
+	if firstSourcePublicationRuntimeAdmitted(ctx, a) {
+		return run(ctx)
+	}
 	lease, err := a.config.CandidateAdmission.AcquireCandidatePreparation(ctx)
 	if err != nil {
 		return err

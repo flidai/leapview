@@ -286,3 +286,16 @@ func (m *ConfigurationManager) Abort(ctx context.Context, actor string) error {
 	}
 	return lifecycle.AbortConfiguration(ctx, actor)
 }
+
+// CredentialVersion identifies the exact immutable version of a retained
+// configuration without decrypting or returning its provider key.
+func (m *ConfigurationManager) CredentialVersion(ctx context.Context, revision int64) (string, error) {
+	if revision == 0 {
+		return "", nil
+	}
+	record, err := m.store.ConfigurationByRevision(ctx, revision)
+	if err != nil {
+		return "", err
+	}
+	return record.CredentialVersionID, nil
+}

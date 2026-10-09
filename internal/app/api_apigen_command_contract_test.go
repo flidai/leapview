@@ -122,7 +122,7 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 				t.Errorf("command %s authz mode %q differs from operation mode %q", operationID, command.AuthzMode, contract.AuthzMode)
 			}
 			if contract.Method == http.MethodPost {
-				if slices.Contains([]string{"saveCredentialDraft", "validateCredentialDraft", "startCredentialActivation", "retryCredentialActivation", "abortCredentialActivation"}, operationID) {
+				if slices.Contains([]string{"saveCredentialDraft", "validateCredentialDraft", "prepareFirstSourceCredential", "renewFirstSourceCredentialPreparation", "startCredentialActivation", "retryCredentialActivation", "abortCredentialActivation", "retireCredentialVersion", "retireAgentCredentialVersion"}, operationID) {
 					if command.Idempotency != "forbidden" || !contract.RequestBodyRequired || !command.Audit.Required || command.Audit.Guarantee != "transactional" || command.UI == nil || command.UI.ActionID == "" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {
 						t.Errorf("non-replayable credential POST must have a required body, forbidden idempotency, transactional audit, and only its named UI exposure: operation=%#v command=%#v", contract, command)
 					}

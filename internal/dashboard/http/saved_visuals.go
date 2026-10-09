@@ -87,7 +87,26 @@ func (handler Handler) SaveVisual(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 	var input chatDraftVisual
-	if err = json.Unmarshal([]byte(r.FormValue("definition")), &input); err != nil || input.SemanticModelID == "" || input.Visual.Type == "" {
+	if dashboardID := r.FormValue("dashboardId"); dashboardID != "" {
+		reader, ok := handler.Authoring.(dashboardAuthoringDraftReader)
+		if !ok {
+			writeBuilderError(w, r, access.ErrForbidden)
+			return
+		}
+		draft, readErr := reader.Draft(r.Context(), application.DraftRequest{ProjectID: project, ActorID: actor, DashboardID: authoring.DashboardID(dashboardID)})
+		if readErr != nil {
+			writeBuilderError(w, r, readErr)
+			return
+		}
+		if draft.Lifecycle.Draft == nil || r.FormValue("revisionId") != string(draft.Revision.Token().RevisionID) {
+			handler.savedVisualLibrary(w, r, "The dashboard changed. Refresh it before saving this visual.")
+			return
+		}
+		input, err = dashboardVisualForLibrary(draft.Revision.Document, r.FormValue("pageId"), r.FormValue("componentId"))
+	} else {
+		err = json.Unmarshal([]byte(r.FormValue("definition")), &input)
+	}
+	if err != nil || input.SemanticModelID == "" || input.Visual.Type == "" {
 		handler.savedVisualLibrary(w, r, "This visual has no editable definition.")
 		return
 	}
@@ -118,6 +137,34 @@ func (handler Handler) SaveVisual(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 	nethttp.Redirect(w, r, "/visuals/saved?savedId="+url.QueryEscape(saved.ID), nethttp.StatusSeeOther)
+}
+
+// Resolve the canonical definition under the draft reader's authorization;
+// rendered chart payloads are not an editable source of truth.
+func dashboardVisualForLibrary(source document.DashboardDocument, pageID, componentID string) (chatDraftVisual, error) {
+	doc, err := source.Clone()
+	if err != nil {
+		return chatDraftVisual{}, err
+	}
+	for _, page := range doc.Spec.Pages {
+		if page.ID != pageID {
+			continue
+		}
+		for _, component := range page.Components {
+			base, err := component.Base()
+			visual, ok := component.Value.(*document.VisualDashboardPageComponent)
+			if err != nil || base == nil || base.ID != componentID || !ok {
+				continue
+			}
+			definition, exists := doc.Spec.Visuals[visual.Visual]
+			if !exists {
+				break
+			}
+			filters, err := placedVisualFilters(doc, page, componentID, visual.Visual)
+			return chatDraftVisual{SemanticModelID: doc.Spec.SemanticModel, Visual: definition, Filters: filters}, err
+		}
+	}
+	return chatDraftVisual{}, authoring.ErrNotFound
 }
 
 // A narrow import loads the definition under the current account, then uses

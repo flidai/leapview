@@ -292,7 +292,8 @@ the exclusive home lock before app build, and `/readyz` requires an active runti
 lease, so an overlapping candidate cannot become ready on the shared home. The
 bounded-maintenance implementation includes a [host-local compatible-image
 controller](maintenance.md), including closed startup admission, draining and
-restart recovery. Full managed-profile qualification remains outstanding. The
+restart recovery. The project owner [accepted this update design](decision-reconciliation-20261009.md)
+on 9 October 2026. Full managed-profile qualification remains outstanding. The
 previous stop-first rehearsal does not qualify that sequence. Preserve a restart rollback path and
 measure interruption. An old image is usable only while database and
 application-state compatibility still permits it; container retention is not a

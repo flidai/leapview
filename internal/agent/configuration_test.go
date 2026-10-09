@@ -359,3 +359,20 @@ func TestAdminConfigurationHistoricalRuntimeResolvesPinnedCredentialVersion(t *t
 		t.Fatalf("stale install callback accepted: %v", err)
 	}
 }
+
+func TestConfigurationVersionMetadataDoesNotResolveProviderSecret(t *testing.T) {
+	repo := &configurationMemory{rows: []ConfigurationRevision{{Revision: 1, CredentialVersionID: "immutable:first"}, {Revision: 2, CredentialVersionID: "immutable:second"}}}
+	credentials := newConfigurationLifecycleStub(repo)
+	service := NewService(nil, Config{})
+	manager, err := NewConfigurationManager(repo, service, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := manager.CredentialVersion(t.Context(), 1)
+	if err != nil || version != "immutable:first" || len(credentials.used) != 0 {
+		t.Fatalf("metadata resolved wrong version or consumed provider secret: %s %v", version, err)
+	}
+	if _, err = manager.CredentialVersion(t.Context(), 3); !errors.Is(err, ErrConfigurationNotFound) {
+		t.Fatal("unknown configuration metadata was accepted")
+	}
+}

@@ -931,7 +931,7 @@ class FirstInstallGuestFixtureTests(unittest.TestCase):
             # beside current, as Installer.Install and Compose's root require.
             (generation / "leapview.env.example").write_text("LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=\n")
             environment = root / "leapview.env"
-            command = host_guest._serving_credential_boundary_command(str(root))
+            command = host_guest._serving_credential_boundary_command(str(environment))
             for name, contents, expected in (
                 ("runtime only", "FIXTURE_SETTING=prod\n", 0),
                 ("control migrator", "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=private-control\n", 1),
@@ -944,12 +944,18 @@ class FirstInstallGuestFixtureTests(unittest.TestCase):
                         environment.unlink(missing_ok=True)
                     else:
                         environment.write_text(contents)
-                    result = subprocess.run(["sh", "-ec", command], capture_output=True, timeout=5)
-                    self.assertEqual(result.returncode, expected, result.stderr.decode())
-                    self.assertEqual(result.stderr, b"")
+                    result = subprocess.run(
+                        ["sh", "-ec", command], capture_output=True, timeout=5,
+                        env=dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")),
+                    )
+                    self.assertNotIn(b"private-control", result.stdout + result.stderr)
+                    self.assertNotIn(b"private-ducklake", result.stdout + result.stderr)
                     if expected:
+                        self.assertNotEqual(result.returncode, 0)
                         self.assertEqual(result.stdout, b"")
                     else:
+                        self.assertEqual(result.returncode, 0, result.stderr.decode())
+                        self.assertEqual(result.stderr, b"")
                         self.assertEqual(json.loads(result.stdout), {
                             "controlMigratorURLAbsentFromServingEnvironment": True,
                             "duckLakeMigratorURLAbsentFromServingEnvironment": True,
@@ -960,9 +966,56 @@ class FirstInstallGuestFixtureTests(unittest.TestCase):
                 [shutil.which("sh"), "-ec", command],
                 env=dict(os.environ, PATH=str(root)), capture_output=True, timeout=5,
             )
-            self.assertEqual(unavailable.returncode, 1)
+            self.assertNotEqual(unavailable.returncode, 0)
             self.assertEqual(unavailable.stdout, b"")
-            self.assertEqual(unavailable.stderr, b"")
+
+    def test_serving_credential_boundary_checks_installed_root_environment(self):
+        command = host_guest._serving_credential_boundary_command()
+        self.assertIn("/opt/leapview/leapview.env", command)
+        self.assertNotIn("/opt/leapview/current/leapview.env", command)
+
+    def test_serving_credential_boundary_fails_closed_without_host_grep(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tools = root / "tools"
+            tools.mkdir()
+            (tools / "python3").symlink_to(sys.executable)
+            shell = shutil.which("bash")
+            environment = dict(os.environ, PATH=str(tools))
+            self.assertIsNone(shutil.which("grep", path=str(tools)))
+            serving = root / "leapview.env"
+            command = host_guest._serving_credential_boundary_command(str(serving))
+            fixtures = (
+                ("missing", None, False),
+                ("empty", b"", False),
+                ("clean", b"LEAPVIEW_POSTGRES_CONTROL_URL=runtime\n", True),
+                ("control-migrator", b"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=operator-secret\n", False),
+                ("ducklake-migrator", b"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=operator-secret\n", False),
+                ("empty-migrator", b"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=\n", False),
+            )
+            for name, content, accepted in fixtures:
+                with self.subTest(name=name):
+                    if content is not None:
+                        serving.write_bytes(content)
+                    result = subprocess.run([shell, "-c", command], env=environment,
+                                            capture_output=True, timeout=10)
+                    if accepted:
+                        self.assertEqual(result.returncode, 0, result.stderr.decode())
+                        self.assertEqual(result.stderr, b"")
+                        self.assertEqual(json.loads(result.stdout), {
+                            "controlMigratorURLAbsentFromServingEnvironment": True,
+                            "duckLakeMigratorURLAbsentFromServingEnvironment": True,
+                        })
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(result.stdout, b"")
+                    self.assertNotIn(b"operator-secret", result.stdout + result.stderr)
+            serving.write_bytes(b"LEAPVIEW_POSTGRES_CONTROL_URL=runtime\n")
+            (tools / "python3").unlink()
+            unavailable = subprocess.run([shell, "-c", command], env=environment,
+                                         capture_output=True, timeout=10)
+            self.assertNotEqual(unavailable.returncode, 0)
+            self.assertEqual(unavailable.stdout, b"")
 
     def test_postgres_readiness_retries_failed_psql_and_retains_one_complete_probe(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -986,10 +1039,13 @@ esac
             sleep = root / "sleep"
             sleep.write_text(f"#!{shell}\nexit 0\n")
             sleep.chmod(0o700)
-            environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+            # Ubuntu hides /usr; the isolated probe must not inherit host utilities.
+            for name, target in (("sh", shell), ("env", shutil.which("env")), ("cat", shutil.which("cat"))):
+                (root / name).symlink_to(target)
+            environment = dict(os.environ, PATH=str(root),
                                PROBE_COUNTER=str(root / "probes"), PROBE_TLS="true")
             result = subprocess.run(
-                ["bash", "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
+                [shell, "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
                 env=environment, capture_output=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr.decode())
@@ -1002,7 +1058,7 @@ esac
             environment["PROBE_TLS"] = "false"
             (root / "probes").write_text("3\n")
             rejected = subprocess.run(
-                ["bash", "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
+                [shell, "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
                 env=environment, capture_output=True, timeout=10,
             )
             self.assertEqual(rejected.returncode, 1)

@@ -49,7 +49,8 @@ def verify(original_deb, qualified, source_root, verifier_root, source_revision)
         raise ValueError('Desktop qualification belongs to another builder artifact')
     return {
         'schemaVersion': 1,
-        'archive': {'basename': ARCHIVE_NAME, 'sha256': original_hash},
+        'archive': {'basename': ARCHIVE_NAME, 'sha256': original_hash,
+                    'platform': report['artifact']['platform'], 'version': report['artifact']['version']},
         'sourceRevision': source_revision,
         'candidateDigest': report['candidateDigest'],
         'qualificationSHA256': next(entry['sha256'] for entry in before

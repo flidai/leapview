@@ -58,6 +58,7 @@ func signalRootEvidenceCatalog() map[string]signalRootEvidence {
 		"builderVisuals":             {producer: rootMarker("internal/dashboard/ui/builder_page.go", "builderVisuals"), reader: rootMarker("web/components/dashboard/dashboard-builder.ts", "builderVisuals")},
 		"chrome":                     {producer: rootMarker("internal/platform/web/page/page.go", "chrome"), reader: rootMarker("web/components/app/app-shell.ts", "chrome")},
 		"connectionAdmin":            {producer: rootMarker("internal/project/http/creator_commands.go", "connectionAdmin"), reader: rootMarker("web/components/project/project-page.ts", "connectionAdmin")},
+		"firstSourceCredentials":     {producer: rootMarker("internal/app/first_source_browser.go", "firstSourceCredentials"), reader: rootMarker("web/components/project/first-source-credentials.ts", "firstSourceCredentials")},
 		"dataExplorer":               {producer: rootMarker("internal/project/http/browser.go", "dataExplorer"), reader: rootMarker("web/components/data/data-explorer.ts", "dataExplorer")},
 		"filterCommand":              {producer: rootMarker("internal/dashboard/ui/page.go", "filterCommand"), allow: "surface-specific"},
 		"filterContract":             {producer: rootMarker("internal/dashboard/ui/page.go", "filterContract"), reader: rootMarker("web/components/dashboard/dashboard-page.ts", "filterContract")},

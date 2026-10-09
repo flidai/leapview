@@ -849,7 +849,9 @@ func copyTypeSpecProject(src string, dst string, excludedDir string) error {
 		if excludedRel != "" && filepath.Clean(rel) == excludedRel {
 			return filepath.SkipDir
 		}
-		if rel != "." && entry.Name() == "node_modules" {
+		// Worktree scratch files (including screenshots and browser sessions)
+		// are not TypeSpec inputs and can dwarf the actual source project.
+		if rel != "." && (entry.Name() == "node_modules" || entry.Name() == ".tmp") {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
