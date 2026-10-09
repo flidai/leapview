@@ -209,7 +209,7 @@ export class VisualizationHost extends LitElement {
         this.controller?.resize(width, height, window.devicePixelRatio || 1)
         // A selected chart may be hidden while its adapter is preparing. If
         // readiness failed at zero size, remount when it has usable layout.
-        if (becameVisible && this.error) this.scheduleApply()
+        if (becameVisible && this.error) this.scheduleApply(true)
       })
       this.resizeObserver.observe(this.rendererContainer)
     } catch {
@@ -370,7 +370,7 @@ export class VisualizationHost extends LitElement {
     return kind === 'table' || kind === 'matrix' || kind === 'pivot'
   }
 
-  private requestMount(): void {
+  private requestMount(force = false): void {
     this.mountRequested = true
     try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
     this.mountObserver = undefined
@@ -379,7 +379,7 @@ export class VisualizationHost extends LitElement {
     // the result, while event callbacks can start the renderer immediately.
     if (this.rendererContainer) {
       this.ensureController()
-      this.scheduleApply()
+      this.scheduleApply(force)
       return
     }
     void this.ensureMounted().catch(() => {})
@@ -387,14 +387,14 @@ export class VisualizationHost extends LitElement {
 
   private retry = (): void => {
     this.error = ''
-    this.requestMount()
+    this.requestMount(true)
   }
 
   private scheduleApply(force = false): void {
     if (!this.mountRequested || !this.envelope) return
     if (this.pendingApply) {
       // firstUpdated and updated can request the same initial work. Queue
-      // only a replacement envelope or an explicit renderer-context change.
+      // only a replacement envelope, context change, or recovery request.
       if (force || this.pendingApplyEnvelope !== this.envelope) this.applyQueued = true
       return
     }

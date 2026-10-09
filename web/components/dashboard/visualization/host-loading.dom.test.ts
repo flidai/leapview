@@ -1,7 +1,25 @@
 import { expect, test } from 'bun:test'
+import type { Page } from '@playwright/test'
 import { hostBrowserFixture } from './host-browser.test-fixture'
 
 const fixture = hostBrowserFixture()
+
+async function waitForPanelState(page: Page, stage: 'failure' | 'visibility' | 'recovery'): Promise<void> {
+  try {
+    await page.waitForFunction(stage => {
+      const host = (window as any).__lvHiddenPanel.host
+      if (stage === 'failure') return host.shadowRoot.querySelector('[role="alert"]')
+      if (stage === 'visibility') return host.rendererHasSize
+      return host.presented && !host.shadowRoot.querySelector('[role="alert"]') && !host.shadowRoot.querySelector('[data-visualization-loading]')
+    }, stage, { timeout: 5_000 })
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const { panel, host } = (window as any).__lvHiddenPanel
+      return { hidden: panel.hidden, error: host.error, applying: host.applying, pending: Boolean(host.pendingApply), queued: host.applyQueued, presented: host.presented, hasSize: host.rendererHasSize, rendererChildren: host.shadowRoot.querySelector('.renderer').childElementCount }
+    }).catch(() => 'browser unavailable')
+    throw new Error(`Selected chart ${stage} did not settle: ${JSON.stringify(state)}`, { cause: error })
+  }
+}
 
 test('deferred initial invalid visual data shows an error and recovers when replaced', async () => {
   const page = await fixture.browser.newPage()
@@ -111,12 +129,61 @@ test('a selected chart recovers when its panel becomes visible after first-frame
       document.body.append(panel)
       ;(window as any).__lvHiddenPanel = { panel, host }
     })
-    await page.waitForFunction(() => (window as any).__lvHiddenPanel.host.shadowRoot.querySelector('[role="alert"]'))
+    await waitForPanelState(page, 'failure')
     await page.evaluate(() => { (window as any).__lvHiddenPanel.panel.hidden = false })
-    await page.waitForFunction(() => {
-      const host = (window as any).__lvHiddenPanel.host
-      return host.presented && !host.shadowRoot.querySelector('[role="alert"]') && !host.shadowRoot.querySelector('[data-visualization-loading]')
-    })
+    await waitForPanelState(page, 'visibility')
+    await waitForPanelState(page, 'recovery')
+    const mounted = await page.evaluate(() => (window as any).__lvHiddenPanel.host.shadowRoot.querySelector('.renderer').childElementCount)
+    expect(mounted).toBeGreaterThan(0)
+  } finally { await page.close() }
+}, 20_000)
+
+for (const recovery of ['visibility', 'retry'] as const) test(`a selected chart queues ${recovery} recovery while its failed apply is settling`, async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_chart?.envelope)
+    await page.evaluate((recovery) => {
+      const original = window.setTimeout.bind(window)
+      let expired = false
+      window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        // Expire the first readiness deadline before ECharts emits its frame.
+        // Keep the failed apply pending across a recovery request deterministically.
+        if (timeout === 5_000 && !expired && typeof handler === 'function') {
+          expired = true
+          handler(...args)
+          return 0
+        }
+        return original(handler, timeout, ...args)
+      }) as typeof window.setTimeout
+      const panel = document.createElement('section')
+      panel.hidden = recovery === 'visibility'
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:600px;height:320px'
+      host.envelope = structuredClone((window as any).__lvSourceHosts.orders_chart.envelope)
+      const apply = host.applyEnvelope.bind(host)
+      let held = false
+      host.applyEnvelope = async () => {
+        await apply()
+        if (host.error && !held) {
+          held = true
+          await new Promise<void>(resolve => { (window as any).__lvReleaseFailedApply = resolve })
+        }
+      }
+      panel.append(host)
+      document.body.append(panel)
+      ;(window as any).__lvHiddenPanel = { panel, host }
+    }, recovery)
+    await page.waitForFunction(() => (window as any).__lvReleaseFailedApply && (window as any).__lvHiddenPanel.host.shadowRoot.querySelector('[role="alert"]'), undefined, { timeout: 5_000 })
+    if (recovery === 'visibility') {
+      await page.evaluate(() => { (window as any).__lvHiddenPanel.panel.hidden = false })
+      await waitForPanelState(page, 'visibility')
+    } else {
+      await page.evaluate(() => (window as any).__lvHiddenPanel.host.shadowRoot.querySelector('[data-visualization-retry]').click())
+    }
+    expect(await page.evaluate(() => (window as any).__lvHiddenPanel.host.applyQueued)).toBe(true)
+    await page.evaluate(() => (window as any).__lvReleaseFailedApply())
+    await waitForPanelState(page, 'recovery')
     const mounted = await page.evaluate(() => (window as any).__lvHiddenPanel.host.shadowRoot.querySelector('.renderer').childElementCount)
     expect(mounted).toBeGreaterThan(0)
   } finally { await page.close() }
