@@ -829,6 +829,18 @@ func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, err
 		if manager := h.options.Service.ConfigurationManager(); manager != nil {
 			if err := manager.Refresh(ctx); err != nil {
 				h.options.Service.ReportRuntimeConfigError()
+				if errors.Is(err, agent.ErrConfigurationReentryRequired) {
+					retained, readErr := manager.CurrentMetadata(ctx)
+					if readErr != nil {
+						return out, readErr
+					}
+					out.ConfigurationRevision, out.AdminManaged = retained.Revision, retained.Revision > 0
+					out.ConfigurationAvailable = true
+					out.Model, out.BaseURL, out.APIMode, out.ReasoningEffort = retained.Config.Model, retained.Config.NormalizedBaseURL(), retained.Config.APIMode, retained.Config.ReasoningEffort
+					out.Status = string(agent.AgentRuntimeDegraded)
+					out.StatusDetail = "Complete customer credential setup and explicitly enter the provider key again. Historical credentials remain available only in the old deployment for recovery."
+					return out, nil
+				}
 				return out, err
 			}
 			c := h.options.Service.DeploymentConfig()

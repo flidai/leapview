@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrConfigurationNotFound = errors.New("agent configuration not found")
-	ErrConfigurationConflict = errors.New("agent configuration changed; reload settings and test again")
+	ErrConfigurationNotFound        = errors.New("agent configuration not found")
+	ErrConfigurationConflict        = errors.New("agent configuration changed; reload settings and test again")
+	ErrConfigurationReentryRequired = errors.New("agent credentials must be explicitly re-entered")
 )
 
 // ConfigurationRevision is an immutable administrator-owned revision. Config
@@ -77,10 +78,10 @@ func NewConfigurationManager(store ConfigurationStore, service *Service, credent
 
 func (m *ConfigurationManager) readConfiguration(ctx context.Context, r ConfigurationRevision) (Config, error) {
 	if len(r.Credential) != 0 {
-		return Config{}, fmt.Errorf("legacy agent credential format is unsupported; retain the old deployment for recovery and configure customer credential storage before explicitly re-entering the provider key")
+		return Config{}, fmt.Errorf("%w: legacy agent credential format is unsupported; retain the old deployment for recovery and configure customer credential storage before explicitly re-entering the provider key", ErrConfigurationReentryRequired)
 	}
 	if r.CredentialVersionID == "" {
-		return Config{}, fmt.Errorf("agent configuration has no customer credential version; complete credential setup and explicitly re-enter the provider settings")
+		return Config{}, fmt.Errorf("%w: agent configuration has no customer credential version; complete credential setup and explicitly re-enter the provider settings", ErrConfigurationReentryRequired)
 	}
 	var result Config
 	err := m.credentials.UseConfiguration(ctx, r, func(c Config) error { result = c; result.Revision = r.Revision; return nil })
@@ -219,6 +220,18 @@ func (m *ConfigurationManager) Refresh(ctx context.Context) error {
 		return err
 	}
 	return m.service.ApplyRuntimeConfig(c, r.Enabled)
+}
+
+// CurrentMetadata exposes retained settings for administrator recovery without
+// decrypting, installing, or returning historical credentials.
+func (m *ConfigurationManager) CurrentMetadata(ctx context.Context) (ConfigurationRevision, error) {
+	r, err := m.store.CurrentConfiguration(ctx)
+	if err != nil {
+		return ConfigurationRevision{}, err
+	}
+	r.Credential = nil
+	r.Config.APIKey = ""
+	return r, nil
 }
 func (m *ConfigurationManager) runtimeForRevision(ctx context.Context, revision int64) (*agentRuntime, error) {
 	r, err := m.store.ConfigurationByRevision(ctx, revision)

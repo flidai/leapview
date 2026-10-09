@@ -12,6 +12,27 @@ import (
 
 type configurationMemory struct{ rows []ConfigurationRevision }
 
+func TestConfigurationRecoveryMetadataRetainsRecordsAndExcludesCredentials(t *testing.T) {
+	for _, credential := range [][]byte{[]byte("retained-ciphertext"), nil} {
+		store := &configurationMemory{rows: []ConfigurationRevision{{Revision: 1, Enabled: true, Config: Config{Model: "old-model", APIKey: "private-key"}, Credential: credential}}}
+		service := NewService(nil, Config{})
+		manager, err := NewConfigurationManager(store, service, newConfigurationLifecycleStub(store))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Refresh(t.Context()); !errors.Is(err, ErrConfigurationReentryRequired) || service.Enabled() {
+			t.Fatalf("unsupported credentials must stay unavailable: %v", err)
+		}
+		metadata, err := manager.CurrentMetadata(t.Context())
+		if err != nil || metadata.Revision != 1 || metadata.Config.Model != "old-model" || metadata.Config.APIKey != "" || len(metadata.Credential) != 0 {
+			t.Fatal("recovery metadata is missing or includes credentials")
+		}
+		if store.rows[0].Config.APIKey != "private-key" || string(store.rows[0].Credential) != string(credential) {
+			t.Fatal("reading metadata modified the retained recovery record")
+		}
+	}
+}
+
 func (m *configurationMemory) CurrentConfiguration(context.Context) (ConfigurationRevision, error) {
 	if len(m.rows) == 0 {
 		return ConfigurationRevision{}, ErrConfigurationNotFound
