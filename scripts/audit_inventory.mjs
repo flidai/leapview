@@ -56,6 +56,7 @@ export function inventoryFiles(root, paths) {
 }
 
 function routeDomain(path) {
+  if (path === '/mcp') return 'agent'
   if (/^\/(?:admin\/agent|chats)/.test(path)) return 'agent'
   if (path.startsWith('/candidates/')) return 'lifecycle'
   if (/^\/(?:dashboards|public\/dashboards|embed\/dashboards)/.test(path)) return 'dashboards'
@@ -97,6 +98,19 @@ export function collectFeatures({ texts, openapi, visuals, agentManifest, cliMan
     add('route-registration', entry, routeSource, routeDomain(entry.slice(entry.indexOf(' ') + 1)),
       { runtimeContract: 'TestRouteInventory', coverageScope: 'Mounted route parity; handler journeys need separate evidence.' })
   }
+  const conditionalSource = 'internal/app/conditional_route_inventory_test.go'
+  const conditionalText = texts[conditionalSource]
+  if (conditionalText !== undefined) {
+    const conditionalTable = conditionalText.match(/const conditionalRouteInventory = `([\s\S]*?)`/)
+    if (!conditionalTable?.[1].trim()) throw new Error('missing conditional route inventory contract')
+    for (const entry of conditionalTable[1].split('\n').map(line => line.trim()).filter(Boolean)) {
+      if (!/^[A-Z*]+ \/\S+$/.test(entry)) throw new Error(`invalid conditional route inventory row: ${entry}`)
+      add('route-registration', entry, conditionalSource, routeDomain(entry.slice(entry.indexOf(' ') + 1)),
+        { runtimeContract: 'TestConditionalRouteInventory', conditional: true,
+          coverageScope: 'Conditional route registration only; nested protocol operations and journeys require separate evidence.' })
+    }
+  } else limitations.push('Missing conditional route inventory contract.')
+  limitations.push('Opaque protocol mounts identify conditional MCP, SCIM and TUS surfaces, not every nested protocol operation or its execution.')
   for (const [source, body] of Object.entries(texts)) {
     if (!source.endsWith('.go') || source.endsWith('_test.go')) continue
     if (source.startsWith('internal/app/site/http/')) {
