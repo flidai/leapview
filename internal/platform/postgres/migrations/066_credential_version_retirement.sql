@@ -95,7 +95,9 @@ CREATE OR REPLACE FUNCTION credential.guard_retained_release_version() RETURNS t
 LANGUAGE plpgsql SET search_path=pg_catalog AS $$
 DECLARE binding jsonb; version text; deployment text;
 BEGIN
-    FOR binding IN SELECT value FROM jsonb_array_elements(COALESCE(NEW.provenance#>'{plan,bindings}','[]'::jsonb)) LOOP
+    -- Go's nil binding slice is JSON null; COALESCE alone only handles SQL
+    -- NULL from a missing key. Both forms mean no credential references.
+    FOR binding IN SELECT value FROM jsonb_array_elements(COALESCE(NULLIF(NEW.provenance#>'{plan,bindings}','null'::jsonb),'[]'::jsonb)) LOOP
         version=binding->>'credentialVersionId';
         IF COALESCE(version,'')<>'' THEN
             SELECT deployment_id INTO STRICT deployment FROM credential.draft_version WHERE version_id=version;
