@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180" viewBox="0 0 240 180" role="img" aria-labelledby="title description">
+<title id="title">Electric motor — catalog illustration</title><desc id="description">Illustrative technical drawing for the manufacturing parts demo.</desc>
+<defs><linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e7eef3"/><stop offset=".45" stop-color="#b5c7d4"/><stop offset="1" stop-color="#7f98ad"/></linearGradient><linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#638aa7"/><stop offset="1" stop-color="#3c6584"/></linearGradient><radialGradient id="ball" cx=".32" cy=".25"><stop stop-color="#fff"/><stop offset=".4" stop-color="#c4d4df"/><stop offset="1" stop-color="#627c91"/></radialGradient><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#dce6ed" stroke-width=".6"/></pattern></defs>
+<rect width="240" height="180" rx="12" fill="#edf3f7"/><rect width="240" height="180" rx="12" fill="url(#grid)"/><path d="M18 29V18h11M211 18h11v11M18 151v11h11M211 162h11v-11" fill="none" stroke="#a8bdcd" stroke-width="1.5"/>
+    <ellipse cx="124" cy="146" rx="82" ry="9" fill="#172b42" opacity=".12"/>
+    <path d="M57 127h37l-7 16H47zM143 126h28l16 17h-40z" fill="#345977" stroke="#29465e" stroke-width="2"/>
+    <path d="M68 55h86l24 15v54l-24 13H68z" fill="url(#blue)" stroke="#284961" stroke-width="2"/>
+    <ellipse cx="68" cy="96" rx="24" ry="41" fill="url(#metal)" stroke="#466078" stroke-width="2"/>
+    <ellipse cx="65" cy="96" rx="15" ry="29" fill="#314b64" stroke="#a6bbc9" stroke-width="2"/>
+    <ellipse cx="65" cy="96" rx="7" ry="13" fill="#9aadb9"/>
+    <path d="M37 89h26v14H37z" fill="url(#metal)" stroke="#4a6072" stroke-width="1.5"/>
+    <ellipse cx="37" cy="96" rx="4" ry="7" fill="#dbe4e9" stroke="#4a6072"/>
+    <path d="M83 59v73" stroke="#244c6b" stroke-width="3"/><path d="M86 59v72" stroke="#6390af" stroke-width="1.5"/><path d="M93 59v73" stroke="#244c6b" stroke-width="3"/><path d="M96 59v72" stroke="#6390af" stroke-width="1.5"/><path d="M103 59v73" stroke="#244c6b" stroke-width="3"/><path d="M106 59v72" stroke="#6390af" stroke-width="1.5"/><path d="M113 59v73" stroke="#244c6b" stroke-width="3"/><path d="M116 59v72" stroke="#6390af" stroke-width="1.5"/><path d="M123 59v73" stroke="#244c6b" stroke-width="3"/><path d="M126 59v72" stroke="#6390af" stroke-width="1.5"/><path d="M133 59v73" stroke="#244c6b" stroke-width="3"/><path d="M136 59v72" stroke="#6390af" stroke-width="1.5"/><path d="M143 59v73" stroke="#244c6b" stroke-width="3"/><path d="M146 59v72" stroke="#6390af" stroke-width="1.5"/><path d="M153 59v73" stroke="#244c6b" stroke-width="3"/><path d="M156 59v72" stroke="#6390af" stroke-width="1.5"/>
+    <path d="M112 45l13-7h37v22h-50z" fill="#5a7890" stroke="#29465e" stroke-width="2"/>
+    <path d="M125 38v17h37M112 45h37v15" fill="none" stroke="#8eabbf"/>
+    <rect x="111" y="82" width="31" height="17" rx="2" fill="#d3e1ea" stroke="#314e66"/><path d="M116 87h21M116 91h15M116 95h18" stroke="#71889a" stroke-width="1.5"/>
+    <circle cx="54" cy="65" r="2.5" fill="#dae3e9"/><circle cx="54" cy="127" r="2.5" fill="#dae3e9"/>
+</svg>

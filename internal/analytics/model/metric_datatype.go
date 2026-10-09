@@ -41,7 +41,10 @@ func (m *Model) metricDataType(metric Metric, visiting map[string]bool) (Logical
 		if dimension, err := m.ResolveDimension(metric.Input.Field); err == nil {
 			switch dimension.Datatype {
 			case DataTypeInteger:
-				if metric.Aggregation == "avg" {
+				// DuckDB widens integer SUM to HUGEINT, which Arrow carries as
+				// scale-zero Decimal. Preserve that exact string boundary instead
+				// of narrowing the aggregate to an Integer browser number.
+				if metric.Aggregation == "avg" || metric.Aggregation == "sum" {
 					return DataTypeDecimal, nil
 				}
 				return DataTypeInteger, nil

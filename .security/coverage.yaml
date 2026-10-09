@@ -118,7 +118,7 @@ surfaces:
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
     scanners: [trivy]
-    images: ["${LEAPVIEW_IMAGE}", "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251"]
+    images: ["${LEAPVIEW_IMAGE}", "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251"]
   - path: deploy/compose/qualification/Dockerfile.authoring-browser
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
@@ -135,7 +135,7 @@ surfaces:
     updater: {ecosystem: docker, directory: /internal/platform/testminio}
     scanners: [trivy]
     images:
-      - golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+      - public.ecr.aws/docker/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}
@@ -157,6 +157,10 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/actions/setup-ci/action.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/actions/setup-docker/action.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

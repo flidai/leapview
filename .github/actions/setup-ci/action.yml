@@ -50,6 +50,10 @@ runs:
           *) echo "unknown CI profile: $CI_PROFILE" >&2; exit 1 ;;
         esac
 
+    - name: Configure hosted Docker pulls
+      if: inputs.profile == 'validation' && runner.os == 'Linux' && runner.environment == 'github-hosted'
+      uses: ./.github/actions/setup-docker
+
     - name: Install locked Nix
       if: inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'
       uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31

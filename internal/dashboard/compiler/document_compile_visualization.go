@@ -102,7 +102,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		}
 		columns := make([]visualizationir.TableVisualizationColumn, 0, len(query.ResultFrame))
 		for i := range query.ResultFrame {
-			columns = append(columns, visualizationir.TableVisualizationColumn{Field: ref(i), Label: query.ResultFrame[i].Name, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
+			columns = append(columns, visualizationir.TableVisualizationColumn{Field: ref(i), Label: primaryFields[i].Label, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
 		}
 		base.Kind = "table"
 		return visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: base, Kind: "table", Columns: columns, Presentation: p}}, nil
@@ -129,6 +129,9 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		}
 		if len(rows) == 0 || len(metricRefs) == 0 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("matrix visual requires non-empty rows and metrics")
+		}
+		if err := validateHierarchyPivotTotals(p.Hierarchy, query); err != nil {
+			return visualizationir.VisualizationSpec{}, err
 		}
 		base.Kind = "matrix"
 		return visualizationir.VisualizationSpec{Value: &visualizationir.MatrixVisualizationSpec{VisualizationSpecBase: base, Kind: "matrix", Rows: rows, Columns: columns, Metrics: metricRefs, MetricFormatting: map[string][]visualizationir.TableVisualizationFormattingRule{}, Presentation: p}}, nil
@@ -167,6 +170,9 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		metricRefs := bindingRefs(query.Binding.Pivot.Metrics)
 		if len(rows) == 0 || len(columns) == 0 || len(metricRefs) == 0 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("pivot visual requires non-empty rows, columns, and metrics")
+		}
+		if err := validateHierarchyPivotTotals(p.Hierarchy, query); err != nil {
+			return visualizationir.VisualizationSpec{}, err
 		}
 		base.Kind = "pivot"
 		return visualizationir.VisualizationSpec{Value: &visualizationir.PivotVisualizationSpec{VisualizationSpecBase: base, Kind: "pivot", Rows: rows, Columns: columns, Metrics: metricRefs, MetricFormatting: map[string][]visualizationir.TableVisualizationFormattingRule{}, Presentation: p}}, nil
