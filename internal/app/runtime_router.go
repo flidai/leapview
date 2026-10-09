@@ -1077,9 +1077,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					if requestLocalDevelopmentAuthorization(ctx, principalID) {
 						return nil
 					}
-					if marker, admitted := developmentProfileBootstrapAuthority(ctx, runtimeConfig.Production); admitted && developmentProfileBootstrapBindingMatches(marker, principalID, permission, binding, storage.instanceID, runtimeConfig.DefaultEnvironment) {
-						return nil
-					}
 					var action access.Action
 					switch permission {
 					case analyticsmodule.PermissionManageConnectionMetadata:
@@ -1090,6 +1087,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 						action = access.ActionConnectionRead
 					default:
 						return analyticsmodule.ErrConnectionBindingUnauthorized
+					}
+					if marker, admitted := developmentProfileBootstrapAuthority(ctx, runtimeConfig.Production); admitted && developmentProfileBootstrapBindingMatches(marker, principalID, permission, binding, storage.instanceID, runtimeConfig.DefaultEnvironment) {
+						credential, found := accessmodule.APICredentialFromContext(ctx)
+						if found && bootstrapBindingCredentialAllows(credential, principalID, binding, storage.instanceID, action) {
+							return nil
+						}
 					}
 					resource, err := access.NewResourceRef(binding.ConnectionID, projectgraph.KindConnection)
 					if err != nil {

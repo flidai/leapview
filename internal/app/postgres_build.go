@@ -556,6 +556,9 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	}
 	candidateBindings, err := analytics.NewRuntimeBindingLeaser(analyticsmodule.RuntimeBindingLeaserConfig{
 		Authorize: func(ctx context.Context, principalID string, binding analyticsmodule.ConnectionTargetBinding) error {
+			if developmentCandidateBootstrapAuthorized(ctx, production, profileAdmission != nil, principalID, binding, instanceID, string(environment)) {
+				return nil
+			}
 			resource, err := access.NewResourceRef(binding.ConnectionID, projectgraph.KindConnection)
 			if err != nil {
 				return err
