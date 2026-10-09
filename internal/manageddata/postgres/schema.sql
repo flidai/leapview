@@ -209,6 +209,9 @@ CREATE TABLE IF NOT EXISTS managed_data.multipart_upload (
     CHECK (octet_length(error) <= 4096),
     CHECK (octet_length(completion_identity) <= 255 AND octet_length(abort_identity) <= 255)
 );
+CREATE INDEX IF NOT EXISTS multipart_upload_reachability_idx
+    ON managed_data.multipart_upload (multipart_id)
+    WHERE status IN ('creating', 'open', 'completing', 'aborting', 'failed');
 CREATE TABLE IF NOT EXISTS managed_data.multipart_part (
     multipart_id text NOT NULL REFERENCES managed_data.multipart_upload(multipart_id) ON DELETE RESTRICT,
     part_number integer NOT NULL CHECK (part_number BETWEEN 1 AND 10000),
@@ -672,6 +675,30 @@ AFTER INSERT OR DELETE OR UPDATE OF state, revision_id
 ON managed_data.retention_root FOR EACH ROW
 EXECUTE FUNCTION managed_data.bump_reachability_epoch();
 
+DROP TRIGGER IF EXISTS multipart_reachability_epoch ON managed_data.multipart_upload;
+CREATE TRIGGER multipart_reachability_epoch
+AFTER INSERT OR DELETE OR UPDATE OF status, logical_path, sha256, size_bytes
+ON managed_data.multipart_upload FOR EACH ROW
+EXECUTE FUNCTION managed_data.bump_reachability_epoch();
+
+-- The fixed owner helper fences every reachability source without granting
+-- runtime mutation privileges on immutable retention roots. NOWAIT avoids
+-- inversions with caller-owned writes and multipart-first bounded pruning.
+CREATE OR REPLACE FUNCTION managed_data.lock_stable_reachability() RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog
+AS $$
+BEGIN
+  LOCK TABLE managed_data.multipart_upload, managed_data.upload_session,
+             managed_data.revision, managed_data.retention_root IN SHARE MODE NOWAIT;
+END $$;
+
+-- Installing source coverage invalidates snapshots captured before this schema
+-- transaction; a repeated capability installation also fails old authority shut.
+DO $$ BEGIN
+  UPDATE managed_data.reachability_epoch SET epoch = epoch + 1 WHERE singleton = true;
+  IF NOT FOUND THEN RAISE EXCEPTION 'managed-data reachability epoch is missing'; END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION managed_data.guard_revision_file() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, managed_data
@@ -934,6 +961,7 @@ BEGIN
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.reconciliation_evidence TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.provider_observation_profile, managed_data.provider_version_observation TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON managed_data.reachability_epoch TO leapview_control_runtime';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.lock_stable_reachability() TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA managed_data TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.publish_binding_set(text,text,text,text,bigint,jsonb) TO leapview_control_runtime';
       ELSIF r = 'leapview_control_maintenance' THEN
