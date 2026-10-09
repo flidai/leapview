@@ -38,7 +38,7 @@ func TestManagedAuthorityUsesExplicitTLSAndRejectsOriginalCluster(t *testing.T) 
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	input := AuthorityInput{URLFile: filepath.Join(root, "url"), RootCAFile: filepath.Join(root, "ca"), Role: role.Name}
+	input := AuthorityInput{SystemIdentifier: systemID, URLFile: filepath.Join(root, "url"), RootCAFile: filepath.Join(root, "ca"), Role: role.Name}
 	ca, err := os.ReadFile(h.RootCertPath())
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +58,12 @@ func TestManagedAuthorityUsesExplicitTLSAndRejectsOriginalCluster(t *testing.T) 
 		t.Fatal("explicit maintenance authority could not write its ledger")
 	}
 	pool.Close()
+	wrongIdentity := input
+	wrongIdentity.SystemIdentifier = "2"
+	if pool, err := OpenManagedAuthority(t.Context(), wrongIdentity, primaries); err == nil {
+		pool.Close()
+		t.Fatal("foreign authority system identity accepted")
+	}
 	primaries[0].SystemIdentifier = systemID
 	if pool, err := OpenManagedAuthority(t.Context(), input, primaries); err == nil {
 		pool.Close()

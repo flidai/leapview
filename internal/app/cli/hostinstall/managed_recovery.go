@@ -40,13 +40,16 @@ func addManagedRecoveryCommand(host *cobra.Command) {
 				return errors.New("managed recovery requires exclusive instance ownership")
 			}
 			defer lock.Release()
+			if input.Authority.SystemIdentifier != input.Enrollment.Request.AuthoritySystemID {
+				return errors.New("managed recovery authority input differs from enrolled identity")
+			}
 			pool, err := managedrecovery.OpenManagedAuthority(ctx, input.Authority, input.PrimaryFence.Primaries)
 			if err != nil {
 				return err
 			}
 			defer pool.Close()
 			ledger, sets := refreshpostgres.NewRecoveryLedger(pool), recoverypostgres.New(pool)
-			coordinator, err := managedrecovery.NewManaged(ctx, configuration, managedrecovery.ManagedAuthorities{Ledger: ledger, Sets: sets})
+			coordinator, err := managedrecovery.NewManaged(ctx, configuration, managedrecovery.ManagedAuthorities{Ledger: ledger, Sets: sets, AuthoritySystemIdentifier: input.Authority.SystemIdentifier})
 			if err != nil {
 				return err
 			}

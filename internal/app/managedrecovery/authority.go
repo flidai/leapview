@@ -10,16 +10,17 @@ import (
 )
 
 type AuthorityInput struct {
-	URLFile    string `json:"urlFile"`
-	RootCAFile string `json:"rootCaFile"`
-	Role       string `json:"role"`
+	URLFile          string `json:"urlFile"`
+	RootCAFile       string `json:"rootCaFile"`
+	Role             string `json:"role"`
+	SystemIdentifier string `json:"systemIdentifier"`
 }
 
 // OpenManagedAuthority authenticates one explicit TLS maintenance authority.
 // Its durable ledger/set storage must remain available when original writers
 // are fenced; the actual PostgreSQL system ID proves that separation.
 func OpenManagedAuthority(ctx context.Context, input AuthorityInput, primaries []providerrestore.PrimaryEnrollment) (*pgxpool.Pool, error) {
-	if len(primaries) == 0 {
+	if len(primaries) == 0 || input.SystemIdentifier == "" {
 		return nil, errors.New("managed recovery requires enrolled original primaries")
 	}
 	value, err := readBoundedManagedPrivateFile(input.URLFile, maxManagedCredentialsBytes)
@@ -52,6 +53,10 @@ func OpenManagedAuthority(ctx context.Context, input AuthorityInput, primaries [
 	if err := pool.QueryRow(ctx, "SELECT system_identifier::text FROM pg_control_system()").Scan(&systemID); err != nil {
 		pool.Close()
 		return nil, errors.New("recovery authority cluster identity cannot be verified")
+	}
+	if systemID != input.SystemIdentifier {
+		pool.Close()
+		return nil, errors.New("recovery authority differs from exact enrolled PostgreSQL system identity")
 	}
 	for _, primary := range primaries {
 		if primary.SystemIdentifier == systemID {

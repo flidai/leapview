@@ -30,6 +30,7 @@ type ManagedPostgresInput struct {
 // ManagedInput is a private operator document. It names retained secrets by
 // explicit file rather than including them in process arguments or reports.
 type ManagedInput struct {
+	Enrollment          ManagedEnrollmentReceipt               `json:"enrollment"`
 	SchemaVersion       int                                    `json:"schemaVersion"`
 	Profile             string                                 `json:"profile"`
 	RecoverySetID       string                                 `json:"recoverySetId"`
@@ -75,7 +76,7 @@ func (input ManagedInput) Configuration(ctx context.Context) (ManagedConfig, err
 		return ManagedConfig{}, errors.New("retained managed credentials invalid")
 	}
 	p := input.Postgres
-	return ManagedConfig{RecoverySetID: input.RecoverySetID, OccurrenceID: input.OccurrenceID, InstanceHome: input.InstanceHome, Artifact: input.Artifact, Credentials: credentials, Roles: input.Roles, Roots: input.Roots, Closure: input.Closure, PrimaryFence: input.PrimaryFence, EvidenceRoot: input.EvidenceRoot, SecretRoot: input.SecretRoot,
+	return ManagedConfig{Enrollment: input.Enrollment, RecoverySetID: input.RecoverySetID, OccurrenceID: input.OccurrenceID, InstanceHome: input.InstanceHome, Artifact: input.Artifact, Credentials: credentials, Roles: input.Roles, Roots: input.Roots, Closure: input.Closure, PrimaryFence: input.PrimaryFence, EvidenceRoot: input.EvidenceRoot, SecretRoot: input.SecretRoot,
 		Postgres: PGBackRestConfig{TargetID: credentials.TargetID, RecoverySetID: input.RecoverySetID, Frontier: p.Frontier, PGBackRest: p.PGBackRest, Bubblewrap: p.Bubblewrap, ConfigFile: p.ConfigFile, ConfigDigest: p.ConfigDigest, Destination: p.Destination},
 		Readback: PGNativeReadbackConfig{Native: NativePostgresReadback{MetadataSchema: p.MetadataSchema}, Frontier: p.Frontier, Postgres: p.Postgres, PGControlData: p.PGControlData, PGBackRest: p.PGBackRest, ProviderConfigFile: p.ConfigFile, ProviderConfigDigest: p.ConfigDigest, ServerCertificateFile: p.ServerCertificateFile, ServerCertificateDigest: p.ServerCertificateDigest, ServerKeyFile: p.ServerKeyFile, ServerKeyDigest: p.ServerKeyDigest}}, nil
 }

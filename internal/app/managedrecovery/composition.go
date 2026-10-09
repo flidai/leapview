@@ -21,6 +21,7 @@ import (
 // and occurrence are read from their durable authorities, never accepted as
 // operator-provided substitutes. Normal publication authority is unchanged.
 type ManagedConfig struct {
+	Enrollment    ManagedEnrollmentReceipt
 	RecoverySetID string
 	OccurrenceID  string
 	InstanceHome  string
@@ -37,8 +38,9 @@ type ManagedConfig struct {
 }
 
 type ManagedAuthorities struct {
-	Ledger recovery.Repository
-	Sets   providerrestore.RecoverySetAuthority
+	AuthoritySystemIdentifier string
+	Ledger                    recovery.Repository
+	Sets                      providerrestore.RecoverySetAuthority
 }
 
 // NewManaged composes concrete pgBackRest, Restic, native TLS readback,
@@ -65,6 +67,12 @@ func NewManaged(ctx context.Context, config ManagedConfig, authority ManagedAuth
 	}
 	if occurrence.ID != config.OccurrenceID || occurrence.Operation != recovery.OperationRestore || occurrence.TargetScope != set.Delivery.TargetID || occurrence.ArtifactIdentity != config.Artifact.Image || config.Credentials.RecoverySetID != set.ID || config.Credentials.TargetID != set.Delivery.TargetID || config.Credentials.OccurrenceID != occurrence.ID || config.PrimaryFence.TargetID != set.Delivery.TargetID {
 		return nil, errors.New("managed provider inputs differ from exact durable set/occurrence")
+	}
+	if err := VerifyManagedEnrollment(config.Enrollment, set, occurrence, config.InstanceHome); err != nil {
+		return nil, err
+	}
+	if authority.AuthoritySystemIdentifier == "" || authority.AuthoritySystemIdentifier != config.Enrollment.Request.AuthoritySystemID {
+		return nil, errors.New("managed recovery authority differs from exact enrollment")
 	}
 	if len(config.PrimaryFence.Primaries) != 1 {
 		return nil, errors.New("managed recovery requires exactly the retained PostgreSQL primary enrollment")
