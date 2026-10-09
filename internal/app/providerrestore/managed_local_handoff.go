@@ -106,6 +106,28 @@ func canonicalLocalPath(value string) bool {
 	return filepath.IsAbs(value) && filepath.Clean(value) == value && value != "/" && !strings.ContainsAny(value, "\r\n\t\x00:")
 }
 
+// ValidateManagedLocalHandoffReport is the dedicated local consumer boundary.
+// It requires the complete authoritative set, rather than reconstructing an
+// empty-root set from report identities as the remote consumer does.
+func ValidateManagedLocalHandoffReport(report Report, set recoveryset.RecoverySet, expected HandoffExpectations) error {
+	if report.Handoff.SchemaVersion != ManagedLocalHandoffSchemaVersion || report.Status != StatusSucceeded || !HandoffPresent(report.Handoff) {
+		return fmt.Errorf("%w: managed-local consumer requires a successful local-profile report", ErrInconsistent)
+	}
+	if expected.OccurrenceID == "" || expected.TargetID == "" || expected.RecoverySetID == "" || expected.FrontierDigest == "" || expected.ArtifactIdentity == "" {
+		return fmt.Errorf("%w: exact managed-local expectations required", ErrInvalid)
+	}
+	if set.Validate() != nil || set.ID != expected.RecoverySetID || set.FrontierDigest != expected.FrontierDigest || set.Delivery.TargetID != expected.TargetID || report.OccurrenceID != expected.OccurrenceID || report.TargetID != expected.TargetID || report.RecoverySetID != expected.RecoverySetID || report.FrontierDigest != expected.FrontierDigest {
+		return fmt.Errorf("%w: managed-local report differs from authoritative set/occurrence", ErrInconsistent)
+	}
+	if err := report.Handoff.validateOccurrence(expected.OccurrenceID); err != nil {
+		return err
+	}
+	if err := report.Handoff.Validate(set, expected.ArtifactIdentity); err != nil {
+		return err
+	}
+	return validateManagedLocalResults(report.Handoff, report.Databases, report.Objects)
+}
+
 func validLocalSnapshot(value string) bool {
 	return len(value) == 64 && strings.Trim(value, "0123456789abcdef") == ""
 }

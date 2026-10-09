@@ -59,10 +59,18 @@ type ReplacementHandoff struct {
 }
 
 type HandoffRequest struct {
+	OccurrenceID     string
 	Set              recoveryset.RecoverySet
 	ArtifactIdentity string
 	Databases        []DatabaseResult
 	Objects          []ObjectResult
+}
+
+func (handoff ReplacementHandoff) validateOccurrence(occurrenceID string) error {
+	if handoff.SchemaVersion == ManagedLocalHandoffSchemaVersion && (handoff.ManagedLocal == nil || occurrenceID == "" || handoff.ManagedLocal.OccurrenceID != occurrenceID) {
+		return fmt.Errorf("%w: managed-local handoff belongs to another recovery occurrence", ErrInconsistent)
+	}
+	return nil
 }
 
 type HandoffExpectations struct {
