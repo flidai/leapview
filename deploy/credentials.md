@@ -184,8 +184,48 @@ readiness before opening traffic. Database recovery cannot undo an upstream
 credential revocation. A component test or a current-key health check alone does
 not prove retained-backup decryption or installation-specific key custody.
 
-Version retirement must account for retained serving/configuration history,
-rollback references and resumable work, drain its consumers, and deny later use.
-Do not treat activation of a replacement, encryption rewrapping, or elapsed time
-as permission to delete a logical version or recovery key. Record any remaining
-retirement and restore qualification gaps in D12/D13 until verified.
+Local version retirement is described below. Full-profile restore and installation-specific
+key-custody evidence remain separately tracked in D12/D13.
+
+## Inspect and retire a local version
+
+Open the connection's **Credentials** panel, select the saved version and choose
+**Inspect version dependencies**. The result identifies retained candidate,
+release, activation and configuration references, including historical versions.
+A live validation receipt also prevents retirement until it expires. Metadata
+inspection requires current connection manage/use authority; it never returns the
+password, ciphertext, key material or provider secret references.
+
+**Retire version locally** is available after inspection finds no dependencies.
+The command checks current authority and dependencies again under the publication
+and version fences, drains provider work, records an immutable `retired_local`
+state with its audit, and restores current clients before resuming work. A racing
+validation, activation, release or configuration write cannot acquire a retired
+version. An interrupted or repeated request can be resolved by inspecting that
+same version; retirement is irreversible and saving a new draft is the way to
+create a usable version again.
+
+The API uses the same service:
+
+- `GET /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts/{version}/status`
+- `POST /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts/{version}/retire`, with an empty JSON object
+- `GET /api/v1/agent/credential-versions/{version}`
+- `POST /api/v1/agent/credential-versions/{version}/retire`, with an empty JSON object
+
+Agent operations require current instance settings-update authority. Agent
+settings and the configuration API expose the exact credential version ID without
+its key. Every retained configuration revision remains a dependency because
+resumable runs and configuration recovery select historical versions. Current
+and previous native publications likewise remain dependencies even after a
+replacement becomes active. The response bounds the dependency list at 100 and
+sets `moreDependencies` when additional references prevent retirement. These
+commands do not delete retained application history to make a version eligible.
+
+Local retirement does not revoke a credential at its upstream provider, delete
+encrypted envelopes, remove backups or release historical key-custody obligations.
+The independent database-backup test restores a pre-rewrap PostgreSQL dump into a
+separate database and reopens a separately retained key file: the replacement-only
+key fails, while the historical key decrypts the selected stored version. This
+proves that recovery path in the disposable fixture; an installation still needs
+its own custodian, backup identity, protected independent recovery copy and
+full-profile restore evidence.

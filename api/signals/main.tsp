@@ -448,6 +448,7 @@ enum PopularityLevel {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentSignal {
+ `credentialVersionId`?: string;
  `baseUrl`?: string;
  `apiMode`?: string;
  `configurationRevision`?: int64;
@@ -1419,7 +1420,19 @@ model FirstSourceCredentialSignal {
   `error`: string;
 }
 
+model CredentialVersionDependencySignal {
+  `kind`: string;
+  `id`: string;
+}
+model CredentialVersionStatusSignal {
+  `versionId`: string;
+  `state`: string;
+  `retiredAt`: string;
+  `dependencies`: CredentialVersionDependencySignal[];
+  `moreDependencies`: boolean;
+}
 model ConnectionCredentialSignal {
+  `versionStatus`?: CredentialVersionStatusSignal;
   `command`: ConnectionCredentialCommandSignal;
   `drafts`: ConnectionCredentialDraftSignal[];
   `nextBeforeVersionId`: string;

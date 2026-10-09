@@ -100,7 +100,7 @@ func (h *Handler) updateProviderConfig(w http.ResponseWriter, r *http.Request, i
 	revision := agentResourceETag(details)
 	w.Header().Set("ETag", revision)
 	if agentAcceptsEventStream(r.Header.Get("Accept")) {
-		patch := map[string]any{"configured": details.Configured, "enabled": details.Enabled, "model": details.Model, "reasoningEffort": details.ReasoningEffort, "baseUrl": details.BaseURL, "apiMode": details.APIMode, "configurationRevision": details.ConfigurationRevision, "adminManaged": details.AdminManaged, "credentialConfigured": details.CredentialConfigured, "configurationAvailable": details.ConfigurationAvailable, "status": details.Status, "statusDetail": details.StatusDetail, "revision": revision, "testToken": token, "testMessage": message}
+		patch := map[string]any{"credentialVersionId": details.CredentialVersionID, "configured": details.Configured, "enabled": details.Enabled, "model": details.Model, "reasoningEffort": details.ReasoningEffort, "baseUrl": details.BaseURL, "apiMode": details.APIMode, "configurationRevision": details.ConfigurationRevision, "adminManaged": details.AdminManaged, "credentialConfigured": details.CredentialConfigured, "configurationAvailable": details.ConfigurationAvailable, "status": details.Status, "statusDetail": details.StatusDetail, "revision": revision, "testToken": token, "testMessage": message}
 		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": map[string]any{"agent": patch}, "adminAgentCommand": map[string]any{"provider": nil, "testToken": ""}})
 		return
 	}

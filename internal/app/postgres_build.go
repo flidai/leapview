@@ -954,6 +954,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		return fail(fmt.Errorf("build native refresh executor: %w", err))
 	}
 	var credentialAPI credentialmodule.CredentialDraftAPIGenConfig
+	credentialAPI.InstanceID = instanceID
 	credentialAPI.Activation = credentialRuntime.activationService()
 	credentialAPI.FirstSourcePreparation = firstSourceCredentialPreparationCommands(firstSource.preparation)
 	if credentialServices != nil {

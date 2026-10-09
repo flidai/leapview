@@ -228,4 +228,5 @@ func TestPostgresSourceCredentialHTTPJourney(t *testing.T) {
 	if f.querySource(t, token, "50") != productionSnapshot {
 		t.Fatal("production restart query lost the exact committed snapshot")
 	}
+	f.verifySourceCredentialRetirement(t, token, activated.VersionId, productionActivation.VersionId)
 }

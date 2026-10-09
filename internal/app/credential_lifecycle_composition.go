@@ -135,6 +135,9 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 	if err = lifecycle.configure(sourceAuthority, source, c.TargetID); err != nil {
 		return nil, err
 	}
+	if err = lifecycle.coordinator.ConfigureRetirement(&credentialVersionRetirement{config: c}); err != nil {
+		return nil, err
+	}
 	return lifecycle, nil
 }
 

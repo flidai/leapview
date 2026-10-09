@@ -49,6 +49,22 @@ model CredentialDraftListResponse {
   nextBeforeVersionId?: CredentialDraftVersionId;
 }
 
+model CredentialVersionDependencyResponse { kind: string; id: string; }
+@doc("Retained logical references to this exact credential version. retired_local denies future use by this instance only; it does not revoke upstream credentials or remove encrypted backup history.")
+model CredentialVersionStatusResponse {
+  versionId: CredentialDraftVersionId;
+  state: "available" | "retired_local";
+  retiredAt?: utcDateTime;
+  dependencies: CredentialVersionDependencyResponse[];
+  moreDependencies: boolean;
+}
+model CredentialVersionRetireRequest {}
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model CredentialVersionRetiredAuditPayload {
+  @apigen.auditInternal version_id: string;
+  @apigen.auditInternal state: string;
+}
+
 @doc("The secret field values accepted for the connector resolved from the connection binding. The encoded JSON request body is limited to 32 KiB and the typed secret bundle to 16 KiB. Names and values are secret input and are never reflected in responses, audit payloads or logs.")
 model CredentialDraftSaveRequest {
   @apigen.sensitivity("secret")
@@ -88,6 +104,28 @@ model CredentialValidationResponse {
 @route("/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts")
 @tag("Credentials")
 interface ConnectionCredentialDrafts {
+  @summary("Inspect exact credential version dependencies")
+  @route("/{version}/status")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  getCredentialVersionStatus(@path project: ResourceId, @path target: ResourceId, @path @apigen.target connection: ResourceId, @path version: CredentialDraftVersionId): OkJson<CredentialVersionStatusResponse> | CommonErrors;
+
+  @summary("Retire an unreferenced credential version locally")
+  @route("/{version}/retire")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  @apigen.failsWith(InvalidCredentialDraftFailure)
+  @apigen.failsWith(ForbiddenCredentialDraftFailure)
+  @apigen.failsWith(CredentialDraftNotFoundFailure)
+  @apigen.failsWith(CredentialDraftConflictFailure)
+  @apigen.failsWith(CredentialDraftServiceUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.version.retired_local", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(CredentialVersionRetiredAuditPayload)
+  @apigen.ui("credential.version.retire")
+  retireCredentialVersion(@path project: ResourceId, @path target: ResourceId, @path @apigen.target connection: ResourceId, @path version: CredentialDraftVersionId, @body body: CredentialVersionRetireRequest): OkJson<CredentialVersionStatusResponse> | CommonErrors;
+
   @summary("List connection credential draft metadata")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.read", resolver: "connection" })
@@ -159,6 +197,33 @@ interface ConnectionCredentialDrafts {
     @body body: CredentialValidationRequest,
   ): OkJson<CredentialValidationResponse> | CommonErrors;
 
+}
+
+@route("/agent/credential-versions")
+@extension("x-leapview-object-scope", "instance")
+@tag("Credentials")
+interface AgentCredentialVersions {
+  @summary("Inspect agent credential version dependencies")
+  @route("/{version}")
+  @get
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
+  getAgentCredentialVersionStatus(@path version: CredentialDraftVersionId): OkJson<CredentialVersionStatusResponse> | CommonErrors;
+
+  @summary("Retire an unreferenced agent credential version locally")
+  @route("/{version}/retire")
+  @post
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
+  @apigen.failsWith(InvalidCredentialDraftFailure)
+  @apigen.failsWith(ForbiddenCredentialDraftFailure)
+  @apigen.failsWith(CredentialDraftNotFoundFailure)
+  @apigen.failsWith(CredentialDraftConflictFailure)
+  @apigen.failsWith(CredentialDraftServiceUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.agent_version.retired_local", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(CredentialVersionRetiredAuditPayload)
+  @apigen.ui("credential.agent-version.retire")
+  retireAgentCredentialVersion(@path version: CredentialDraftVersionId, @body body: CredentialVersionRetireRequest): OkJson<CredentialVersionStatusResponse> | CommonErrors;
 }
 
 scalar CredentialActivationOperationId extends CredentialDraftVersionId;

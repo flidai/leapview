@@ -269,6 +269,7 @@ type ConnectionCredentialDraftSignal struct {
 }
 
 type ConnectionCredentialSignal struct {
+	VersionStatus       *CredentialVersionStatusSignal       `json:"versionStatus,omitempty" yaml:"versionStatus,omitempty"`
 	Command             ConnectionCredentialCommandSignal    `json:"command" yaml:"command"`
 	Drafts              []ConnectionCredentialDraftSignal    `json:"drafts" yaml:"drafts"`
 	NextBeforeVersionID string                               `json:"nextBeforeVersionId" yaml:"nextBeforeVersionId"`
@@ -348,6 +349,19 @@ type ConnectionsPageSignal struct {
 	Kind        RouteKind                 `json:"kind" yaml:"kind"`
 	Query       *string                   `json:"query,omitempty" yaml:"query,omitempty"`
 	Title       string                    `json:"title" yaml:"title"`
+}
+
+type CredentialVersionDependencySignal struct {
+	Kind string `json:"kind" yaml:"kind"`
+	ID   string `json:"id" yaml:"id"`
+}
+
+type CredentialVersionStatusSignal struct {
+	VersionID        string                              `json:"versionId" yaml:"versionId"`
+	State            string                              `json:"state" yaml:"state"`
+	RetiredAt        string                              `json:"retiredAt" yaml:"retiredAt"`
+	Dependencies     []CredentialVersionDependencySignal `json:"dependencies" yaml:"dependencies"`
+	MoreDependencies bool                                `json:"moreDependencies" yaml:"moreDependencies"`
 }
 
 type DashboardAppearanceSignal struct {

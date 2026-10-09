@@ -62,6 +62,7 @@ type AdminPublication struct {
 }
 
 type AdminAgentData struct {
+	CredentialVersionID    string
 	BaseURL                string
 	APIMode                string
 	ConfigurationRevision  int64
@@ -637,7 +638,7 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 		})
 	}
 	return uisignals.AdminAgentSignal{
-		BaseURL: uisignals.Optional(data.BaseURL), APIMode: uisignals.Optional(data.APIMode), ConfigurationRevision: uisignals.Pointer(data.ConfigurationRevision), AdminManaged: uisignals.Pointer(data.AdminManaged), CredentialConfigured: uisignals.Pointer(data.CredentialConfigured), ConfigurationAvailable: uisignals.Pointer(data.ConfigurationAvailable),
+		CredentialVersionID: uisignals.Optional(data.CredentialVersionID), BaseURL: uisignals.Optional(data.BaseURL), APIMode: uisignals.Optional(data.APIMode), ConfigurationRevision: uisignals.Pointer(data.ConfigurationRevision), AdminManaged: uisignals.Pointer(data.AdminManaged), CredentialConfigured: uisignals.Pointer(data.CredentialConfigured), ConfigurationAvailable: uisignals.Pointer(data.ConfigurationAvailable),
 		Configured:      data.Configured,
 		Enabled:         data.Enabled,
 		Status:          data.Status,

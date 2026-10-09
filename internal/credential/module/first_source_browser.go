@@ -12,6 +12,7 @@ import (
 func FirstSourceBrowserBindings() map[string]uicommand.Binding {
 	bindings := CredentialBrowserBindings()
 	delete(bindings, "retry")
+	delete(bindings, "retire")
 	bindings["prepare"] = credentialgen.GenUIActionPrepareFirstSourceCredential()
 	bindings["renew"] = credentialgen.GenUIActionRenewFirstSourceCredentialPreparation()
 	return bindings

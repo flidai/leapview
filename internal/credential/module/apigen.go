@@ -32,6 +32,7 @@ type CredentialDraftAPIGenConfig struct {
 	Activation             credential.ActivationService
 	FirstSourcePreparation FirstSourcePreparationCommandService
 	Environment            string
+	InstanceID             string
 	CurrentPrincipal       func(*http.Request) (string, bool)
 }
 

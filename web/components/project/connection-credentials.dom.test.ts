@@ -259,3 +259,26 @@ test('only exact server-confirmed absence permits resetting an interrupted prepa
     expect(await page.evaluate(() => (window as any).commands.at(-1).operationId)).not.toBe(id)
   } finally { await page.close() }
 })
+
+test('retirement requires inspecting exact selected version and empty durable dependencies', async () => {
+  const page = await browser.newPage()
+  try {
+    await open(page)
+    await page.getByRole('button', { name: 'Credentials', exact: true }).click()
+    await page.getByLabel('Saved draft').selectOption('version-one')
+    expect(await page.getByRole('button', { name: 'Retire version locally', exact: true }).count()).toBe(0)
+    await page.getByRole('button', { name: 'Inspect version dependencies', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).commands.at(-1).action)).toBe('version_status')
+    await signal(page, { versionStatus: { versionId: 'version-one', state: 'available', retiredAt: '', dependencies: [{ kind: 'release', id: 'release-previous' }], moreDependencies: false } })
+    expect(await page.getByText('release · release-previous', { exact: true }).count()).toBe(1)
+    expect(await page.getByRole('button', { name: 'Retire version locally', exact: true }).count()).toBe(0)
+    await signal(page, { versionStatus: { versionId: 'version-other', state: 'available', retiredAt: '', dependencies: [], moreDependencies: false } })
+    expect(await page.getByRole('button', { name: 'Retire version locally', exact: true }).count()).toBe(0)
+    await signal(page, { versionStatus: { versionId: 'version-one', state: 'available', retiredAt: '', dependencies: [], moreDependencies: false } })
+    await page.getByRole('button', { name: 'Retire version locally', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).commands.at(-1).action)).toBe('retire')
+    await signal(page, { versionStatus: { versionId: 'version-one', state: 'retired_local', retiredAt: '2026-10-09T09:00:00Z', dependencies: [], moreDependencies: false } })
+    expect(await page.getByRole('button', { name: 'Retire version locally', exact: true }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: 'Test draft', exact: true }).isDisabled()).toBe(true)
+  } finally { await page.close() }
+})
