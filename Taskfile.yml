@@ -584,6 +584,7 @@ tasks:
       - node --test scripts/ci_watchdog.test.mjs
       - node --test desktop/scripts/lifecycle-probe-policy.test.mjs desktop/scripts/lifecycle-probe-cdp.test.mjs
       - node --test deploy/compose/qualification/performance-resources.test.mjs
+      - node --test scripts/performance_baseline_review.test.mjs scripts/qualify_performance_reference.test.mjs
       - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
