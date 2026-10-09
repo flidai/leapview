@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/ducklake/metadata"
 	"github.com/flidai/leapview/internal/app/providerrestore"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/typednil"
@@ -31,7 +31,7 @@ type ManagedConfig struct {
 	Postgres      PGBackRestConfig
 	Readback      PGNativeReadbackConfig
 	Roots         []ResticConfig
-	Closure       ducklake.NativeSnapshotClosureEvidence
+	Closure       metadata.NativeSnapshotClosureEvidence
 	PrimaryFence  providerrestore.PrimaryFenceSSHConfig
 	EvidenceRoot  string
 	SecretRoot    string

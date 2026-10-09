@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/ducklake/metadata"
 	"github.com/flidai/leapview/internal/recoveryset"
 )
 
@@ -14,8 +14,8 @@ import (
 // that path; each data and delete object needs a separate retained content
 // identity. Other retained files may exist because a backup can cover several
 // retained snapshots. They never replace a missing file from this seal.
-func VerifyManagedClosure(seal recoveryset.SnapshotSeal, closure ducklake.NativeSnapshotClosureEvidence, manifest FileManifest) error {
-	if err := ducklake.VerifyNativeSnapshotClosureEvidence(closure); err != nil {
+func VerifyManagedClosure(seal recoveryset.SnapshotSeal, closure metadata.NativeSnapshotClosureEvidence, manifest FileManifest) error {
+	if err := metadata.VerifyNativeSnapshotClosureEvidence(closure); err != nil {
 		return err
 	}
 	if !filepath.IsAbs(closure.ObjectRoot) || filepath.Clean(closure.ObjectRoot) != closure.ObjectRoot || closure.ObjectRoot == "/" || closure.CatalogID != seal.CatalogID || closure.SnapshotID != seal.DuckLakeSnapshotID || closure.RelationNamespace != seal.RelationNamespace || closure.ObjectRoot != seal.ObjectRoot || closure.ObjectRootDigest != seal.ObjectRootDigest || closure.RelationManifestDigest != seal.RelationManifestDigest || closure.ClosureDigest != seal.ClosureDigest {

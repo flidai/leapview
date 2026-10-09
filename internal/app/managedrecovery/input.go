@@ -5,7 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 
-	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/ducklake/metadata"
 	"github.com/flidai/leapview/internal/app/providerrestore"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -41,7 +41,7 @@ type ManagedInput struct {
 	Roles               RuntimeRoles                           `json:"runtimeRoles"`
 	Postgres            ManagedPostgresInput                   `json:"postgres"`
 	Roots               []ResticConfig                         `json:"roots"`
-	Closure             ducklake.NativeSnapshotClosureEvidence `json:"closure"`
+	Closure             metadata.NativeSnapshotClosureEvidence `json:"closure"`
 	PrimaryFence        providerrestore.PrimaryFenceSSHConfig  `json:"primaryFence"`
 	EvidenceRoot        string                                 `json:"evidenceRoot"`
 	SecretRoot          string                                 `json:"secretRoot"`
@@ -59,6 +59,10 @@ func ReadManagedInput(path string) (ManagedInput, error) {
 	var input ManagedInput
 	if strictjson.DecodeWithOptions(value, &input, strictjson.Options{MaxBytes: 16 << 20}) != nil || input.SchemaVersion != 1 || input.Profile != providerrestore.ManagedLocalProfile || input.RecoverySetID == "" || input.OccurrenceID == "" || input.ValidationAttemptID == "" || input.Validator == "" || input.Publisher == "" || !filepath.IsAbs(input.InstanceHome) || filepath.Clean(input.InstanceHome) != input.InstanceHome || input.InstanceHome == "/" {
 		return ManagedInput{}, errors.New("exact managed-local recovery input required")
+	}
+	input.Closure, err = metadata.NativeSnapshotClosureEvidenceFromValues(input.Closure)
+	if err != nil {
+		return ManagedInput{}, errors.New("exact canonical managed DuckLake closure required")
 	}
 	return input, nil
 }

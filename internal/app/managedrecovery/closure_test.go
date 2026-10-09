@@ -5,23 +5,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/ducklake/metadata"
 	"github.com/flidai/leapview/internal/recoveryset"
 )
 
-func managedClosureFixture(t *testing.T) (recoveryset.SnapshotSeal, ducklake.NativeSnapshotClosureEvidence, FileManifest) {
+func managedClosureFixture(t *testing.T) (recoveryset.SnapshotSeal, metadata.NativeSnapshotClosureEvidence, FileManifest) {
 	t.Helper()
-	evidence := ducklake.NativeSnapshotClosureEvidence{
+	evidence := metadata.NativeSnapshotClosureEvidence{
 		CatalogID: "catalog", SnapshotID: 17, ObjectRoot: "/var/lib/leapview/data", RelationNamespace: "_candidate_1",
-		Relations: []ducklake.BaseTable{{Schema: "_candidate_1", Table: "orders"}},
-		Objects:   []ducklake.NativeSnapshotObject{{Kind: ducklake.DeleteFile, Path: "/var/lib/leapview/data/deletes/rows.puffin"}, {Kind: ducklake.DataFile, Path: "/var/lib/leapview/data/part.parquet"}},
+		Relations: []metadata.BaseTable{{Schema: "_candidate_1", Table: "orders"}},
+		Objects:   []metadata.NativeSnapshotObject{{Kind: metadata.DeleteFile, Path: "/var/lib/leapview/data/deletes/rows.puffin"}, {Kind: metadata.DataFile, Path: "/var/lib/leapview/data/part.parquet"}},
 	}
 	evidence.RelationManifestJSON, _ = json.Marshal(struct {
 		Namespace string               `json:"relation_namespace"`
-		Relations []ducklake.BaseTable `json:"relations"`
+		Relations []metadata.BaseTable `json:"relations"`
 	}{evidence.RelationNamespace, evidence.Relations})
 	evidence.ClosureJSON, _ = json.Marshal(struct {
-		Objects []ducklake.NativeSnapshotObject `json:"objects"`
+		Objects []metadata.NativeSnapshotObject `json:"objects"`
 	}{evidence.Objects})
 	evidence.RelationManifestDigest = digestBytes(evidence.RelationManifestJSON)
 	evidence.ClosureDigest = digestBytes(evidence.ClosureJSON)
@@ -32,13 +32,13 @@ func managedClosureFixture(t *testing.T) (recoveryset.SnapshotSeal, ducklake.Nat
 		Snapshot       int64                           `json:"snapshot_id"`
 		Root           string                          `json:"object_root"`
 		Namespace      string                          `json:"relation_namespace"`
-		Relations      []ducklake.BaseTable            `json:"relations"`
-		Objects        []ducklake.NativeSnapshotObject `json:"objects"`
+		Relations      []metadata.BaseTable            `json:"relations"`
+		Objects        []metadata.NativeSnapshotObject `json:"objects"`
 		RelationDigest string                          `json:"relation_manifest_digest"`
 		ClosureDigest  string                          `json:"closure_digest"`
 		RootDigest     string                          `json:"object_root_digest"`
-	}{ducklake.NativeSnapshotClosureSchemaVersion, evidence.CatalogID, evidence.SnapshotID, evidence.ObjectRoot, evidence.RelationNamespace, evidence.Relations, evidence.Objects, evidence.RelationManifestDigest, evidence.ClosureDigest, evidence.ObjectRootDigest})
-	if err := ducklake.VerifyNativeSnapshotClosureEvidence(evidence); err != nil {
+	}{metadata.NativeSnapshotClosureSchemaVersion, evidence.CatalogID, evidence.SnapshotID, evidence.ObjectRoot, evidence.RelationNamespace, evidence.Relations, evidence.Objects, evidence.RelationManifestDigest, evidence.ClosureDigest, evidence.ObjectRootDigest})
+	if err := metadata.VerifyNativeSnapshotClosureEvidence(evidence); err != nil {
 		t.Fatal(err)
 	}
 	seal := recoveryset.SnapshotSeal{CatalogID: evidence.CatalogID, DuckLakeSnapshotID: evidence.SnapshotID, RelationNamespace: evidence.RelationNamespace, ObjectRoot: evidence.ObjectRoot, ObjectRootDigest: evidence.ObjectRootDigest, RelationManifestDigest: evidence.RelationManifestDigest, ClosureDigest: evidence.ClosureDigest}
@@ -65,35 +65,35 @@ func TestManagedClosureRequiresEverySealedDataAndDeleteObject(t *testing.T) {
 }
 
 func TestManagedClosureRejectsForeignSealAndMalformedContent(t *testing.T) {
-	tests := map[string]func(*recoveryset.SnapshotSeal, *ducklake.NativeSnapshotClosureEvidence, *FileManifest){
-		"catalog": func(s *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+	tests := map[string]func(*recoveryset.SnapshotSeal, *metadata.NativeSnapshotClosureEvidence, *FileManifest){
+		"catalog": func(s *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			s.CatalogID = "foreign"
 		},
-		"snapshot": func(s *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+		"snapshot": func(s *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			s.DuckLakeSnapshotID++
 		},
-		"namespace": func(s *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+		"namespace": func(s *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			s.RelationNamespace = "_other"
 		},
-		"root": func(s *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+		"root": func(s *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			s.ObjectRoot = "/var/lib/other"
 		},
-		"path identity": func(s *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, m *FileManifest) {
+		"path identity": func(s *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, m *FileManifest) {
 			s.ObjectRootDigest, _ = m.Digest()
 		},
-		"closure": func(s *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+		"closure": func(s *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			s.ClosureDigest = digestBytes([]byte("other"))
 		},
-		"relations": func(s *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+		"relations": func(s *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			s.RelationManifestDigest = digestBytes([]byte("other"))
 		},
-		"forged canonical bytes": func(_ *recoveryset.SnapshotSeal, c *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+		"forged canonical bytes": func(_ *recoveryset.SnapshotSeal, c *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			c.CanonicalJSON = []byte("{}")
 		},
-		"escape": func(_ *recoveryset.SnapshotSeal, c *ducklake.NativeSnapshotClosureEvidence, _ *FileManifest) {
+		"escape": func(_ *recoveryset.SnapshotSeal, c *metadata.NativeSnapshotClosureEvidence, _ *FileManifest) {
 			c.Objects[0].Path = "/var/lib/elsewhere/rows.puffin"
 		},
-		"invalid content": func(_ *recoveryset.SnapshotSeal, _ *ducklake.NativeSnapshotClosureEvidence, m *FileManifest) {
+		"invalid content": func(_ *recoveryset.SnapshotSeal, _ *metadata.NativeSnapshotClosureEvidence, m *FileManifest) {
 			m.Files[0].SHA256 = ""
 		},
 	}

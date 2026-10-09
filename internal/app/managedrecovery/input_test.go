@@ -14,7 +14,8 @@ func TestManagedInputRejectsRemoteUnknownAndUntrustedFiles(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	input := ManagedInput{InstanceHome: root, SchemaVersion: 1, Profile: providerrestore.ManagedLocalProfile, RecoverySetID: "set", OccurrenceID: "occurrence", ValidationAttemptID: "validation", Validator: "operator", Publisher: "publisher"}
+	_, closure, _ := managedClosureFixture(t)
+	input := ManagedInput{InstanceHome: root, SchemaVersion: 1, Profile: providerrestore.ManagedLocalProfile, RecoverySetID: "set", OccurrenceID: "occurrence", ValidationAttemptID: "validation", Validator: "operator", Publisher: "publisher", Closure: closure}
 	path := filepath.Join(root, "input.json")
 	value, err := json.Marshal(input)
 	if err != nil {

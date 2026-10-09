@@ -8,7 +8,7 @@ import (
 	"regexp"
 
 	"github.com/flidai/leapview/internal/analytics/catalogartifact"
-	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/ducklake/metadata"
 	bootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	"github.com/flidai/leapview/internal/recoveryset"
 	"github.com/jackc/pgx/v5"
@@ -202,16 +202,16 @@ AND to_jsonb(s) @> $6::jsonb`, readback.Set.Delivery.PublicationID, readback.Set
 }
 
 func nativeCatalogVersionMatches(observed string, set recoveryset.RecoverySet) bool {
-	number, err := ducklake.CatalogVersionNumber(observed)
+	number, err := metadata.CatalogVersionNumber(observed)
 	if err != nil || number != set.Catalog.CatalogVersion {
 		return false
 	}
-	actual, err := ducklake.CanonicalCatalogVersion(observed)
+	actual, err := metadata.CanonicalCatalogVersion(observed)
 	if err != nil {
 		return false
 	}
 	for _, expected := range []string{set.Serving.CatalogSchemaVersion, set.Compatibility.CatalogFormat} {
-		canonical, err := ducklake.CanonicalCatalogVersion(expected)
+		canonical, err := metadata.CanonicalCatalogVersion(expected)
 		if err != nil || canonical != actual {
 			return false
 		}
