@@ -2,6 +2,7 @@ package devloop
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -85,7 +86,10 @@ spec:
 	// Witness the event loop after initial resolution has installed its source
 	// set. Otherwise creating the fragment can race the initial resolver.
 	unrelated := filepath.Join(root, "notes.txt")
-	writeWatcherResource(t, unrelated, "not a resource\n")
+	// This unrelated event only establishes readiness. An atomic scratch-file
+	// rename can race the initial compiler snapshot and fail strict inspection
+	// before the fragment journey even starts. Keep actual YAML edits atomic.
+	require.NoError(t, os.WriteFile(unrelated, []byte("not a resource\n"), 0o600))
 	awaitWatcherEvent(t, observed, unrelated)
 	added := filepath.Join(root, "shared", "details.yaml")
 	writeWatcherResource(t, added, "pages: [{id: details, title: Details, components: []}]\n")
@@ -93,6 +97,13 @@ spec:
 	require.NoError(t, err)
 	require.Contains(t, paths, added)
 	require.NoError(t, awaitUpdate(t, updates).Err)
+	// Success is reported before the resolver finishes installing the new
+	// source set. Witness the event loop again before the next atomic edit so
+	// its scratch-file rename cannot race that post-reconcile snapshot. Use a
+	// distinct path to avoid consuming a leftover event from the first probe.
+	readyForEdit := filepath.Join(root, "notes-after-create.txt")
+	require.NoError(t, os.WriteFile(readyForEdit, []byte("not a resource\n"), 0o600))
+	awaitWatcherEvent(t, observed, readyForEdit)
 	writeWatcherResource(t, added, "pages: [{id: details, title: Updated, components: []}]\n")
 	require.NoError(t, awaitUpdate(t, updates).Err)
 	require.GreaterOrEqual(t, builder.Calls(), 3)
