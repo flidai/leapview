@@ -102,7 +102,8 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		access: routes.accessModule, apiProtocol: platform.apiProtocol, projectBrowser: routes.projectBrowser, agent: routes.agentModule,
 		admin: routes.adminModule, dashboard: routes.dashboardModule, runtimeHost: runtime.runtimeHostModule,
 		pageStreams: runtime.pageStreams, rateLimits: policy.rateLimits, candidates: candidates,
-		developmentSession: developmentSession,
+		developmentSession:     developmentSession,
+		firstSourcePreparation: routes.firstSourcePreparation,
 	}, csrf)
 	mountAuthenticationRoutes(mux, routes.accessModule, policy.rateLimits, csrf)
 	mountAPIRoutes(mux, apiRouteDependencies{

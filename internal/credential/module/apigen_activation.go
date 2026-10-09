@@ -78,6 +78,10 @@ func (d credentialDraftAPIGenDispatcher) RetryCredentialActivation(w http.Respon
 }
 
 func (d credentialDraftAPIGenDispatcher) AbortCredentialActivation(w http.ResponseWriter, r *http.Request, project, target, connection, operation string) {
+	d.abortCredentialActivation(w, r, project, target, connection, operation, apigencommand.SurfaceAPI)
+}
+
+func (d credentialDraftAPIGenDispatcher) abortCredentialActivation(w http.ResponseWriter, r *http.Request, project, target, connection, operation string, surface apigencommand.Surface) {
 	actor, ok := d.activationPrincipal(w, r)
 	if !ok {
 		return
@@ -91,7 +95,7 @@ func (d credentialDraftAPIGenDispatcher) AbortCredentialActivation(w http.Respon
 		return
 	}
 	invocation := credentialgen.GenAbortCredentialActivationCommandInvocation{
-		Surface: apigencommand.SurfaceAPI, Connection: connection,
+		Surface: surface, Connection: connection,
 		RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")), CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
 	}
 	executeCredentialActivation(w, r, credentialgen.GenCommandOperationAbortCredentialActivation(), d.resource(project, target, connection),

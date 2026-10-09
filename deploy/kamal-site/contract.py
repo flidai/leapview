@@ -22,6 +22,17 @@ def validate_record(record):
             raise ValueError('invalid platform/config identity')
     if record.get('runtime') != RUNTIME:
         raise ValueError('unsupported runtime contract; retain matching tooling for rollback')
+    if 'nixAdmission' in record:
+        selected = record['nixAdmission']
+        if (not isinstance(selected, dict) or set(selected) != {'runId', 'runAttempt', 'artifactId',
+                'sourceRevision', 'producerRevision', 'admissionDigest', 'artifactDigest'}
+                or any(type(selected.get(name)) is not int or selected[name] <= 0
+                       for name in ('runId', 'runAttempt', 'artifactId'))
+                or selected.get('sourceRevision') != record['revision']
+                or not re.fullmatch(r'[a-f0-9]{40}', selected.get('producerRevision', ''))
+                or any(not re.fullmatch(r'sha256:[a-f0-9]{64}', selected.get(name, ''))
+                       for name in ('admissionDigest', 'artifactDigest'))):
+            raise ValueError('invalid exact protected Nix site admission selection')
     return record
 
 

@@ -56,7 +56,8 @@ WHERE v.deployment_id = sqlc.arg(deployment_id)
   AND v.project_id = sqlc.arg(project_id)
   AND v.environment = sqlc.arg(environment)
   AND v.resource_id = sqlc.arg(resource_id)
-  AND v.version_id = sqlc.arg(version_id);
+  AND v.version_id = sqlc.arg(version_id)
+  AND NOT EXISTS(SELECT 1 FROM credential.version_retirement AS retired WHERE retired.deployment_id=v.deployment_id AND retired.version_id=v.version_id);
 
 -- name: GetDraftMetadata :one
 SELECT

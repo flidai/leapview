@@ -365,7 +365,9 @@ func (g ProjectGraph) Validate() error {
 	if len(g.canonical) == 0 {
 		return errors.New("project graph is not initialized")
 	}
-	if err := validate(g.resources, g.edges); err != nil {
+	// Validation also canonicalizes its inputs; never pass the shared slices
+	// used by concurrent authorization and background runtime readers.
+	if err := Validate(g.resources, g.edges); err != nil {
 		return err
 	}
 	return nil

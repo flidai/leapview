@@ -12,6 +12,11 @@ import (
 // for a native plan request. CreatePlan and durable replay share this helper
 // so their request projections cannot drift independently.
 func NativeDeliveryPlanRequestDigest(request NativeDeliveryPlanRequest) (string, error) {
+	if request.FirstSourcePreparationID != "" {
+		if err := validateFirstSourcePreparationIntent(request.FirstSourcePreparationID, request.Operation, request.PipelinePlan != nil); err != nil {
+			return "", err
+		}
+	}
 	var pipelinePlan *projectpipelineplan.Plan
 	if request.PipelinePlan != nil {
 		canonical := request.PipelinePlan.Canonical()
@@ -20,7 +25,8 @@ func NativeDeliveryPlanRequestDigest(request NativeDeliveryPlanRequest) (string,
 	canonical := struct {
 		ProjectID, TargetID, Environment, PrincipalID, SourceOwnerID, Operation, SourceDigest, SourceAttestationDigest, IdempotencyKey string
 		PipelinePlan                                                                                                                   *projectpipelineplan.Plan `json:"pipelinePlan,omitempty"`
-	}{request.ProjectID.String(), request.TargetID, request.Environment, request.PrincipalID, request.SourceOwnerID, request.Operation, request.SourceDigest, request.SourceAttestationDigest, request.IdempotencyKey, pipelinePlan}
+		FirstSourcePreparationID                                                                                                       string                    `json:"firstSourcePreparationId,omitempty"`
+	}{request.ProjectID.String(), request.TargetID, request.Environment, request.PrincipalID, request.SourceOwnerID, request.Operation, request.SourceDigest, request.SourceAttestationDigest, request.IdempotencyKey, pipelinePlan, request.FirstSourcePreparationID}
 	return nativeRequestDigest(canonical)
 }
 

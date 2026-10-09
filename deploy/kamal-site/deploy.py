@@ -17,6 +17,7 @@ import time
 from urllib.request import urlopen
 
 from contract import REPOSITORY, RUNTIME, SERVICE, validate_record
+import nix_admission
 
 HERE = Path(__file__).resolve().parent
 HOST = '100.73.220.23'
@@ -169,6 +170,27 @@ def read_record(path):
     return validate_record(json.loads(path.read_text()))
 
 
+def prepare_nix(directory, reference, selection):
+    nix_admission.validate_selection(selection)
+    if not re.fullmatch(re.escape(REPOSITORY) + r'@sha256:[a-f0-9]{64}', reference):
+        raise ValueError('immutable production repository required for Nix site admission')
+    admission, digest, artifact_digest = nix_admission.authenticate(directory, reference, selection, run)
+    nix_admission.validate_receipt(admission, reference, selection)
+    platform, actual = manifest(reference)
+    if (actual != admission['ociDigest'] or platform.get('schemaVersion') != 2
+            or 'manifests' in platform or not isinstance(platform.get('layers'), list)
+            or not re.fullmatch(r'sha256:[a-f0-9]{64}', platform.get('config', {}).get('digest', ''))):
+        raise ValueError('Nix site registry manifest differs from the admitted single-platform image')
+    release = json.loads(run(['gh', 'api', 'repos/flidai/leapview/contents/docs/public-release.json?ref=' +
+        selection['sourceRevision'], '-H', 'Accept: application/vnd.github.raw+json']))
+    return validate_record({'schema': 1, 'version': 'k' + actual.split(':')[1], 'image': reference,
+        'revision': selection['sourceRevision'], 'platform': actual, 'config': platform['config']['digest'],
+        'runtime': RUNTIME, 'kamal': '2.12.0', 'admission': admission, 'release': release,
+        'compressed_bytes': sum(layer['size'] for layer in platform['layers']) + platform['config']['size'],
+        'qualification_run': 'https://github.com/flidai/leapview/actions/runs/' + str(selection['runId']),
+        'nixAdmission': {**selection, 'admissionDigest': digest, 'artifactDigest': artifact_digest}})
+
+
 def configure(directory, record):
     validate_record(record)
     config = {'service': 'leapview-site', 'image': 'leapview-site', 'minimum_version': '2.12.0',
@@ -250,7 +272,11 @@ def deploy(directory, path):
             print('Already running the exact verified image; no deployment or pruning needed'); return
         # JSON alone is never admission authority. Repeat live verification for
         # a new candidate, then bind every prepared field before host mutation.
-        verified = prepare(directory, record['image'])
+        if 'nixAdmission' in record:
+            selection = {name: record['nixAdmission'][name] for name in nix_admission.SELECTION_FIELDS}
+            verified = prepare_nix(directory, record['image'], selection)
+        else:
+            verified = prepare(directory, record['image'])
         if record != verified: raise ValueError('prepared record differs from live admission; prepare again')
         remote('begin', record=record)
         transition(directory, record, previous, pull=True)
@@ -306,16 +332,34 @@ def recover(directory):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('operation', choices=['status', 'prepare', 'deploy', 'rollback', 'recover', 'maintain'])
+    p.add_argument('operation', choices=['status', 'prepare', 'prepare-nix', 'deploy', 'rollback', 'recover', 'maintain'])
     p.add_argument('--image')
     p.add_argument('--record', type=Path)
+    p.add_argument('--admission-run-id', type=int)
+    p.add_argument('--admission-run-attempt', type=int)
+    p.add_argument('--admission-artifact-id', type=int)
+    p.add_argument('--source-revision')
+    p.add_argument('--producer-revision')
     args = p.parse_args()
     if args.operation == 'deploy' and not args.record: p.error('--record required')
     with tempfile.TemporaryDirectory(prefix='leapview-site-') as tmp:
         directory = Path(tmp)
-        if args.operation == 'prepare':
+        if args.operation in ('prepare', 'prepare-nix'):
             if not args.image: p.error('--image required')
-            record = prepare(directory, args.image)
+            if args.operation == 'prepare-nix':
+                selection = {'runId': args.admission_run_id, 'runAttempt': args.admission_run_attempt,
+                    'artifactId': args.admission_artifact_id, 'sourceRevision': args.source_revision,
+                    'producerRevision': args.producer_revision}
+                try:
+                    nix_admission.validate_selection(selection)
+                except ValueError as error:
+                    p.error(str(error))
+                record = prepare_nix(directory, args.image, selection)
+            else:
+                if any(value is not None for value in (args.admission_run_id, args.admission_run_attempt,
+                        args.admission_artifact_id, args.source_revision, args.producer_revision)):
+                    p.error('Nix admission inputs require prepare-nix')
+                record = prepare(directory, args.image)
             output = args.record or Path.home() / '.local/state/leapview-site' / (record['version'] + '.json')
             output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             fd = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)

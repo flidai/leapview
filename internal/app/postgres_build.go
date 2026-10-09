@@ -650,6 +650,47 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	}
 	nativeRefreshFinalizer.BeforeActivationCommit = semanticActivation.ValidatePublication
 	nativeAuthorizeDelivery := nativeDeliveryAuthorization(accessBundle.Module.AuthorizationSubjects)
+	tokenEvidence, tokenEvidenceSupported := accessBundle.Repository.(access.APITokenAuthorityEvidenceReader)
+	if !tokenEvidenceSupported {
+		return fail(errors.New("PostgreSQL access repository does not support credential-validation token authority evidence"))
+	}
+	sessionEvidence, sessionEvidenceSupported := accessBundle.Repository.(access.SessionAuthorityEvidenceReader)
+	if !sessionEvidenceSupported {
+		return fail(errors.New("PostgreSQL access repository does not support credential-validation browser-session authority evidence"))
+	}
+	credentialProject := currentProject
+	credentialAuthorize := accessmodule.ConnectionAuthorizerFromSnapshot(
+		instanceID, authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects,
+	)
+	firstSourceScope, err := composeFirstSourceCredentialScope(firstSourceCredentialScopeConfig{production: production, target: instanceID, environment: string(environment),
+		pool: bootstrap.RuntimePool().NativePool(), graph: graph, activeProject: currentProject, activeAuthorize: credentialAuthorize})
+	if err != nil {
+		return fail(fmt.Errorf("build first-source credential scope: %w", err))
+	}
+	if firstSourceScope != nil {
+		credentialProject, credentialAuthorize = firstSourceScope.CurrentProject, firstSourceScope.AuthorizeConnection
+	}
+	credentialServices, err := credentialmodule.Build(ctx, credentialmodule.Config{
+		Pool: bootstrap.RuntimePool().NativePool(), Audit: graph.ConnectionBindingAudit.RecordAuditEvent,
+		KeyringPath: cfg.CredentialKeyringFile, InstanceID: instanceID, Environment: string(environment),
+		CustomerOwner: graph.Bootstrap, Bindings: newCredentialTargetBindingReader(graph.ConnectionBinding),
+		CurrentProject: credentialProject, AuthorizeConnection: credentialAuthorize,
+		ValidationProbe:   newCredentialValidationProbe(graph.ConnectionBinding, analytics),
+		RecheckCredential: accessmodule.CredentialAuthorityRechecker(tokenEvidence, sessionEvidence),
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build customer credential services: %w", err))
+	}
+	var credentialRuntime *credentialLifecycle
+	firstSource, err := composeFirstSourceCredentials(firstSourceCredentialCompositionConfig{
+		scope: firstSourceScope, services: credentialServices, pool: bootstrap.RuntimePool().NativePool(),
+		targets: graph.DeploymentRepository, sources: nativeProjectSource.CandidateSourceReader, analytics: analytics,
+		audit: graph.ConnectionBindingAudit.RecordAuditEvent, rotationAudit: connectionRotationAuditRecorder{record: accessAuditRecorder(accessBundle.Module)},
+		normal: candidateConnections, runtime: func() *credentialLifecycle { return credentialRuntime },
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build first-source credential composition: %w", err))
+	}
 	planCoordinator, err := appdeploymentpostgres.NewNativeCreatePlanCoordinator(appdeploymentpostgres.NativeCreatePlanConfig{
 		Repository:         graph.DeploymentRepository,
 		TargetID:           instanceID,
@@ -657,6 +698,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		Sources:            nativeProjectSource.CandidateSourceReader,
 		Artifacts:          release,
 		BindingEvidence:    candidateConnections,
+		FirstSource:        firstSource.plan,
 		RuntimeVersion:     runtimeVersion,
 		SemanticActivation: semanticActivation.PlanEvidence,
 		PolicyResolver: func(operation deployment.DeliveryOperationKind) (appruntimefactory.CandidateDeliveryPolicy, error) {
@@ -717,6 +759,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		ArtifactRecovery:             release,
 		BindingEvidence:              candidateConnections,
 		Connections:                  candidateConnections,
+		PlanConnections:              firstSource.selector(),
 		ManagedData:                  managedData.RuntimeResolution(),
 		ContractAuthority:            contractAuthority,
 		PhysicalPoolID:               physicalPoolID,
@@ -744,11 +787,13 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	if err != nil {
 		return fail(fmt.Errorf("build native delivery build coordinator: %w", err))
 	}
-	nativeDelivery, err := appdeploymentpostgres.NewNativeDeliveryCoordinator(planCoordinator, buildCoordinator)
+	nativeCoordinators, err := appdeploymentpostgres.NewNativeDeliveryCoordinator(planCoordinator, buildCoordinator)
 	if err != nil {
 		return fail(fmt.Errorf("build native delivery coordinator: %w", err))
 	}
 	nativeDeliveryReader := appdeploymentpostgres.NewNativeReader(graph.DeploymentRepository)
+	nativeDelivery, firstSourceNative := firstSource.nativeBuild(nativeCoordinators, nativeDeliveryReader, func() credentialmodule.ActivationService { return credentialRuntime.activationService() })
+
 	// DuckLake physical retention is a distinct authority from graph.Retention:
 	// its control repository uses the control maintenance pool and each native
 	// pass opens one pinned DuckDB connection with the dedicated catalog
@@ -871,36 +916,17 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()
 	rateLimits.Enabled = cfg.RateLimitingEnabled()
 	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
-	tokenEvidence, tokenEvidenceSupported := accessBundle.Repository.(access.APITokenAuthorityEvidenceReader)
-	if !tokenEvidenceSupported {
-		return fail(errors.New("PostgreSQL access repository does not support credential-validation token authority evidence"))
-	}
-	sessionEvidence, sessionEvidenceSupported := accessBundle.Repository.(access.SessionAuthorityEvidenceReader)
-	if !sessionEvidenceSupported {
-		return fail(errors.New("PostgreSQL access repository does not support credential-validation browser-session authority evidence"))
-	}
-	credentialServices, err := credentialmodule.Build(ctx, credentialmodule.Config{
-		Pool: bootstrap.RuntimePool().NativePool(), Audit: graph.ConnectionBindingAudit.RecordAuditEvent,
-		KeyringPath: cfg.CredentialKeyringFile, InstanceID: instanceID, Environment: string(environment),
-		CustomerOwner: graph.Bootstrap, Bindings: newCredentialTargetBindingReader(graph.ConnectionBinding),
-		CurrentProject: currentProject,
-		AuthorizeConnection: accessmodule.ConnectionAuthorizerFromSnapshot(
-			instanceID,
-			authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects,
-		),
-		ValidationProbe:   newCredentialValidationProbe(graph.ConnectionBinding, analytics),
-		RecheckCredential: accessmodule.CredentialAuthorityRechecker(tokenEvidence, sessionEvidence),
-	})
-	if err != nil {
-		return fail(fmt.Errorf("build customer credential services: %w", err))
-	}
-	credentialRuntime, err := composeCredentialLifecycle(ctx, credentialLifecycleConfig{
-		Services: credentialServices, Pool: bootstrap.RuntimePool().NativePool(), Graph: graph,
+	credentialRuntime, err = composeCredentialLifecycle(ctx, credentialLifecycleConfig{
+		FirstSourceBuild: firstSourceNative,
+		Services:         credentialServices, Pool: bootstrap.RuntimePool().NativePool(), Graph: graph,
 		Analytics: analytics, CandidateBindings: candidateBindings, CandidateAdmission: candidateAdmission, Mutations: nativeDelivery, Reader: nativeDeliveryReader,
 		RuntimeHost: runtimeHost, Evidence: activeRuntimeEvidence, TargetID: instanceID, Environment: string(environment),
 		KeyringPath: cfg.CredentialKeyringFile, BeforeActivationCommit: semanticActivation.ValidatePublication,
 		AuthorizeConnection: accessmodule.ConnectionAuthorizerFromSnapshot(instanceID, authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects),
 	})
+	if credentialRuntime != nil && credentialRuntime.firstPublication != nil {
+		deploymentConfig.CoordinateNativeActivation = credentialRuntime.firstPublication.Execute
+	}
 	if err != nil {
 		return fail(fmt.Errorf("build customer credential lifecycle: %w", err))
 	}
@@ -909,7 +935,9 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		return fail(fmt.Errorf("build native refresh executor: %w", err))
 	}
 	var credentialAPI credentialmodule.CredentialDraftAPIGenConfig
+	credentialAPI.InstanceID = instanceID
 	credentialAPI.Activation = credentialRuntime.activationService()
+	credentialAPI.FirstSourcePreparation = firstSourceCredentialPreparationCommands(firstSource.preparation)
 	if credentialServices != nil {
 		credentialAPI.Service = credentialServices.Drafts
 		credentialAPI.Validation = credentialServices.Validation

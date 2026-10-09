@@ -84,7 +84,7 @@ func connectionAdministrationRouteBridge(commands ConnectionCommandBindings) []g
 	if len(commands.Credentials) != 0 {
 		initialize := "$connectionAdmin.credentials = {command: evt.detail, drafts: [], nextBeforeVersionId: '', receiptId: '', receiptExpiresAt: '', bindingRevision: 0, operationId: evt.detail.operationId, phase: '', runtimeReady: false, status: {loading: true, error: '', message: ''}}; "
 		mutation := "(async () => { try { switch ($connectionAdmin.credentials.command.action) {"
-		for _, action := range []string{"save", "validate", "prepare", "retry", "abort"} {
+		for _, action := range []string{"save", "validate", "prepare", "retry", "abort", "retire"} {
 			mutation += "case '" + action + "': await " + uiactions.CommandPost(commands.Credentials[action], "/connections/administration/credentials", "connectionAdmin.credentials") + "; break; "
 		}
 		mutation += "} } finally { $connectionAdmin.credentials.command.username = ''; $connectionAdmin.credentials.command.password = ''; evt.detail.username = ''; evt.detail.password = ''; } })()"

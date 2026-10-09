@@ -230,6 +230,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/managed-recovery-inventory.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/nightly.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
@@ -259,6 +263,10 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/workflows/nix-site-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-output-admission.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

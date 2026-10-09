@@ -23,6 +23,38 @@ func TestPlanCommandHasNoWorkspaceSelector(t *testing.T) {
 	}
 }
 
+type firstSourcePlanFlagOperations struct{ got DeliveryPlanOptions }
+
+func (o *firstSourcePlanFlagOperations) Create(_ context.Context, options DeliveryPlanOptions) (DeliveryPlanResult, error) {
+	o.got = options
+	return DeliveryPlanResult{}, nil
+}
+
+func TestPlanCommandPropagatesExplicitFirstSourcePreparationFlag(t *testing.T) {
+	operations := &firstSourcePlanFlagOperations{}
+	command := DeliveryPlanCommand(t.Context(), operations)
+	command.SetOut(&bytes.Buffer{})
+	preparation := "0198f2c0-7c7a-7f00-8a11-000000000301"
+	command.SetArgs([]string{"--first-source-preparation-id", preparation, "--idempotency-key", "prepared-plan-key"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.got.FirstSourcePreparationID != preparation || operations.got.IdempotencyKey != "prepared-plan-key" {
+		t.Fatalf("options = %#v", operations.got)
+	}
+}
+
+func TestPlanCommandRejectsPreparationWithoutExplicitOperationKey(t *testing.T) {
+	for _, args := range [][]string{{"--first-source-preparation-id", "0198f2c0-7c7a-7f00-8a11-000000000301"}, {"--first-source-preparation-id", "0198f2c0-7c7a-7f00-8a11-000000000301", "--idempotency-key", " "}, {"--first-source-preparation-id", "", "--idempotency-key", "prepared-plan-key"}} {
+		operations := &firstSourcePlanFlagOperations{}
+		command := DeliveryPlanCommand(t.Context(), operations)
+		command.SetArgs(args)
+		if err := command.Execute(); err == nil || operations.got.Operation != "" {
+			t.Fatalf("prepared plan intent reached operations: err=%v, options=%#v", err, operations.got)
+		}
+	}
+}
+
 func TestDeliveryPlanTextOutputIncludesReviewEvidence(t *testing.T) {
 	result := DeliveryPlanResult{
 		PlanID: "plan-1", ProjectID: "finance", TargetID: "target-1", Environment: "prod", Operation: "code_change",

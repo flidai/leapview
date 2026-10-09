@@ -49,6 +49,22 @@ model CredentialDraftListResponse {
   nextBeforeVersionId?: CredentialDraftVersionId;
 }
 
+model CredentialVersionDependencyResponse { kind: string; id: string; }
+@doc("Retained logical references to this exact credential version. retired_local denies future use by this instance only; it does not revoke upstream credentials or remove encrypted backup history.")
+model CredentialVersionStatusResponse {
+  versionId: CredentialDraftVersionId;
+  state: "available" | "retired_local";
+  retiredAt?: utcDateTime;
+  dependencies: CredentialVersionDependencyResponse[];
+  moreDependencies: boolean;
+}
+model CredentialVersionRetireRequest {}
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model CredentialVersionRetiredAuditPayload {
+  @apigen.auditInternal version_id: string;
+  @apigen.auditInternal state: string;
+}
+
 @doc("The secret field values accepted for the connector resolved from the connection binding. The encoded JSON request body is limited to 32 KiB and the typed secret bundle to 16 KiB. Names and values are secret input and are never reflected in responses, audit payloads or logs.")
 model CredentialDraftSaveRequest {
   @apigen.sensitivity("secret")
@@ -88,6 +104,28 @@ model CredentialValidationResponse {
 @route("/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts")
 @tag("Credentials")
 interface ConnectionCredentialDrafts {
+  @summary("Inspect exact credential version dependencies")
+  @route("/{version}/status")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  getCredentialVersionStatus(@path project: ResourceId, @path target: ResourceId, @path @apigen.target connection: ResourceId, @path version: CredentialDraftVersionId): OkJson<CredentialVersionStatusResponse> | CommonErrors;
+
+  @summary("Retire an unreferenced credential version locally")
+  @route("/{version}/retire")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  @apigen.failsWith(InvalidCredentialDraftFailure)
+  @apigen.failsWith(ForbiddenCredentialDraftFailure)
+  @apigen.failsWith(CredentialDraftNotFoundFailure)
+  @apigen.failsWith(CredentialDraftConflictFailure)
+  @apigen.failsWith(CredentialDraftServiceUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.version.retired_local", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(CredentialVersionRetiredAuditPayload)
+  @apigen.ui("credential.version.retire")
+  retireCredentialVersion(@path project: ResourceId, @path target: ResourceId, @path @apigen.target connection: ResourceId, @path version: CredentialDraftVersionId, @body body: CredentialVersionRetireRequest): OkJson<CredentialVersionStatusResponse> | CommonErrors;
+
   @summary("List connection credential draft metadata")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.read", resolver: "connection" })
@@ -159,6 +197,33 @@ interface ConnectionCredentialDrafts {
     @body body: CredentialValidationRequest,
   ): OkJson<CredentialValidationResponse> | CommonErrors;
 
+}
+
+@route("/agent/credential-versions")
+@extension("x-leapview-object-scope", "instance")
+@tag("Credentials")
+interface AgentCredentialVersions {
+  @summary("Inspect agent credential version dependencies")
+  @route("/{version}")
+  @get
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
+  getAgentCredentialVersionStatus(@path version: CredentialDraftVersionId): OkJson<CredentialVersionStatusResponse> | CommonErrors;
+
+  @summary("Retire an unreferenced agent credential version locally")
+  @route("/{version}/retire")
+  @post
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
+  @apigen.failsWith(InvalidCredentialDraftFailure)
+  @apigen.failsWith(ForbiddenCredentialDraftFailure)
+  @apigen.failsWith(CredentialDraftNotFoundFailure)
+  @apigen.failsWith(CredentialDraftConflictFailure)
+  @apigen.failsWith(CredentialDraftServiceUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.agent_version.retired_local", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(CredentialVersionRetiredAuditPayload)
+  @apigen.ui("credential.agent-version.retire")
+  retireAgentCredentialVersion(@path version: CredentialDraftVersionId, @body body: CredentialVersionRetireRequest): OkJson<CredentialVersionStatusResponse> | CommonErrors;
 }
 
 scalar CredentialActivationOperationId extends CredentialDraftVersionId;
@@ -288,4 +353,104 @@ interface ConnectionCredentialActivations {
     @path operation: CredentialActivationOperationId,
     @body body: CredentialActivationAbortRequest,
   ): OkJson<CredentialActivationResponse> | CommonErrors;
+}
+
+scalar FirstSourcePreparationId extends CredentialActivationOperationId;
+
+@minLength(71)
+@maxLength(71)
+@pattern("^sha256:[0-9a-f]{64}$")
+scalar FirstSourcePreparationDigest extends string;
+
+@doc("Explicit retained source and plan intent for one validated first-source credential. Publisher and source owner are the authenticated actor. This operation currently requires a browser session; bearer requests fail closed. Preparation does not grant publisher permissions or replace independent review.")
+model FirstSourcePreparationRequest {
+  preparationId: FirstSourcePreparationId;
+  receiptId: CredentialValidationReceiptId;
+  sourceDigest: FirstSourcePreparationDigest;
+  sourceAttestationDigest: FirstSourcePreparationDigest;
+  @minLength(1) @maxLength(255) planIdempotencyKey: string;
+  @minValue(1) expectedTargetRevision: int64;
+}
+
+model FirstSourcePreparationRenewRequest {
+  receiptId: CredentialValidationReceiptId;
+}
+
+@doc("Immutable non-secret preparation metadata. This identifies exact plan intent, not an active credential or publication permission.")
+model FirstSourcePreparationResponse {
+  preparationId: FirstSourcePreparationId;
+  intentDigest: FirstSourcePreparationDigest;
+  planRequestDigest: FirstSourcePreparationDigest;
+  createdAt: utcDateTime;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model FirstSourcePreparationAuditPayload {
+  @apigen.auditInternal preparationId: string;
+  @apigen.auditInternal intentDigest: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model FirstSourcePreparationRenewAuditPayload {
+  @apigen.auditInternal preparationId: string;
+  @apigen.auditInternal receiptId: string;
+}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 400, code: "INVALID_FIRST_SOURCE_PREPARATION", publicDetail: "First-source preparation request is invalid." })
+model InvalidFirstSourcePreparationFailure {}
+@apigen.failureDefinition(#{ kind: "unauthorized", statusCode: 403, code: "FIRST_SOURCE_PREPARATION_FORBIDDEN", publicDetail: "First-source preparation is forbidden." })
+model ForbiddenFirstSourcePreparationFailure {}
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "FIRST_SOURCE_PREPARATION_NOT_FOUND", publicDetail: "First-source preparation evidence was not found." })
+model FirstSourcePreparationNotFoundFailure {}
+@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "FIRST_SOURCE_PREPARATION_CONFLICT", publicDetail: "First-source preparation conflicts with stored state." })
+model FirstSourcePreparationConflictFailure {}
+@apigen.failureDefinition(#{ kind: "provider_unavailable", statusCode: 503, code: "FIRST_SOURCE_PREPARATION_UNAVAILABLE", publicDetail: "First-source preparation is unavailable." })
+model FirstSourcePreparationUnavailableFailure {}
+
+@route("/projects/{project}/targets/{target}/connection-bindings/{connection}")
+@tag("Credentials")
+interface FirstSourceCredentialPreparations {
+  @summary("Prepare a validated first-source credential for an exact source plan")
+  @doc("Requires the current browser session and exact connection.manage and connection.use. Retain preparationId for explicit retry after a lost response. Idempotency-Key is forbidden; planIdempotencyKey binds the later normal code_change plan. Bearer calls fail closed.")
+  @route("/credential-drafts/{version}/prepare-first-source")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  @apigen.failsWith(InvalidFirstSourcePreparationFailure)
+  @apigen.failsWith(ForbiddenFirstSourcePreparationFailure)
+  @apigen.failsWith(FirstSourcePreparationNotFoundFailure)
+  @apigen.failsWith(FirstSourcePreparationConflictFailure)
+  @apigen.failsWith(FirstSourcePreparationUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.first_source.prepared", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(FirstSourcePreparationAuditPayload)
+  @apigen.ui("credential.first-source.prepare")
+  prepareFirstSourceCredential(
+    @path project: ResourceId,
+    @path target: ResourceId,
+    @path @apigen.target connection: ResourceId,
+    @path version: CredentialDraftVersionId,
+    @body body: FirstSourcePreparationRequest,
+  ): OkJson<FirstSourcePreparationResponse> | CommonErrors;
+
+  @summary("Renew proof for an exact uncommitted first-source preparation")
+  @doc("Requires the original actor's current browser session, exact manage/use and a fresh receipt for the same version, binding and configuration. Original source, publisher and plan intent remain immutable. Terminal operations cannot be revived. Idempotency-Key is forbidden; bearer calls fail closed.")
+  @route("/first-source-preparations/{preparation}/renew")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  @apigen.failsWith(InvalidFirstSourcePreparationFailure)
+  @apigen.failsWith(ForbiddenFirstSourcePreparationFailure)
+  @apigen.failsWith(FirstSourcePreparationNotFoundFailure)
+  @apigen.failsWith(FirstSourcePreparationConflictFailure)
+  @apigen.failsWith(FirstSourcePreparationUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.first_source.receipt_renewed", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(FirstSourcePreparationRenewAuditPayload)
+  @apigen.ui("credential.first-source.renew")
+  renewFirstSourceCredentialPreparation(
+    @path project: ResourceId,
+    @path target: ResourceId,
+    @path @apigen.target connection: ResourceId,
+    @path preparation: FirstSourcePreparationId,
+    @body body: FirstSourcePreparationRenewRequest,
+  ): OkJson<FirstSourcePreparationResponse> | CommonErrors;
 }

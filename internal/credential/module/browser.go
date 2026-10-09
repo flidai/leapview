@@ -28,6 +28,7 @@ type BrowserState struct {
 	OperationID, Phase, Message    string
 	BindingRevision                int64
 	RuntimeReady                   bool
+	VersionStatus                  *credential.VersionStatus
 }
 
 func CredentialBrowserBindings() map[string]uicommand.Binding {
@@ -37,6 +38,7 @@ func CredentialBrowserBindings() map[string]uicommand.Binding {
 		"prepare":  credentialgen.GenUIActionStartCredentialActivation(),
 		"retry":    credentialgen.GenUIActionRetryCredentialActivation(),
 		"abort":    credentialgen.GenUIActionAbortCredentialActivation(),
+		"retire":   credentialgen.GenUIActionRetireCredentialVersion(),
 	}
 }
 
@@ -83,6 +85,18 @@ func RunCredentialBrowser(ctx context.Context, config CredentialDraftAPIGenConfi
 		state.NextBeforeVersionID = page.NextBeforeVersionID
 		return state, nil
 	}
+	if input.Action == "version_status" {
+		authority, ok := config.Activation.(credential.RetirementAuthority)
+		if !ok {
+			return state, credential.ErrUnavailable
+		}
+		status, err := authority.InspectVersion(ctx, actor, resource, input.VersionID)
+		if err == nil {
+			state.VersionStatus = &status
+			state.VersionID = input.VersionID
+		}
+		return state, err
+	}
 	setActivation := func(status credential.ActivationStatus) {
 		state.VersionID, state.OperationID, state.Phase = status.VersionID, status.OperationID, status.State
 		state.BindingRevision, state.RuntimeReady = status.BindingRevision, status.RuntimeReady
@@ -104,6 +118,18 @@ func RunCredentialBrowser(ctx context.Context, config CredentialDraftAPIGenConfi
 	}
 	err := executeCredentialBrowserCommand(ctx, input.Action, connection, input.RequestID, input.CorrelationID, func(ctx context.Context) error {
 		switch input.Action {
+		case "retire":
+			authority, ok := config.Activation.(credential.RetirementAuthority)
+			if !ok {
+				return credential.ErrUnavailable
+			}
+			status, err := authority.RetireVersion(ctx, actor, resource, input.VersionID)
+			if err != nil {
+				return err
+			}
+			state.VersionStatus = &status
+			state.VersionID = input.VersionID
+			state.Message = "Credential version retired locally. Upstream credentials and encrypted backup history are unchanged."
 		case "save":
 			if input.Username != "" {
 				return credential.ErrInvalid

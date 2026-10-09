@@ -34,7 +34,7 @@ func TestCredentialBrowserStatusDistinguishesScopedAbsenceFromAmbiguousFailure(t
 
 func TestCredentialBrowserCommandsKeepAuditedNonReplayableContracts(t *testing.T) {
 	bindings := CredentialBrowserBindings()
-	for _, action := range []string{"save", "validate", "prepare", "retry", "abort"} {
+	for _, action := range []string{"save", "validate", "prepare", "retry", "abort", "retire"} {
 		binding := bindings[action]
 		contract, ok := credentialgen.GetAPIGenCommandRuntimeContract(binding.OperationID())
 		if !ok || !contract.Exposes(apigencommand.SurfaceUI) || contract.Guarantee != apigencommand.GuaranteeTransactional || contract.Idempotency != apigencommand.IdempotencyForbidden {
