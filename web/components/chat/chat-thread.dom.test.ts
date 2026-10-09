@@ -1133,6 +1133,43 @@ test('builder chat opens each dashboard visual individually without duplicate ad
   } finally {await page.close()}
 })
 
+for (const running of [true, false]) test(`dashboard cards remain available during a tool-only turn${running ? ' while running' : ' without a final answer'}`, async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(async running => {
+      await customElements.whenDefined('lv-chat-thread')
+      const thread = document.querySelector('lv-chat-thread') as any
+      thread.status = { enabled: true, running, runId: 'inspection' }
+      thread.conversationId = 'conversation'
+      thread.dashboardPreviewAvailable = true
+      thread.dashboardId = 'finance'
+      thread.pageArtifacts = [{ id: 'revenue', type: 'bar', summary: 'Revenue' }]
+      thread.transcript = [
+        { id: 'greeting', kind: 'assistant', text: 'Ready.' },
+        { id: 'user', kind: 'user', text: 'Inspect my dashboard' },
+        { id: 'tool', kind: 'tool', name: 'list_dashboards', status: running ? 'running' : 'complete', runId: 'inspection' },
+      ]
+      thread.addEventListener('lv-chat-dashboard-preview', (event: CustomEvent) => { (window as any).selectedVisual = event.detail.artifactId })
+      await thread.updateComplete
+    }, running)
+    const card = page.getByRole('button', { name: 'Open Revenue in visuals sidebar', exact: true })
+    expect(await card.count()).toBe(1)
+    expect(await card.isVisible()).toBe(true)
+    await card.click()
+    expect(await page.evaluate(() => (window as any).selectedVisual)).toBe('revenue')
+    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [...thread.transcript, { id: 'answer', kind: 'assistant', text: 'Your dashboard is available.' }]
+      await thread.updateComplete
+    })
+    expect(await card.count()).toBe(1)
+    const reply = page.locator('.agent-turn').filter({ hasText: 'Your dashboard is available.' })
+    expect(await reply.locator('.visual-reference').count()).toBe(1)
+    expect(await reply.getByRole('group', { name: 'Answer actions' }).count()).toBe(1)
+  } finally { await page.close() }
+})
+
 test('chat keeps retries in collapsed activity while showing the final answer', async () => {
   const page = await browser.newPage()
   try {

@@ -195,7 +195,8 @@ class ChatThread extends LitElement {
     const items = unit.items.filter(item => visibleItems.has(item) && (item.kind !== 'tool' || this.toolStatus(item) === 'error' || (this.toolStatus(item) === 'complete' && Boolean(item.artifact))))
     const running = this.status.running && latest && (!this.status.runId || unit.items.some(item => item.runId === this.status.runId))
     const steps = unit.items.filter(item => earlierAssistantMessages.has(item) || (running && (item.kind === 'assistant' || item.kind === 'summary')))
-    if (items.length === 0 && steps.length === 0 && !unit.items.some(item => item.kind === 'tool' && (this.toolStatus(item) === 'error' || dashboardActionLinks(item, this.conversationId).length > 0))) return nothing
+    const hasPageArtifacts = dashboardReply && this.pageArtifacts.length > 0
+    if (!hasPageArtifacts && items.length === 0 && steps.length === 0 && !unit.items.some(item => item.kind === 'tool' && (this.toolStatus(item) === 'error' || dashboardActionLinks(item, this.conversationId).length > 0))) return nothing
     return this.renderAgentTurn(items, steps, unit.prompt, unit.items, running, dashboardReply)
   }
 
