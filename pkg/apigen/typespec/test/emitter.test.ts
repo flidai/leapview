@@ -781,7 +781,7 @@ describe("APIGen TypeSpec emitter", () => {
           op finalize(@header("Idempotency-Key") key: string): string;
         `,
       },
-  ])("rejects invalid command contracts before writing IR: $message", async (testCase) => {
+    ])("rejects invalid command contracts before writing IR: $message", async (testCase) => {
       await expectCompileFails(`
         using Http;
         using OpenAPI;
