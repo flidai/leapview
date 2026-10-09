@@ -79,27 +79,6 @@ func (a firstSourceCredentialAuthority) WithAuthorization(ctx context.Context, a
 			i.ProjectID != resource.ProjectID || i.ConnectionID != resource.ResourceID || i.OperatorPrincipalID != actor {
 			return access.ErrForbidden
 		}
-		bootstrap := platformbootstrap.New(tx)
-		instance, err := bootstrap.ExistingInstanceID(ctx)
-		if err != nil {
-			return err
-		}
-		environment, err := bootstrap.InstanceEnvironment(ctx)
-		if err != nil {
-			return err
-		}
-		owner, err := bootstrap.CustomerOwner(ctx)
-		if err != nil {
-			return err
-		}
-		claim, err := bootstrap.GetProjectClaim(ctx)
-		if err != nil {
-			return err
-		}
-		if instance != a.targetID || environment != a.environment || owner != i.CustomerOwnerID ||
-			claim.Validate() != nil || claim.ProjectID != i.ProjectID || claim.Environment != i.Environment {
-			return access.ErrForbidden
-		}
 		grant, err := i.Grant()
 		if err != nil {
 			return err
@@ -110,31 +89,8 @@ func (a firstSourceCredentialAuthority) WithAuthorization(ctx context.Context, a
 		if err := accessmodule.RecheckCredentialAuthorityTx(ctx, tx, issuer, grant.Permissions); err != nil {
 			return err
 		}
-		binding, err := a.bindings.BindingForShareTx(ctx, tx, connectionbinding.BindingScope{ProjectID: projectgraph.ResourceID(i.ProjectID), Environment: i.Environment}, connectionbinding.TargetID(i.TargetID), projectgraph.ResourceID(i.ConnectionID))
-		if err != nil {
+		if _, err := a.lockAdmittedStateTx(ctx, tx, admission); err != nil {
 			return err
-		}
-		if !firstSourceCredentialBindingMatches(admission, binding) {
-			return access.ErrForbidden
-		}
-		scope := access.AuthorizationPolicyScope{TargetID: i.TargetID, ProjectID: i.ProjectID, Environment: i.Environment}
-		policy, err := a.policyTx(ctx, tx, scope)
-		if err != nil {
-			return err
-		}
-		digest, err := access.AuthorizationPolicyDigest(scope, policy.RoleBindings, policy.Grants...)
-		if err != nil || policy.Scope != scope || policy.Revision < admission.PolicyRevision || policy.Digest != digest {
-			return access.ErrForbidden
-		}
-		found := false
-		for _, current := range policy.Grants {
-			if current.ID == grant.ID && reflect.DeepEqual(current, grant) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return access.ErrForbidden
 		}
 		if err := use(ctx, tx, admission); err != nil {
 			return err
@@ -144,6 +100,72 @@ func (a firstSourceCredentialAuthority) WithAuthorization(ctx context.Context, a
 		}
 		return tx.Commit(ctx)
 	})
+}
+
+// lockAdmittedStateTx checks live authority shared by session preparation and
+// an explicitly delegated native plan. The caller must already hold the target
+// fence; the returned binding and exact current grant stay locked through tx.
+// This read does not establish a session, a preparation or publisher authority.
+func (a firstSourceCredentialAuthority) lockAdmittedStateTx(ctx context.Context, tx pgx.Tx, admission credentialmodule.FirstSourceAdmission) (connectionbinding.TargetBinding, error) {
+	i := admission.Intent
+	if ctx == nil || !a.production || typednil.IsNil(tx) || typednil.IsNil(a.bindings) || a.policyTx == nil || admission.Validate() != nil || i.TargetID != a.targetID || i.Environment != a.environment {
+		return connectionbinding.TargetBinding{}, access.ErrForbidden
+	}
+	bootstrap := platformbootstrap.New(tx)
+	instance, err := bootstrap.ExistingInstanceID(ctx)
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	environment, err := bootstrap.InstanceEnvironment(ctx)
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	owner, err := bootstrap.CustomerOwner(ctx)
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	claim, err := bootstrap.GetProjectClaim(ctx)
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	if instance != a.targetID || environment != a.environment || owner != i.CustomerOwnerID ||
+		claim.Validate() != nil || claim.ProjectID != i.ProjectID || claim.Environment != i.Environment {
+		return connectionbinding.TargetBinding{}, access.ErrForbidden
+	}
+	if _, err := accessmodule.LockCredentialAuthorizationSubjectsTx(ctx, tx, i.OperatorPrincipalID); err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	grant, err := i.Grant()
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	binding, err := a.bindings.BindingForShareTx(ctx, tx, connectionbinding.BindingScope{ProjectID: projectgraph.ResourceID(i.ProjectID), Environment: i.Environment}, connectionbinding.TargetID(i.TargetID), projectgraph.ResourceID(i.ConnectionID))
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	if !firstSourceCredentialBindingMatches(admission, binding) {
+		return connectionbinding.TargetBinding{}, access.ErrForbidden
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: i.TargetID, ProjectID: i.ProjectID, Environment: i.Environment}
+	policy, err := a.policyTx(ctx, tx, scope)
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	digest, err := access.AuthorizationPolicyDigest(scope, policy.RoleBindings, policy.Grants...)
+	if err != nil || policy.Scope != scope || policy.Revision < admission.PolicyRevision || policy.Digest != digest {
+		return connectionbinding.TargetBinding{}, access.ErrForbidden
+	}
+	found := false
+	for _, current := range policy.Grants {
+		if current.ID == grant.ID && reflect.DeepEqual(current, grant) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return connectionbinding.TargetBinding{}, access.ErrForbidden
+	}
+	return binding, nil
 }
 
 func firstSourceCredentialBindingMatches(admission credentialmodule.FirstSourceAdmission, binding connectionbinding.TargetBinding) bool {
