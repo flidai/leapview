@@ -230,30 +230,32 @@ class ChatThread extends LitElement {
 
   private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, dashboardReply: boolean) {
     const hasVisualResult = !running && items.some(item => item.kind === 'tool' && this.toolStatus(item) === 'complete' && Boolean(item.artifact))
+    const lastPreview = [...allItems].reverse().find(item => item.name === 'preview_dashboard_draft' && this.toolStatus(item) === 'complete' && !item.error)
+    const hasResult = !running && (hasVisualResult || Boolean(lastPreview && dashboardActionLinks(lastPreview, this.conversationId).length))
+    const resultIndex = Math.max(lastPreview ? allItems.indexOf(lastPreview) : -1, ...allItems.flatMap((item, index) => item.artifact && this.toolStatus(item) === 'complete' ? [index] : []))
     // A completed visual is the outcome of this turn; failed intermediate tool
     // probes should not appear in the answer or its expandable context.
-    const displayedItems = hasVisualResult ? items.filter(item => item.kind !== 'tool' || this.toolStatus(item) !== 'error') : items
+    const displayedItems = hasResult ? items.filter(item => item.kind !== 'tool' || this.toolStatus(item) !== 'error' || allItems.indexOf(item) > resultIndex) : items
     const text = displayedItems.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
-    const lastPreview = [...allItems].reverse().find(item => item.name === 'preview_dashboard_draft' && this.toolStatus(item) === 'complete' && !item.error)
-    const answer = !running && (hasVisualResult || (lastPreview && dashboardActionLinks(lastPreview, this.conversationId).length))
+    const answer = hasResult
       ? [...displayedItems].reverse().find(item => item.kind === 'assistant' || item.kind === 'summary') : undefined
     const answerText = answer?.markdown || answer?.text || ''
     // Keep the complete Markdown in the disclosure, including tables and code.
     // Its opening paragraph is a preview, hidden while the full answer is open.
     const summary = answerText.split(/\r?\n[ \t]*\r?\n/, 1)[0]
     const compactAnswer = summary && summary.length < answerText.trimEnd().length ? answer : undefined
-    const context = displayedItems.filter(item => (hasVisualResult && item !== answer && (item.kind === 'assistant' || item.kind === 'summary')) || item === compactAnswer
-      || (answer && lastPreview && item.kind === 'tool' && this.toolStatus(item) === 'error' && allItems.indexOf(item) < allItems.indexOf(lastPreview)))
+    const context = displayedItems.filter(item => (hasVisualResult && item !== answer && (item.kind === 'assistant' || item.kind === 'summary')) || item === compactAnswer)
+    const visibleSteps = hasResult ? [] : steps
     const lastAnswerOrTool = [...allItems].reverse().find(item => item.kind === 'tool' || (item.kind === 'assistant' && Boolean(item.markdown || item.text)))
     const noFinalAnswer = !running && !this.status.error && !allItems.some(item => item.kind === 'error' || (item.kind === 'tool' && Boolean(item.artifact) && this.toolStatus(item) === 'complete'))
       && allItems.some(item => item.kind === 'tool' && this.toolStatus(item) === 'error')
       && lastAnswerOrTool?.kind === 'tool'
-    const actionItems = allItems.filter(item => item !== lastPreview && item.kind === 'tool' && this.toolStatus(item) === 'complete' && !item.error && dashboardActionLinks(item, this.conversationId).length > 0)
+    const actionItems = allItems.filter(item => item !== lastPreview && item.kind === 'tool' && this.toolStatus(item) === 'complete' && this.visibleToolActions(item, dashboardReply).length > 0)
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
           ${compactAnswer ? html`<div class="dashboard-summary">${this.renderAssistantContent(summary)}</div>` : nothing}
-          ${steps.length > 0 || context.length > 0 || actionItems.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context, lastPreview, dashboardReply) : nothing}
+          ${visibleSteps.length > 0 || context.length > 0 || actionItems.length > 0 ? this.renderRunSteps(visibleSteps, prompt, allItems, running, context, lastPreview, dashboardReply) : nothing}
           ${displayedItems.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item, dashboardReply))}
           ${noFinalAnswer ? html`<p class="run-notice" role="status">This request stopped before a final answer was ready. You can ask the agent to continue.</p>` : nothing}
           ${lastPreview ? this.renderToolActions(lastPreview, dashboardReply) : nothing}
@@ -350,10 +352,14 @@ class ChatThread extends LitElement {
     return nothing
   }
 
-  private renderToolActions(item: ChatTranscriptItemSignal, hideDashboardActions = false) {
+  private visibleToolActions(item: ChatTranscriptItemSignal, hideDashboardActions = false) {
     const dashboardId = dashboardActionIdentity(item)
-    if (item.error || (hideDashboardActions && (!dashboardId || !this.dashboardId || dashboardId === this.dashboardId))) return nothing
-    const actions = dashboardActionLinks(item, this.conversationId)
+    if (item.error || ((hideDashboardActions || this.dashboardPreviewAvailable) && (!dashboardId || !this.dashboardId || dashboardId === this.dashboardId))) return []
+    return dashboardActionLinks(item, this.conversationId)
+  }
+
+  private renderToolActions(item: ChatTranscriptItemSignal, hideDashboardActions = false) {
+    const actions = this.visibleToolActions(item, hideDashboardActions)
     return actions.length ? html`<nav class="tool-actions" aria-label="Review this action in the app">
       ${actions.map(action => html`<a href=${action.href}>${action.label}${lucideIcon(ChevronRight, { size: 14 })}</a>`)}
     </nav>` : nothing

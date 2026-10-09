@@ -1391,7 +1391,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       return
     }
     if (fromParent && event.data?.type === 'lv-arrange-dashboard-visuals') {
-      if (event.data.reflow) this.applyBalancedLayout(false)
+      if (event.data.reflow) this.applyBalancedLayout(false, false, new Set(), true)
       else this.fixVisuals()
     }
     if (fromParent && (event.data as {type: string}).type === 'lv-select-dashboard-page') {

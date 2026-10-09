@@ -267,7 +267,7 @@ test('generated charts can be removed independently and added back after other e
   const original: Array<{id:string;pageId:string;artifactId:string;savedVisualId?:string}> = [{id:'pie',pageId:'overview',artifactId:'pie'},{id:'bar',pageId:'overview',artifactId:'bar'}]
   const project = async (components: typeof original, revisionId: string) => {
    await body.evaluate((_, {components,revisionId}) => {
-    parent.postMessage({type:'lv-builder-saved',revisionId,pageId:'overview',pageTitle:'Overview',href:'/dashboards/demo/edit?embed=chat&page=overview',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components,artifacts:components.map(c=>({id:c.artifactId,type:'bar',summary:c.artifactId==='pie'?'Revenue mix':'Revenue trend'})),visuals:{}},location.origin)
+    parent.postMessage({type:'lv-builder-saved',canArrange:true,revisionId,pageId:'overview',pageTitle:'Overview',href:'/dashboards/demo/edit?embed=chat&page=overview',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components,artifacts:components.map(c=>({id:c.artifactId,type:'bar',summary:c.artifactId==='pie'?'Revenue mix':'Revenue trend'})),visuals:{}},location.origin)
    },{components,revisionId})
    await page.waitForFunction(revision => (document.querySelector('lv-chat-page') as any).dashboardRevisionId===revision,revisionId)
   }
@@ -278,7 +278,11 @@ test('generated charts can be removed independently and added back after other e
   expect(saves[0].get('dashboardId')).toBe('demo')
   expect(saves[0].get('revisionId')).toBe('rev-1')
   expect(saves[0].get('definition')).toBeNull()
+  await project(original,'rev-1-pending')
+  expect(await body.evaluate(()=>(window as any).requests.filter((r:any)=>r.type==='lv-arrange-dashboard-visuals').length)).toBe(0)
   await project([original[1]],'rev-2')
+  await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.some((r:any)=>r.type==='lv-arrange-dashboard-visuals'))
+  expect(await body.evaluate(()=>(window as any).requests.find((r:any)=>r.type==='lv-arrange-dashboard-visuals'))).toEqual({type:'lv-arrange-dashboard-visuals',reflow:true})
   expect(await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).count()).toBe(1)
   expect(await page.getByRole('button',{name:'Add to dashboard',exact:true}).isVisible()).toBe(true)
   await page.getByRole('button',{name:'Open Revenue trend in visuals sidebar'}).click()
@@ -332,6 +336,9 @@ test('dashboard chart cards stay with their answer and share its copy action', a
         { id: 'other-user', kind: 'user', text: 'Inspect another dashboard' },
         { id: 'other-preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'other', status: 'complete', argumentsJson: '{"dashboardId":"other"}' },
         { id: 'other-answer', kind: 'assistant', text: 'The other dashboard is available.' },
+        { id: 'first-user', kind: 'user', text: 'Create this dashboard' },
+        { id: 'first-preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'first', status: 'complete', argumentsJson: '{"dashboardId":"finance"}' },
+        { id: 'first-answer', kind: 'assistant', text: 'The first finance draft is ready.' },
         { id: 'user', kind: 'user', text: 'Build a finance dashboard' },
         { id: 'edit', kind: 'tool', name: 'edit_dashboard_source', toolCallId: 'edit', status: 'complete', argumentsJson: '{"dashboardId":"finance"}' },
         { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', status: 'complete', argumentsJson: '{"dashboardId":"finance"}' },
@@ -351,5 +358,38 @@ test('dashboard chart cards stay with their answer and share its copy action', a
     expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
     expect(await page.locator('.agent-turn').filter({ hasText: 'Hello again.' }).locator('.visual-reference').count()).toBe(0)
     expect(await page.locator('lv-chat-thread').locator('.stack > .page-visuals').count()).toBe(0)
+  } finally { await page.close() }
+})
+
+test('dashboard chart preview offers Save and Remove from saved with one saved-library link', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      e.savedBuilderHref = '/dashboards/demo/edit?embed=chat&page=overview'
+      e.projectedDashboardId = 'demo'
+      e.dashboardPageId = 'overview'
+      e.dashboardRevisionId = 'revision'
+      e.savedDashboardArtifacts = [{id:'dashboard:demo:overview:revenue', type:'bar', summary:'Revenue'}]
+      e.dashboardComponents = [{id:'revenue',pageId:'overview',artifactId:'dashboard:demo:overview:revenue'}]
+      e.dashboardCopyLinks = {'dashboard:demo:overview:revenue':[{id:'revenue',pageId:'overview'}]}
+      e.dashboardCopies = {'dashboard:demo:overview:revenue':{id:'revenue',pageId:'overview'}}
+      e.dashboardPreview = true
+      await e.updateComplete
+    })
+    expect(await chat.getByRole('button',{name:'Save',exact:true}).count()).toBe(1)
+    expect(await chat.getByRole('link',{name:'Saved visuals',exact:true}).getAttribute('href')).toBe('/visuals/saved')
+    expect(await chat.getByRole('button',{name:/^Visuals \(/}).count()).toBe(0)
+    expect(await chat.getByRole('button',{name:'Shrink chat',exact:true}).count()).toBe(0)
+    await chat.evaluate(async(e:any)=>{
+      e.visualLibraryState = {savedIds:['dashboard:demo:overview:revenue'],savingId:'',error:''}
+      await e.updateComplete
+    })
+    expect(await chat.getByRole('button',{name:'Remove from saved',exact:true}).count()).toBe(1)
+    await chat.getByRole('button',{name:'Close visuals sidebar',exact:true}).click()
+    expect(await chat.getByRole('region',{name:'Dashboard preview'}).isVisible()).toBe(false)
+    expect(await chat.getByRole('button',{name:'Preview dashboard',exact:true}).count()).toBe(1)
   } finally { await page.close() }
 })

@@ -1051,12 +1051,12 @@ test('dashboard replies keep a short summary and reveal the full explanation on 
       expect(await summary.first().isVisible()).toBe(true)
       expect(await summary.last().isVisible()).toBe(false)
       expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(false)
-      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).isVisible()).toBe(false)
+      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).count()).toBe(0)
       expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
       const disclosure = thread.locator('.run-steps')
       await disclosure.locator('summary').click()
       expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
-      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).isVisible()).toBe(true)
+      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).count()).toBe(0)
       expect(await page.getByText('Country and reporting period are available.', { exact: true }).isVisible()).toBe(true)
       expect(await summary.first().isVisible()).toBe(false)
       expect(await summary.last().isVisible()).toBe(true)
@@ -1200,4 +1200,25 @@ test('chat keeps retries in collapsed activity while showing the final answer', 
     })
     expect(await page.getByRole('alert').getByText('Unable to finish this request.', {exact:true}).isVisible()).toBe(true)
   } finally { await page.close() }
+})
+
+test('a later dashboard edit failure remains visible after an earlier successful preview', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    const thread = page.locator('lv-chat-thread')
+    await thread.evaluate(async (e: any) => {
+      e.status = {enabled:true,running:false}
+      e.conversationId = 'conversation'
+      e.transcript = [
+        {id:'user',kind:'user',text:'Update my dashboard'},
+        {id:'preview',kind:'tool',name:'preview_dashboard_draft',toolCallId:'preview',status:'complete',argumentsJson:'{"dashboardId":"finance"}'},
+        {id:'failed-edit',kind:'tool',name:'edit_dashboard_source',status:'error',error:'The requested new chart could not be added.'},
+        {id:'answer',kind:'assistant',text:'The existing dashboard is available, but the new chart was not added.'},
+      ]
+      await e.updateComplete
+    })
+    expect(await thread.getByText('The requested new chart could not be added.',{exact:true}).isVisible()).toBe(true)
+  } finally {await page.close()}
 })

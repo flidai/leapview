@@ -12,7 +12,7 @@ import { ifDefined } from 'lit/directives/if-defined.js'
 import { chatPageStyles } from './chat-page.styles'
 import { chatPagePreviewStyles } from './chat-page-preview.styles'
 import { state } from 'lit/decorators.js'
-import { Check, CircleHelp, LayoutDashboard, Maximize2, Minimize2, Minus, Plus, Save, TrendingUp, X, type IconNode } from 'lucide'
+import { Bookmark, CircleHelp, LayoutDashboard, Maximize2, Minus, Plus, Save, TrendingUp, X, type IconNode } from 'lucide'
 import type { ChatArtifactSignal, AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope, VisualizationWindowRequest } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
@@ -89,7 +89,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private saveRequestID = ''
   private saveTimer = 0
   private wasAgentRunning = false
-  private arrangeCreatedDashboard = false
+  private arrangeDashboardOnReady = false
   private sidebarScroll = 0
   private chatScroll: { top: number; autoScroll: boolean } | null = null
 
@@ -115,7 +115,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private async openGeneratedDashboard(href: string, arrangeLayout = false): Promise<void> {
-    this.arrangeCreatedDashboard = false
+    this.arrangeDashboardOnReady = false
     this.dashboardSaveError = ''
     this.builderNeedsRefresh = false
     this.pendingDashboardChange = null
@@ -138,7 +138,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.enterBuilder()
     await this.updateComplete
     if (this.builderFrame) {
-      this.arrangeCreatedDashboard = arrangeLayout
+      this.arrangeDashboardOnReady = arrangeLayout
       this.builderFrame.src = href
     }
     window.clearTimeout(this.saveTimer)
@@ -173,6 +173,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     if (frame.contentDocument.getElementById('chat-dashboard-receipt')) return
     this.dashboardSaveError = frame.contentDocument.body?.innerText.trim().slice(0, 500) || 'The dashboard could not be updated. Please try again.'
     this.savingDashboard = false
+    if (this.pendingDashboardChange?.remove) this.arrangeDashboardOnReady = false
     this.pendingDashboardChange = null
     window.clearTimeout(this.saveTimer)
   }
@@ -202,6 +203,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       this.pendingDashboardPageId = ''
       this.dashboardSaveError = event.data.message
       this.savingDashboard = false
+      if (this.pendingDashboardChange?.remove) this.arrangeDashboardOnReady = false
       this.pendingDashboardChange = null
       window.clearTimeout(this.saveTimer)
       return
@@ -248,8 +250,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       if (this.pendingDashboardPageId === event.data.pageId) this.pendingDashboardPageId = ''
       this.savedDashboardArtifacts = event.data.artifacts
       this.savedDashboardVisuals = event.data.visuals
-      if (this.arrangeCreatedDashboard && event.data.canArrange && !event.data.updating) {
-        this.arrangeCreatedDashboard = false
+      if (this.arrangeDashboardOnReady && !this.pendingDashboardChange && event.data.canArrange && !event.data.updating) {
+        this.arrangeDashboardOnReady = false
         this.builderFrame?.contentWindow?.postMessage({ type: 'lv-arrange-dashboard-visuals', reflow: true } satisfies ChatDashboardMessage, window.location.origin)
       }
     }
@@ -352,6 +354,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     window.clearTimeout(this.saveTimer)
     this.saveTimer = window.setTimeout(() => {
       this.savingDashboard = false
+      if (this.pendingDashboardChange?.remove) this.arrangeDashboardOnReady = false
       this.pendingDashboardChange = null
       this.dashboardSaveError = 'The dashboard update is taking longer than expected. Please try again.'
     }, 45000)
@@ -413,6 +416,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       if (this.visuals[artifactId]) this.retainedDashboardVisuals[artifactId] = this.visuals[artifactId]
     }
     this.pendingDashboardChange = { artifactId, componentId: copy.id, remove: true }
+    this.arrangeDashboardOnReady = true
     const builder = this.liveBuilder
     this.beginDashboardChange(Boolean(builder))
     if (builder) {
@@ -559,7 +563,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     await this.updateComplete
     await this.chatThread?.updateComplete
     if (position) this.chatThread?.restoreScroll(position)
-    this.shadowRoot?.querySelector<HTMLElement>('.open-preview')?.focus()
+    this.shadowRoot?.querySelector<HTMLElement>('.conversation-titlebar .preview-action')?.focus()
   }
 
   private get selectedPreviewArtifact(): ChatArtifactSignal | undefined {
@@ -858,9 +862,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           <h1>${title}</h1>
         </div>
         <div class="titlebar-actions">
-          ${!this.dashboardPreview && this.previewArtifacts.length ? html`<button class="preview-action open-preview" type="button" @click=${() => this.openDashboardPreview()}>${lucideIcon(LayoutDashboard)} Visuals (${this.previewArtifacts.length})</button>` : null}
           ${this.savedBuilderHref || this.previewArtifacts.length ? html`<button class="preview-action" type="button" ?disabled=${this.savingDashboard || this.builderUpdating} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
-          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" @click=${() => this.openDashboardPreview()}>${lucideIcon(Minimize2)}</button>` : null}
+          <a class="preview-action" href="/visuals/saved">${lucideIcon(Bookmark)} Saved visuals</a>
         </div>
       </div>
     `
@@ -882,13 +885,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const saved = Boolean(selected && this.visualLibraryState.savedIds.includes(selected.id))
     const saving = Boolean(this.visualLibraryState.savingId)
     const added = Boolean(selected && this.dashboardCopies[selected.id])
-    const canSave = Boolean(selected && this.agent.transcript?.some(item => item.artifact?.id === selected.id))
+    const canSave = Boolean(selected && (saved || this.dashboardCopies[selected.id] || this.agent.transcript?.some(item => item.artifact?.id === selected.id)))
     return html`
       <section class="preview-panel" aria-label="Dashboard preview" ?hidden=${!visible} @lv-visualization-window-request=${this.requestDashboardVisualWindow}>
         <div class="preview-heading">
           <h2>Visual</h2>
           <div class="preview-actions">
-            ${canSave ? html`<button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>` : null}
+            ${canSave ? html`<button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Minus : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Remove from saved' : 'Save'}</button>` : null}
             <button class="preview-action" type="button" ?disabled=${!selected || !this.builderCanEdit || saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
             <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
           </div>
