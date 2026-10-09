@@ -15,17 +15,8 @@ func qualificationPerformanceComparisonIdentity(candidate, baseline qualificatio
 		name   string
 		report qualificationPerformanceReport
 	}{{"candidate", candidate}, {"baseline", baseline}} {
-		if item.report.SchemaVersion != 1 {
-			failures = append(failures, fmt.Sprintf("%s schemaVersion must be 1, got %d", item.name, item.report.SchemaVersion))
-		}
-		if item.report.Policy.SchemaVersion != policy.SchemaVersion {
-			failures = append(failures, item.name+" policy.schemaVersion does not match the comparison policy")
-		}
-		if item.report.Policy.Workload != policy.Workload {
-			failures = append(failures, fmt.Sprintf("%s policy.workload %q does not match %q", item.name, item.report.Policy.Workload, policy.Workload))
-		}
-		if item.report.Policy.Assumptions.Samples != policy.Assumptions.Samples {
-			failures = append(failures, item.name+" policy.assumptions.samples does not match the comparison protocol")
+		for _, failure := range validateQualificationPerformanceProtocol(item.report, policy) {
+			failures = append(failures, item.name+" "+failure)
 		}
 	}
 	// Image versions are expected to differ. Absolute budgets and regression
@@ -59,4 +50,37 @@ func validQualificationDatasetIdentity(dataset map[string]int64) bool {
 		}
 	}
 	return true
+}
+
+func qualificationPerformanceBaselineFailures(baseline qualificationPerformanceReport) []string {
+	// The first successful absolute-only report has no comparison assertion.
+	// Its finalized outcome is required; independent acceptance is a separate gate.
+	var failures []string
+	if baseline.Result != "success" {
+		failures = append(failures, fmt.Sprintf("baseline result must be success, got %q", baseline.Result))
+	}
+	for _, assertion := range []struct {
+		name   string
+		passed bool
+	}{
+		{"environment", baseline.Assertions.Environment},
+		{"absoluteBudgets", baseline.Assertions.AbsoluteBudgets},
+		{"errorFree", baseline.Assertions.ErrorFree},
+	} {
+		if !assertion.passed {
+			failures = append(failures, "baseline assertions."+assertion.name+" must be true")
+		}
+	}
+	if len(baseline.Failures) > 0 {
+		failures = append(failures, "baseline failures: "+strings.Join(baseline.Failures, "; "))
+	}
+	if baseline.Reliability.Errors == nil {
+		failures = append(failures, "baseline reliability.errors must be present")
+	} else if *baseline.Reliability.Errors != 0 {
+		failures = append(failures, fmt.Sprintf("baseline reliability.errors must be zero, got %d", *baseline.Reliability.Errors))
+	}
+	if len(baseline.Reliability.Failures) > 0 {
+		failures = append(failures, "baseline reliability.failures: "+strings.Join(baseline.Reliability.Failures, "; "))
+	}
+	return failures
 }
