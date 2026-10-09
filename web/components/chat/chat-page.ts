@@ -4,7 +4,7 @@ import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { savedVisualComponentId, savedVisualSourceId } from './dashboard-membership'
 import { submitVisualForm } from './visual-library-bridge'
 import './agent-visual-library'
-import type { VisualLibraryState } from './agent-visual-library'
+import type { DashboardVisualSource, VisualLibraryState } from './agent-visual-library'
 import { LitElement, css, html } from 'lit'
 import { visualizationRegistry } from '../dashboard/visualization/registry'
 import { repeat } from 'lit/directives/repeat.js'
@@ -62,6 +62,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   @state() private restoredBuilderHref: string | undefined
   @state() private savedDashboardArtifacts: ChatArtifactSignal[] = []
   @state() private savedDashboardVisuals: Record<string, VisualizationEnvelope> = {}
+  @state() private retainedDashboardArtifacts: ChatArtifactSignal[] = []
+  private retainedDashboardVisuals: Record<string, VisualizationEnvelope> = {}
+  private pendingVisualRemoval: { artifactId: string; revisionId: string; pageId: string } | null = null
+  private projectedDashboardId = ''
   @state() private dashboardCopies: Record<string, { id: string; pageId: string }> = {}
   // Keep identity links through removal so Undo can restore membership.
   private dashboardCopyLinks: Record<string, DashboardChatComponent[]> = {}
@@ -119,6 +123,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.restoredBuilderHref = undefined
     this.savedDashboardArtifacts = []
     this.savedDashboardVisuals = {}
+    this.retainedDashboardArtifacts = []
+    this.retainedDashboardVisuals = {}
+    this.pendingVisualRemoval = null
+    this.projectedDashboardId = ''
     this.dashboardCopies = {}
     this.dashboardCopyLinks = {}
     this.dashboardPageId = ''
@@ -243,6 +251,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       }
     }
     const reference = event.data.reference
+    if (this.projectedDashboardId && this.projectedDashboardId !== reference.reference.id) {
+      this.retainedDashboardArtifacts = []
+      this.retainedDashboardVisuals = {}
+    }
+    this.projectedDashboardId = reference.reference.id
     this.references = mergeReferences([reference], this.references.filter(item => item.reference.kind !== reference.reference.kind || item.reference.id !== reference.reference.id))
     if (event.data.type === 'lv-builder-saved') void this.syncDashboardContext(reference.reference.id, event.data.pageId, this.dashboardPageTitle, event.data.modelId ?? '')
   }
@@ -276,6 +289,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private handleVisualLibraryState = (event: CustomEvent<VisualLibraryState>): void => {
     this.visualLibraryState = event.detail
     this.reconcileDashboardCopies()
+    if (this.pendingVisualRemoval && !event.detail.savingId) {
+      const pending = this.pendingVisualRemoval
+      this.pendingVisualRemoval = null
+      if (!event.detail.error && event.detail.libraryIds?.[pending.artifactId]) {
+        if (pending.revisionId === this.dashboardRevisionId && pending.pageId === this.dashboardPageId) this.removeDashboardVisual(pending.artifactId)
+        else this.dashboardSaveError = 'The dashboard changed. Please try removing this visual again.'
+      }
+    }
   }
 
   private handleBuilderLoad = (): void => {
@@ -349,11 +370,29 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private toggleDashboardVisual(artifactId: string): void {
-    if (this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId) return
+    if (this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId || this.visualLibraryState.savingId) return
     const copy = this.dashboardCopies[artifactId]
     if (!copy) {
       this.savePreviewVisual(artifactId, true)
       return
+    }
+    if (!this.agent.transcript?.some(item => item.artifact?.id === artifactId)) {
+      // Save the canonical source before removing its last placement, so Add
+      // remains an independent import even after later dashboard edits.
+      this.pendingVisualRemoval = {artifactId, revisionId: this.dashboardRevisionId, pageId: this.dashboardPageId}
+      this.dispatchEvent(new CustomEvent('lv-save-agent-visual', {bubbles: true, composed: true, detail: {artifactId, add: false, retain: true}}))
+      return
+    }
+    this.removeDashboardVisual(artifactId)
+  }
+
+  private removeDashboardVisual(artifactId: string): void {
+    const copy = this.dashboardCopies[artifactId]
+    if (!copy || this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId) return
+    if (!this.agent.transcript?.some(item => item.artifact?.id === artifactId)) {
+      const artifact = this.previewArtifacts.find(item => item.id === artifactId)
+      if (artifact && !this.retainedDashboardArtifacts.some(item => item.id === artifactId)) this.retainedDashboardArtifacts = [...this.retainedDashboardArtifacts, artifact]
+      if (this.visuals[artifactId]) this.retainedDashboardVisuals[artifactId] = this.visuals[artifactId]
     }
     this.pendingDashboardChange = { artifactId, componentId: copy.id, remove: true }
     const builder = this.liveBuilder
@@ -521,16 +560,28 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     for (const item of this.agent.transcript ?? []) {
       if (item.artifact && item.status === 'complete') artifacts.set(item.artifact.id, item.artifact)
     }
-    for (const artifact of this.savedDashboardArtifacts) artifacts.set(artifact.id, artifact)
+    for (const artifact of this.pageVisualLinks) artifacts.set(artifact.id, artifact)
     return [...artifacts.values()]
   }
 
   private get pageVisualLinks(): ChatArtifactSignal[] {
     const conversationIDs = new Set((this.agent.transcript ?? []).flatMap(item => item.artifact ? [item.artifact.id] : []))
-    return this.savedDashboardArtifacts.filter(artifact => {
+    const retained = this.retainedDashboardArtifacts.filter(artifact => this.dashboardCopyLinks[artifact.id]?.some(copy => copy.pageId === this.dashboardPageId))
+    const represented = new Set([...conversationIDs, ...retained.map(item => item.id)])
+    const current = this.savedDashboardArtifacts.filter(artifact => {
       const component = this.dashboardCopies[artifact.id]
-      return !component || !Object.entries(this.dashboardCopies).some(([id, copy]) => conversationIDs.has(id) && copy.id === component.id && copy.pageId === component.pageId)
+      return !component || !Object.entries(this.dashboardCopies).some(([id, copy]) => id !== artifact.id && represented.has(id) && copy.id === component.id && copy.pageId === component.pageId)
     })
+    return [...new Map([...retained, ...current].map(artifact => [artifact.id, artifact])).values()]
+  }
+
+  private get dashboardVisualSource(): DashboardVisualSource {
+    const artifacts = this.pageVisualLinks
+    const components = artifacts.flatMap(artifact => {
+      const copy = this.dashboardCopies[artifact.id]
+      return copy ? [{...copy, artifactId: artifact.id}] : []
+    })
+    return {dashboardId: this.projectedDashboardId, revisionId: this.dashboardRevisionId, pageId: this.dashboardPageId, components, artifacts}
   }
 
   @state() private selectedVisualID = ''
@@ -686,7 +737,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       this.visualCacheKey = key
       this.visualCache = chatVisualsFromSignals(this.signal<Record<string, VisualizationEnvelope>>('visuals', {}))
     }
-    return { ...this.visualCache, ...this.savedDashboardVisuals }
+    const visuals = { ...this.visualCache, ...this.retainedDashboardVisuals, ...this.savedDashboardVisuals }
+    for (const artifact of this.retainedDashboardArtifacts) {
+      const copy = this.dashboardCopies[artifact.id]
+      const currentId = copy && this.dashboardComponents.find(component => component.id === copy.id && component.pageId === copy.pageId)?.artifactId
+      if (currentId && this.savedDashboardVisuals[currentId]) visuals[artifact.id] = this.savedDashboardVisuals[currentId]
+    }
+    return visuals
   }
 
   get pending(): boolean {
@@ -792,7 +849,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private requestDashboardVisualWindow = (event: CustomEvent<VisualizationWindowRequest>): void => {
-    const payload = this.selectedPreviewVisual ? this.savedDashboardVisuals[this.selectedPreviewVisual] : undefined
+    const payload = this.selectedPreviewVisual ? this.visuals[this.selectedPreviewVisual] : undefined
     if (payload?.dataState.kind !== 'windowed' || payload.visualID !== event.detail.visualID || !this.dashboardPageId) return
     event.stopPropagation()
     this.liveBuilder?.postMessage({ type: 'lv-builder-visual-window', pageId: this.dashboardPageId, request: event.detail } satisfies ChatDashboardMessage, window.location.origin)
@@ -882,7 +939,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private renderConversationView(agent: ChatSignal, status: ChatSignal['status'], composer: ChatSignal['composer']) {
     return html`
       <div class="thread-stack">
-        <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${this.handleVisualLibraryState}></lv-agent-visual-library>
+        <lv-agent-visual-library .agent=${agent} .dashboardSource=${this.dashboardVisualSource} @lv-visual-library-state=${this.handleVisualLibraryState}></lv-agent-visual-library>
         <lv-chat-thread .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId}
           .transcript=${this.displayTranscript(agent.transcript ?? [])}
           .pageArtifacts=${this.pageVisualLinks}

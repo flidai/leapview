@@ -55,7 +55,7 @@ test('dashboard tables forward sorting and paging to the retained builder', asyn
  } finally { await page.close() }
 })
 
-for (const inspectedAgain of [false, true]) test(`reopening a generated dashboard reply loads all visual cards without leaving chat${inspectedAgain ? ' after a later read-only preview' : ''}`, async () => {
+for (const authored of ["create_dashboard_draft", "edit_dashboard_source"]) for (const inspectedAgain of [false, true]) test(`reopening a ${authored} reply loads all visual cards without leaving chat${inspectedAgain ? ' after a later read-only preview' : ''}`, async () => {
  const page = await fixture.browser.newPage()
  try {
   let loads = 0
@@ -66,15 +66,15 @@ for (const inspectedAgain of [false, true]) test(`reopening a generated dashboar
   await page.goto(fixture.baseURL)
   const chat = page.locator('lv-chat-page')
   await chat.locator('lv-chat-composer').waitFor()
-  await chat.evaluate(async (e:any, inspectedAgain) => {
+  await chat.evaluate(async (e:any, {inspectedAgain, authored}) => {
    const {mergePatch} = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
    mergePatch({agent:{status:{enabled:true,running:false},transcript:[
-    ...['create_dashboard_draft','preview_dashboard_draft'].map(name => ({id:name,kind:'tool',name,runId:'saved-build',toolCallId:name,status:'complete'})),
+    ...[authored,'preview_dashboard_draft'].map(name => ({id:name,kind:'tool',name,runId:'saved-build',toolCallId:name,status:'complete',argumentsJson:name===authored ? '{"source":"truncated…' : '{"dashboardId":"demo"}'})),
     {id:'answer',kind:'assistant',text:'Your dashboard is ready.\n\nFull explanation.'},
     ...(inspectedAgain ? [{id:'inspection',kind:'tool',name:'preview_dashboard_draft',runId:'later-inspection',toolCallId:'inspection',status:'complete'}] : []),
    ]}})
    await e.updateComplete
-  }, inspectedAgain)
+  }, {inspectedAgain, authored})
   await page.waitForFunction(() => Boolean((document.querySelector('lv-chat-page') as any).restoredBuilderHref))
   expect(await chat.evaluate((e:any) => e.restoredBuilderHref)).toContain('/actions/preview_dashboard_draft/open?run=saved-build')
   await page.frameLocator('.builder-frame').getByText('Existing preview').waitFor({state:'attached'})
@@ -148,5 +148,81 @@ for (const creation of [true, false]) test(`${creation ? 'new' : 'existing'} gen
   }
   await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).savedBuilderHref.includes('/dashboards/demo/edit'))
   expect(await frame.locator('body').evaluate(()=>(window as any).arrangements)).toEqual(creation ? [{type:'lv-arrange-dashboard-visuals',reflow:true}] : [])
+ } finally {await page.close()}
+})
+
+test('generated charts can be removed independently and added back after other edits', async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  const saves: URLSearchParams[] = []
+  let saveError = ''
+  const library: Array<{id:string;title:string;semanticModelId:string;sourceKey:string}> = []
+  await page.route('**/visuals/saved', async route => {
+   const form = new URLSearchParams(route.request().postData() ?? '')
+   if (route.request().method() === 'POST') {
+    saves.push(form)
+    if (!saveError && !library.some(item=>item.sourceKey===form.get('sourceKey'))) library.push({id: 'saved-'+form.get('componentId'), title: form.get('title')!, semanticModelId:'sales', sourceKey:form.get('sourceKey')!})
+   }
+   const last = library.at(-1)
+   const saved = library.find(item=>item.sourceKey===form.get('sourceKey')) ?? last
+   return route.fulfill({contentType:'text/html',body:`<lv-saved-visual-library></lv-saved-visual-library><script>parent.postMessage({type:'lv-saved-visual-library',library:${JSON.stringify({visuals:library,sourceKey:saved?.sourceKey??'',savedId:saved?.id??'',error:saveError})}},location.origin)</script>`})
+  })
+  await page.route('**/dashboards/demo/edit?*', route => route.fulfill({contentType:'text/html',body:'<lv-dashboard-builder></lv-dashboard-builder><script>window.requests=[];addEventListener("message",event=>window.requests.push(event.data))</script>'}))
+  await page.goto(fixture.baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async (e:any) => {e.savedBuilderHref='/dashboards/demo/edit?embed=chat&page=overview';e.restoredBuilderHref=e.savedBuilderHref;await e.updateComplete})
+  const body = page.frameLocator('.builder-frame').locator('body')
+  await body.waitFor({state:'attached'})
+  const original: Array<{id:string;pageId:string;artifactId:string;savedVisualId?:string}> = [{id:'pie',pageId:'overview',artifactId:'pie'},{id:'bar',pageId:'overview',artifactId:'bar'}]
+  const project = async (components: typeof original, revisionId: string) => {
+   await body.evaluate((_, {components,revisionId}) => {
+    parent.postMessage({type:'lv-builder-saved',revisionId,pageId:'overview',pageTitle:'Overview',href:'/dashboards/demo/edit?embed=chat&page=overview',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components,artifacts:components.map(c=>({id:c.artifactId,type:'bar',summary:c.artifactId==='pie'?'Revenue mix':'Revenue trend'})),visuals:{}},location.origin)
+   },{components,revisionId})
+   await page.waitForFunction(revision => (document.querySelector('lv-chat-page') as any).dashboardRevisionId===revision,revisionId)
+  }
+  await project(original,'rev-1')
+  await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).click()
+  await page.getByRole('button',{name:'Remove from dashboard',exact:true}).click()
+  await page.waitForFunction(()=> (document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.some((r:any)=>r.type==='lv-remove-dashboard-visual'&&r.componentId==='pie'))
+  expect(saves[0].get('dashboardId')).toBe('demo')
+  expect(saves[0].get('revisionId')).toBe('rev-1')
+  expect(saves[0].get('definition')).toBeNull()
+  await project([original[1]],'rev-2')
+  expect(await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).count()).toBe(1)
+  expect(await page.getByRole('button',{name:'Add to dashboard',exact:true}).isVisible()).toBe(true)
+  await page.getByRole('button',{name:'Open Revenue trend in visuals sidebar'}).click()
+  await page.getByRole('button',{name:'Remove from dashboard',exact:true}).click()
+  await page.waitForFunction(()=> (document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.filter((r:any)=>r.type==='lv-remove-dashboard-visual').length===2)
+  expect(saves[1].get('componentId')).toBe('bar')
+  expect(saves[1].get('revisionId')).toBe('rev-2')
+  await project([],'rev-3')
+  await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).click()
+  await page.getByRole('button',{name:'Add to dashboard',exact:true}).click()
+  await page.waitForFunction(()=> (document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.some((r:any)=>r.type==='lv-add-saved-visual'))
+  const request = await chat.evaluate((e:any)=>e.builderFrame.contentWindow.requests.find((r:any)=>r.type==='lv-add-saved-visual'))
+  expect(request.id).toBe('saved-pie')
+  expect(request.pageId).toBe('overview')
+  const id = await chat.evaluate((e:any)=>e.pendingDashboardChange.componentId)
+  await project([{id,pageId:'overview',artifactId:'imported-pie',savedVisualId:'saved-pie'}] as typeof original,'rev-4')
+  expect(await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).count()).toBe(1)
+  expect(await chat.evaluate((e:any)=>Object.keys(e.dashboardCopies))).toContain('pie')
+  expect(await chat.evaluate((e:any)=>e.dashboardCopies.bar)).toBeUndefined()
+  expect(await page.getByRole('button',{name:'Remove from dashboard',exact:true}).isVisible()).toBe(true)
+  expect(saves.length).toBe(2)
+  await page.getByRole('button',{name:'Remove from dashboard',exact:true}).click()
+  await page.waitForFunction(()=> (document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.filter((r:any)=>r.type==='lv-remove-dashboard-visual').length===3)
+  expect(saves[2].get('componentId')).toBe(id)
+  expect(saves[2].get('revisionId')).toBe('rev-4')
+  await project([],'rev-5')
+  await page.getByRole('button',{name:'Add to dashboard',exact:true}).click()
+  await page.waitForFunction(()=> (document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.filter((r:any)=>r.type==='lv-add-saved-visual').length===2)
+  const restoredId = await chat.evaluate((e:any)=>e.pendingDashboardChange.componentId)
+  await project([{id:restoredId,pageId:'overview',artifactId:'second-pie',savedVisualId:'saved-pie'}],'rev-6')
+  saveError = 'The dashboard changed. Refresh it before saving this visual.'
+  await page.getByRole('button',{name:'Remove from dashboard',exact:true}).click()
+  await page.getByRole('alert').getByText(saveError).waitFor()
+  expect(await chat.evaluate((e:any)=>e.builderFrame.contentWindow.requests.filter((r:any)=>r.type==='lv-remove-dashboard-visual').length)).toBe(3)
+  expect(await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).count()).toBe(1)
  } finally {await page.close()}
 })

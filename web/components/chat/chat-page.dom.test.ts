@@ -1077,7 +1077,7 @@ test('removing a visual keeps the live builder mounted and sends its selected-pa
       frame.contentWindow!.addEventListener('message',event=>(window as any).builderCommands.push(event.data))
       e.savedBuilderHref='/dashboards/demo/edit?embed=chat&page=pies';e.dashboardPageId='pies'
       e.dashboardCopies={one:{id:'second',pageId:'pies'}}
-      e.toggleDashboardVisual('one')
+      e.removeDashboardVisual('one')
     })
     await page.waitForFunction(()=>(window as any).builderCommands.length>0,{},{timeout:2000})
     expect(await page.evaluate(()=>(window as any).builderCommands[0])).toEqual({type:'lv-remove-dashboard-visual',pageId:'pies',componentId:'second'})
