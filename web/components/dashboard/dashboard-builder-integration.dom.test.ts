@@ -654,7 +654,7 @@ test('removed grid tiles stay removed when Undo and Redo restore the component l
 })
 
 
-test('Fix leaves complete filtered charts alone instead of treating loading data as missing fields', async () => {
+test('Visual magic fits complete charts without treating loading data as missing fields or changing filters', async () => {
   const page = await browser.newPage({viewport: {width: 1440, height: 900}})
   try {
     await page.goto(`${baseURL}/embed-host`)
@@ -668,14 +668,14 @@ test('Fix leaves complete filtered charts alone instead of treating loading data
       mergePatch({builder, builderVisuals: null})
       await e.updateComplete
       const before = JSON.stringify(e.builderFilterState)
-      const commands: unknown[] = []
+      const commands: Array<{action:string;fillMissingFields?:boolean}> = []
       e.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
-      e.arrangeVisuals()
+      e.shadowRoot.querySelector('button.magic-fill').click()
       await e.updateComplete
-      return {commands, message:e.fixVisualsMessage, unchanged:before===JSON.stringify(e.builderFilterState)}
+      return {commands, unchanged:before===JSON.stringify(e.builderFilterState)}
     })
-    expect(result.commands).toEqual([])
-    expect(result.message).toBe('Visuals are ready. Your layout is unchanged.')
+    expect(result.commands.map(command => command.action)).toEqual(['set_placements'])
+    expect(result.commands[0].fillMissingFields).toBeUndefined()
     expect(result.unchanged).toBe(true)
   } finally {await page.close()}
 })
