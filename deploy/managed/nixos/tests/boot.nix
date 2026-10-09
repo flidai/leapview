@@ -479,6 +479,7 @@ pkgs.testers.runNixOSTest {
           reboot_updated_hosts()
 
       recovery_postgres_bin = "${pkgs.postgresql_18}/bin"
+      recovery_setsid = "${pkgs.util-linux}/bin/setsid"
       ${builtins.readFile ./recovery-journey.py}
     '';
 }

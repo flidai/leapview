@@ -130,9 +130,13 @@ with subtest("replacement recovers exact database, jobs, files and publication a
         raise
     restored = recovery_sql(app, "SELECT job_id,job_state,publication_id,acknowledgment,file_digest FROM recovery_frontier ORDER BY job_id", restored=True)
     assert restored == "job-before|completed|publication-before|ack-before|" + file_digest, restored
-    remote_restic = "restic --password-file /var/lib/recovery-test/restic-password --repo sftp:root@192.168.1.2:/var/lib/recovery-test/home-repo "
-    app.succeed(remote_restic + "check", timeout=180)
-    app.succeed(remote_restic + "restore " + shlex.quote(snapshot) + " --target /var/lib/recovery-test/restored-home", timeout=180)
+    # Restic gives its SFTP child the controlling terminal's foreground process
+    # group. The driver's noninteractive backdoor shell reads that same terminal
+    # and fails with EIO when moved into the background. Run without a controlling
+    # terminal; --wait still propagates the actual check/restore exit status.
+    remote_restic = shlex.quote(recovery_setsid) + " --wait restic --password-file /var/lib/recovery-test/restic-password --repo sftp:root@192.168.1.2:/var/lib/recovery-test/home-repo "
+    app.succeed(remote_restic + "check </dev/null", timeout=180)
+    app.succeed(remote_restic + "restore " + shlex.quote(snapshot) + " --target /var/lib/recovery-test/restored-home </dev/null", timeout=180)
     assert app.succeed("sha256sum /var/lib/recovery-test/restored-home/var/lib/leapview/recovery-fixture/upload.csv").split()[0] == file_digest
     operator.succeed(fence_command + " --check < /root/recovery-fence.json")
     recovery_sql(app, "INSERT INTO recovery_frontier VALUES ('replacement-job','queued','replacement-publication','unacknowledged','replacement')", restored=True)
