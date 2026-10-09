@@ -587,7 +587,7 @@ tasks:
       - bun test scripts/performance_comparison_workflow.test.ts
       - node --test deploy/compose/qualification/performance-resources.test.mjs
       - node --test scripts/performance_baseline_review.test.mjs scripts/qualify_performance_reference.test.mjs
-      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
+      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs scripts/performance_ci_events.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs

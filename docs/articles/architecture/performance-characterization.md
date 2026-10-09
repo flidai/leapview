@@ -1,5 +1,11 @@
 # Bounded performance characterization
 
+## Compile-once CI screening
+
+`nix develop --no-update-lock-file -c python3 scripts/performance_ci_study.py /absolute/new-evidence-directory` compares the maintained application shard discovery/test commands with a private compile-once binary experiment. It runs one predeclared cold pair and one warm pair, alternating their order. Each arm uses its own initially empty Go build cache; dependency modules stay warm. Package compilation and application shard execution are serial, with two Go runtime CPUs, `-p=1`, a 2 GiB Go memory target and the existing 4 GiB observed process-tree RSS stop. These bounds describe this experiment, rather than the hosted scheduler.
+
+All four stable shard patterns and every executed test/subtest, outcome and skip reason must match exactly. The maintained PostgreSQL skip environment and MinIO dedicated-lane exclusion are explicit and identical in both arms. Their separate conformance lanes, non-application packages, generated checks and frontend suites remain required; this experiment cannot substitute for canonical CI. The raw per-step command, log, exit, cleanup and resource receipts are retained. The first failure or discrepancy stops the experiment. A single pair per cache condition supports descriptive screening only: its finite decision retains the maintained implementation and makes no statistical gain or adoption claim.
+
 These studies reuse production boundaries and keep correctness checks active.
 They describe the current implementation. They do not nominate an optimizer,
 accept a baseline, infer user latency from Go microbenchmarks or promise a
