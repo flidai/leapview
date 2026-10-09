@@ -104,6 +104,16 @@ func assertRestoredJourneyQueryParity(t *testing.T, api restoredJourneyAPI, cfg 
 				}
 				cursor = page["nextCursor"]
 			}
+			// PageInfo's optional string and the agent's flattened optional
+			// cursor both represent an exhausted page with no continuation.
+			// Preserve nonempty strings exactly and reject invalid cursor types.
+			if cursor == nil {
+				cursor = ""
+			}
+			cursorText, ok := cursor.(string)
+			if !ok || (complete["hasMore"] == true && cursorText == "") {
+				t.Fatal("query projection returned invalid continuation cursor")
+			}
 			return map[string]any{"columns": selected, "rows": value["rows"], "completeness": map[string]any{"returnedRows": complete["returnedRows"], "hasMore": complete["hasMore"]}, "nextCursor": cursor, "servingSnapshot": value["servingSnapshot"]}
 		}
 		if !reflect.DeepEqual(project(result, true), project(reference, false)) {
