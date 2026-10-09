@@ -4,6 +4,34 @@ import { windowedTablePreviewEnvelope } from '../dashboard/dashboard-builder-tes
 
 const fixture = chatPageBrowserFixture()
 
+test('removed generated cards recover from the account library after reload and reopening', async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  const artifactId = 'dashboard:demo:overview:pie'
+  await page.route('**/visuals/saved', route => route.fulfill({contentType:'text/html',body:`<lv-saved-visual-library></lv-saved-visual-library><script>parent.postMessage({type:'lv-saved-visual-library',library:${JSON.stringify({visuals:[
+   {id:'saved-pie',title:'Revenue mix',semanticModelId:'sales',sourceKey:'c1/'+artifactId},
+   {id:'other-chat',title:'Other chat',semanticModelId:'sales',sourceKey:'c2/'+artifactId},
+   {id:'other-page',title:'Other page',semanticModelId:'sales',sourceKey:'c1/dashboard:demo:details:pie'},
+   {id:'other-dashboard',title:'Other dashboard',semanticModelId:'sales',sourceKey:'c1/dashboard:elsewhere:overview:pie'},
+  ],savedId:'',sourceKey:'',error:''})}},location.origin)</script>`}))
+  await page.route('**/dashboards/demo/edit?*', route => route.fulfill({contentType:'text/html',body:`<lv-dashboard-builder></lv-dashboard-builder><script>window.requests=[];parent.postMessage(${JSON.stringify({type:'lv-builder-saved',revisionId:'rev-removed',pageId:'overview',pageTitle:'Overview',href:'/dashboards/demo/edit?embed=chat&page=overview',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components:[],artifacts:[],visuals:{}})},location.origin);addEventListener('message',e=>window.requests.push(e.data))</script>`}))
+  const url = fixture.baseURL+'/chats/c1?preview=dashboard&dashboard='+encodeURIComponent('/dashboards/demo/edit?embed=chat&page=overview')
+  for (const navigation of ['open', 'reload', 'reopen']) {
+   if (navigation === 'reload') await page.reload()
+   else await page.goto(url)
+   const card = page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'})
+   await card.waitFor()
+   expect(await card.count()).toBe(1)
+   expect(await page.getByRole('button',{name:/Open Other .* in visuals sidebar/}).count()).toBe(0)
+  }
+  await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).click()
+  await page.getByText('Add this visual back to the dashboard to view it.').waitFor()
+  await page.getByRole('button',{name:'Add to dashboard',exact:true}).click()
+  await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.some((r:any)=>r.type==='lv-add-saved-visual'))
+  expect(await page.locator('lv-chat-page').evaluate((e:any)=>e.builderFrame.contentWindow.requests.find((r:any)=>r.type==='lv-add-saved-visual'))).toMatchObject({id:'saved-pie',pageId:'overview'})
+ } finally {await page.close()}
+})
+
 test('a removed windowed table offers Add instead of nonfunctional sort controls', async () => {
  const page = await fixture.browser.newPage()
  try {

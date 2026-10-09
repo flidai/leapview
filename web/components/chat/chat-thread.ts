@@ -363,7 +363,7 @@ class ChatThread extends LitElement {
     const title = payload?.spec.title || artifact.summary || 'Visual'
     if (this.dashboardPreviewAvailable) {
       const kind = payload?.spec.kind ?? artifact.type
-      const label = kind === 'kpi' ? 'Metric' : ['table', 'matrix', 'pivot'].includes(kind) ? 'Table' : 'Chart'
+      const label = !payload && artifact.type === 'visual' ? 'Visual' : kind === 'kpi' ? 'Metric' : ['table', 'matrix', 'pivot'].includes(kind) ? 'Table' : 'Chart'
       return html`
         <button class="visual-reference" type="button" aria-label=${`Open ${title} in visuals sidebar`}
           aria-pressed=${this.selectedVisualId === artifact.id}

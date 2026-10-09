@@ -113,6 +113,29 @@ func TestGeneratedVisualCopyKeepsScopedCascadesWithoutDuplicatingReportControls(
 	}
 }
 
+func TestGeneratedVisualCopyKeepsControlWithDisjointOptionDependency(t *testing.T) {
+	var filters []document.DashboardFilter
+	if err := json.Unmarshal([]byte(`[
+ {"id":"parent","label":"Country","dimension":"country","targets":["other"],"control":{"type":"singleSelect"}},
+ {"id":"child","label":"City","dimension":"city","targets":["revenue"],"control":{"type":"singleSelect","options":{"type":"distinct","dataset":"sales","dependsOn":["parent"]}}}
+ ]`), &filters); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := json.Marshal(filters)
+	copied, err := application.CopyChatVisualFilters(filters, "revenue")
+	if err != nil || len(copied) != 1 || copied[0].Label != "City" {
+		t.Fatalf("scoped control lost: %+v, err=%v", copied, err)
+	}
+	options := copied[0].Control.Value.(*document.SingleSelectDashboardFilterControl).Options.Value.(*document.DistinctDashboardFilterOptions)
+	if options.DependsOn != nil && len(*options.DependsOn) != 0 {
+		t.Fatalf("disjoint dependency retained: %+v", options.DependsOn)
+	}
+	after, _ := json.Marshal(filters)
+	if string(before) != string(after) {
+		t.Fatal("source dependencies mutated")
+	}
+}
+
 func TestGeneratedVisualCopyKeepsPlacementAndPageFilterScopes(t *testing.T) {
 	for _, scope := range []string{"qualified", "page", "page-override", "other-page"} {
 		t.Run(scope, func(t *testing.T) {
