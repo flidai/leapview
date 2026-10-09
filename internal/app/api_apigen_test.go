@@ -740,8 +740,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 146 {
-		t.Fatalf("UI signal IR contracts = %d, want 146", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 147 {
+		t.Fatalf("UI signal IR contracts = %d, want 147", len(irDoc.Contracts))
 	}
 	// Saved lifecycle roots are additive to the existing UI contract catalog.
 	savedExplorationRoles := map[string]string{
