@@ -11,16 +11,30 @@ import (
 // BuiltinDescriptor binds the separately admitted source-built engine to its
 // static extension inputs. It never authorizes loading a file or a new name.
 type BuiltinDescriptor struct {
-	Name            string `json:"name"`
-	DuckDBVersion   string `json:"duckdbVersion"`
-	Platform        string `json:"platform"`
-	EngineRevision  string `json:"engineRevision"`
-	SourceRevision  string `json:"sourceRevision"`
-	CargoLockSHA256 string `json:"cargoLockSHA256"`
+	Name                string `json:"name"`
+	DuckDBVersion       string `json:"duckdbVersion"`
+	Platform            string `json:"platform"`
+	EngineRevision      string `json:"engineRevision"`
+	SourceRevision      string `json:"sourceRevision"`
+	CargoLockSHA256     string `json:"cargoLockSHA256"`
+	SourceArchiveSHA256 string `json:"sourceArchiveSHA256,omitempty"`
+	SQLiteSourceID      string `json:"sqliteSourceID,omitempty"`
+	SQLiteSourceSHA3    string `json:"sqliteSourceSHA3,omitempty"`
 }
 
 func CompiledBuiltin(name, platform string) (BuiltinDescriptor, bool) {
-	if !staticLanceEnabled || name != "lance" || (platform != "linux_amd64" && platform != "linux_arm64") {
+	if platform != "linux_amd64" && platform != "linux_arm64" {
+		return BuiltinDescriptor{}, false
+	}
+	if staticSQLiteEnabled && name == "sqlite" {
+		return BuiltinDescriptor{Name: "sqlite", DuckDBVersion: "v1.5.4", Platform: platform,
+			EngineRevision:      "08e34c447bae34eaee3723cac61f2878b6bdf787",
+			SourceRevision:      "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+			SourceArchiveSHA256: "1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d",
+			SQLiteSourceID:      "2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc",
+			SQLiteSourceSHA3:    "67f423e9ebbbdc473cbc4772c872ee6b89f31fde4ed0279a5c25d5f65c043a16"}, true
+	}
+	if !staticLanceEnabled || name != "lance" {
 		return BuiltinDescriptor{}, false
 	}
 	return BuiltinDescriptor{Name: "lance", DuckDBVersion: "v1.5.4", Platform: platform,
@@ -40,6 +54,9 @@ func (b BuiltinDescriptor) Digest() string {
 }
 
 func (b BuiltinDescriptor) Provenance() string {
+	if b.Name == "sqlite" {
+		return "compiled:" + b.EngineRevision + ":" + b.SourceRevision + ":" + b.SourceArchiveSHA256 + ":" + b.SQLiteSourceSHA3
+	}
 	return "compiled:" + b.EngineRevision + ":" + b.SourceRevision + ":" + b.CargoLockSHA256
 }
 

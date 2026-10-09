@@ -1,6 +1,7 @@
 { pkgs }:
 let
   lance = import ./lance.nix { inherit pkgs; };
+  sqlite = import ./sqlite.nix { inherit pkgs; };
   revision = "08e34c447bae34eaee3723cac61f2878b6bdf787";
   registry = builtins.readFile ../internal/extension/builtin.go;
   source = pkgs.fetchFromGitHub {
@@ -15,6 +16,7 @@ let
     duckdb_extension_load(parquet)
     duckdb_extension_load(autocomplete)
     duckdb_extension_load(lance SOURCE_DIR ${lance.source})
+    duckdb_extension_load(sqlite_scanner SOURCE_DIR ${sqlite.source})
   '';
 in
 assert pkgs.lib.hasInfix ''EngineRevision:  "${revision}"'' registry;
@@ -27,7 +29,9 @@ pkgs.duckdb.overrideAttrs (_: {
   cmakeFlags = [
     (pkgs.lib.cmakeFeature "DUCKDB_EXTENSION_CONFIGS" "${extensions}")
     (pkgs.lib.cmakeFeature "OVERRIDE_GIT_DESCRIBE" "v1.5.4-0-g${revision}")
-    (pkgs.lib.cmakeFeature "DUCKDB_EXPLICIT_PLATFORM" (if pkgs.stdenv.hostPlatform.isAarch64 then "linux_arm64" else "linux_amd64"))
+    (pkgs.lib.cmakeFeature "DUCKDB_EXPLICIT_PLATFORM" (
+      if pkgs.stdenv.hostPlatform.isAarch64 then "linux_arm64" else "linux_amd64"
+    ))
     (pkgs.lib.cmakeBool "BUILD_UNITTESTS" false)
     (pkgs.lib.cmakeBool "BUILD_SHELL" true)
     (pkgs.lib.cmakeBool "BUILD_EXTENSIONS_ONLY" false)
@@ -38,6 +42,7 @@ pkgs.duckdb.overrideAttrs (_: {
     grep -q lance "$TMPDIR/lance-status"
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'lance' AND loaded AND installed;" | grep -q 1
     "$out/bin/duckdb" -c "SELECT version();" | grep -q v1.5.4
+    "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'sqlite_scanner' AND installed AND install_mode = 'STATICALLY_LINKED' AND install_path = '(BUILT-IN)';" | grep -q 1
   '';
-  passthru = { inherit lance revision; };
+  passthru = { inherit lance sqlite revision; };
 })

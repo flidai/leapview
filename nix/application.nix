@@ -99,7 +99,7 @@ pkgs.stdenv.mkDerivation {
     # loading or a new extension signing-key custody requirement.
     nativeLibraries=$(find ${duckdb.lib}/lib -maxdepth 1 -name '*.a' ! -name 'libdummy_static_extension_loader.a' -type f | LC_ALL=C sort)
     export CGO_LDFLAGS="-Wl,--start-group $nativeLibraries ${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a -Wl,--end-group -lstdc++ -ldl -lm"
-    tags=duckdb_arrow,duckdb_use_static_lib,leapview_static_lance
+    tags=duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite
     go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview
     go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapviewctl" ./cmd/leapviewctl
     go build -tags="$tags" -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply

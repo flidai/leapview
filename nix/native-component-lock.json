@@ -1670,5 +1670,27 @@
   "extensionSupplyHashes": {
     "linux/amd64": "sha256-wLSZ2dQ8nlSxeQkzO18EuPJFLZruPV8g0g3uX6gzanU=",
     "linux/arm64": "sha256-yvi6Rhmnc63K2eXDqY/UwT++E3EBRD8sRzrIhrQa258="
-  }
+  },
+  "sourceBuiltReplacements": [
+    {
+      "name": "sqlite",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "wrapper": {
+        "repository": "duckdb/duckdb-sqlite",
+        "sourceRevision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+        "sourceNARSRI": "sha256-KGN/HbL3S0W8885CEarSUcTA6haSCFq5ElWA9Fzxnlg="
+      },
+      "amalgamation": {
+        "version": "3.53.4",
+        "url": "https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip",
+        "archiveSHA256": "sha256:1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d",
+        "sourceID": "2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc",
+        "sqlite3.cSHA256": "sha256:b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+        "sqlite3.cSHA3_256": "67f423e9ebbbdc473cbc4772c872ee6b89f31fde4ed0279a5c25d5f65c043a16",
+        "sqlite3.hSHA256": "sha256:919e7f2e8ed1d8f56ac17b412b8971c76aa5d1a879752cc6058f75e7d5910e1d"
+      },
+      "originalSignedPayloadDisposition": "Original extensions[].sqlite payload hashes are historical observed official binaries and are not identities or provenance of this rebuilt component."
+    }
+  ]
 }

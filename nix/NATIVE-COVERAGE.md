@@ -160,7 +160,7 @@ and the external static-library binding mode. A closed registry binds the
 engine revision, Lance revision, platform and exact Cargo-lock SHA256. Packaging
 and runtime admission require the canonical descriptor and actual DuckDB
 `STATICALLY_LINKED` / `(BUILT-IN)` state before loading the fixed name. Ordinary
-builds cannot enable a builtin from manifest flags. The other 13 extensions retain
+builds cannot enable a builtin from manifest flags. The other extensions retain
 their pinned official signed payloads and exact file loads; no signing key or
 unsigned loading mode is introduced.
 
@@ -173,3 +173,35 @@ The upstream Rust tests, static registration and two-session Lance write/read
 tests must pass on actual built outputs. Protected artifact qualification,
 complete compiled dependency evidence and fresh advisory disposition remain
 required; this candidate does not turn the diagnostic collector into admission.
+
+## Source-built SQLite replacement
+
+The separate SQLite recipe keeps the exact scanner wrapper revision
+`494e9feed54c20b6bbfb665baf26864bc7e3b517` and replaces its vendored `sqlite3.c`
+and `sqlite3.h` with the official SQLite 3.53.4 amalgamation. The archive SHA256,
+published `sqlite3.c` SHA3-256, header/source SHA256 and official source ID are
+checked before producing source. The current upstream scanner head still
+vendors 3.38.1, so a scanner-root update alone does not replace that component.
+
+`leapview_static_sqlite` selects only the closed `sqlite` descriptor. The engine
+loads its canonical `sqlite_scanner` registration, and requires actual static
+installation before loading it. The descriptor binds the replacement source
+archive and SQLite identity; it does not reuse an official extension signature.
+`native-component-lock.json` records these separate rebuilt inputs under
+`sourceBuiltReplacements`; its original signed payload hashes remain historical
+observations rather than provenance for the replacement.
+
+The isolated Nix SQLite smoke build passed a normal transaction, FTS5 table
+creation, close/reopen and readback of the persisted sum 30. Its direct runtime
+version/source-ID calls match the pinned source. Syft did not discover this
+statically embedded component automatically; the explicit component SBOM uses
+the verified source-build/runtime receipt. A fresh Grype 0.119.0 scan against
+the database built 2026-10-09T06:32:32Z returns zero matches for that component.
+This scoped result covers the compiled SQLite smoke component, not the smoke
+binary's system dependencies or the LeapView output's complete native closure.
+
+The actual source-built DuckDB SQLite attach/write/reopen test, protected
+two-architecture qualification and replacement supply hashes remain pending.
+Existing Lance-only reconstructed supply hashes are not valid replacement
+SQLite supply hashes; no complete-coverage or application-admission claim is
+made by this source recipe or component scan.

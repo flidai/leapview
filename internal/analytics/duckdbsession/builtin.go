@@ -22,18 +22,19 @@ func VerifyCompiledBuiltin(ctx context.Context, db *sql.DB, identity extension.I
 	}
 	var installed bool
 	var mode, path string
-	if err := db.QueryRowContext(ctx, "SELECT installed, install_mode, install_path FROM duckdb_extensions() WHERE extension_name = ?", identity.Name).Scan(&installed, &mode, &path); err != nil {
+	engineName := extension.ArtifactFilenameStem(identity.Name)
+	if err := db.QueryRowContext(ctx, "SELECT installed, install_mode, install_path FROM duckdb_extensions() WHERE extension_name = ?", engineName).Scan(&installed, &mode, &path); err != nil {
 		return fmt.Errorf("%w: builtin registry status unavailable", extension.ErrExtensionIntegrity)
 	}
 	if !installed || mode != "STATICALLY_LINKED" || path != "(BUILT-IN)" {
 		return fmt.Errorf("%w: extension is not statically linked into this engine", extension.ErrExtensionIntegrity)
 	}
 	// ValidateBuiltinIdentity limits this literal to the closed compiled registry.
-	if _, err := db.ExecContext(ctx, "LOAD "+identity.Name); err != nil {
+	if _, err := db.ExecContext(ctx, "LOAD "+engineName); err != nil {
 		return fmt.Errorf("%w: load compiled builtin", extension.ErrExtensionIntegrity)
 	}
 	var loaded bool
-	if err := db.QueryRowContext(ctx, "SELECT loaded FROM duckdb_extensions() WHERE extension_name = ?", identity.Name).Scan(&loaded); err != nil || !loaded {
+	if err := db.QueryRowContext(ctx, "SELECT loaded FROM duckdb_extensions() WHERE extension_name = ?", engineName).Scan(&loaded); err != nil || !loaded {
 		return fmt.Errorf("%w: compiled builtin did not load", extension.ErrExtensionIntegrity)
 	}
 	return nil
