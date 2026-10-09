@@ -65,6 +65,10 @@ automatically replayed.
 This browser path manages credentials for an existing connection and active
 project. It does not bootstrap the first production source password, change the
 connection's endpoint or user, or retire historical credential versions.
+The operator must already hold an exact `connection.manage` grant; the standard
+project administrator, editor and initial publisher roles do not include it.
+Provisioning that authority on a fresh production installation remains a
+separate onboarding requirement.
 
 Agent Settings uses the same lifecycle behind **Test connection** and **Save and
 activate**. Testing the same pending proposal produces fresh validation for its
