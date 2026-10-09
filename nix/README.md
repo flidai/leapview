@@ -67,7 +67,7 @@ nixfmt and actionlint. PostgreSQL is **not** automatically started as a host ser
 
 Go and Bun source hashes are recorded in `toolchain.nix`; their versions come from
 `go.mod` and `package.json`. Nixpkgs' Go build and Bun patching logic are reused.
-The explicit `go1.26.7` wrapper supports the repository's sqlc toolchain selection.
+The explicit `go1.26.9` wrapper supports the repository's sqlc toolchain selection.
 Default Go uses `GOTOOLCHAIN=local` so an unsupported module/toolchain change fails
 instead of silently downloading a different compiler.
 
