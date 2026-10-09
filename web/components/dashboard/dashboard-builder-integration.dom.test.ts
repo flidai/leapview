@@ -458,12 +458,13 @@ test('filter settings stay open when changing scope moves the card between group
     await editor.locator('.field-results').waitFor()
     await editor.evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
-      mergePatch({ builder: { filters: [{ id: 'status-filter', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'status-filter', scope: 'report', targets: [] }] }] } })
+      mergePatch({ builder: { filters: [{ id: 'status-filter', label: 'Status', dimension: 'orders.status', controlType: 'text', required: false, readerEditable: true, targets: [], bindings: [{ id: 'status-filter', scope: 'report', targets: [] }] }] } })
       element.selectFilterDefinition('status-filter')
       await element.updateComplete
     })
     await editor.locator('.filter-settings summary').click()
     expect(await editor.locator('.filter-settings').evaluate((details: HTMLDetailsElement) => details.open)).toBe(true)
+    expect(await editor.locator('.filter-editor select').inputValue()).toBe('text')
     await editor.evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
       const filter = { ...element.builder.filters[0], bindings: [{ id: 'status-filter', scope: 'page', pageId: 'overview', targets: [] }] }
@@ -471,6 +472,7 @@ test('filter settings stay open when changing scope moves the card between group
       await element.updateComplete
     })
     expect(await editor.locator('.filter-settings').evaluate((details: HTMLDetailsElement) => details.open)).toBe(true)
+    expect(await editor.locator('.filter-editor select').inputValue()).toBe('text')
     await editor.locator('.filter-settings summary').click()
     expect(await editor.locator('.filter-settings').evaluate((details: HTMLDetailsElement) => details.open)).toBe(false)
   } finally { await page.close() }

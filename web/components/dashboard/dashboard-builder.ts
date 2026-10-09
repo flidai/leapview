@@ -1661,7 +1661,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             </label>
             <label>Control
               <select .value=${filter.controlType} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { controlType: (event.currentTarget as HTMLSelectElement).value as BuilderFilterControl })}>
-                ${this.filterControlChoices(filter).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
+                ${this.filterControlChoices(filter).map(([value, label]) => html`<option value=${value} .selected=${filter.controlType === value}>${label}</option>`)}
               </select>
             </label>
             <label>URL parameter
