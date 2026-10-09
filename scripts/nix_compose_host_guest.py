@@ -1180,6 +1180,17 @@ def _postgres_readiness_wait_command(container_name: str, docker_env: str) -> st
     )
 
 
+def _serving_credential_boundary_command(root: str = "/opt/leapview") -> str:
+    # The current generation owns immutable payload templates. The installer
+    # writes the private mutable serving environment in the installation root.
+    return (
+        "set -eu; file=" + shlex.quote(root + "/leapview.env") + "; test -s \"$file\"; "
+        "if grep -Eq '^(LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL|LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL)=' \"$file\" 2>/dev/null; then exit 1; "
+        "else status=$?; test \"$status\" -eq 1; fi; "
+        "printf '{\"controlMigratorURLAbsentFromServingEnvironment\":true,\"duckLakeMigratorURLAbsentFromServingEnvironment\":true}\\n'"
+    )
+
+
 def _compose_command(project_dir: str, docker_env: str) -> str:
     return (
         "env " + docker_env + " docker compose --project-name leapview --project-directory " + shlex.quote(project_dir) +
@@ -1733,11 +1744,7 @@ def _install_and_collect(args) -> dict:
                             timeout=1800 if args.install_mode == "bootstrap" else 900,
                             fixture_secrets=fixture_secrets)
         _record(evidence, "installer-driver.txt", (driver + "\n").encode())
-        boundary_result = guest.run(
-            "set -eu; file=/opt/leapview/current/leapview.env; test -s \"$file\"; "
-            "if grep -Eq '^(LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL|LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL)=' \"$file\"; then exit 1; fi; "
-            "printf '{\"controlMigratorURLAbsentFromServingEnvironment\":true,\"duckLakeMigratorURLAbsentFromServingEnvironment\":true}\\n'",
-        )
+        boundary_result = guest.run(_serving_credential_boundary_command())
         boundary = _json(_record(evidence, "serving-credential-boundary.json", boundary_result), "serving credential boundary")
         if boundary != {
             "controlMigratorURLAbsentFromServingEnvironment": True,

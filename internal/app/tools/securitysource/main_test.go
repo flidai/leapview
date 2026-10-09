@@ -104,6 +104,71 @@ func TestRunCleanScansCurrentTreeAndCandidateHistory(t *testing.T) {
 	}
 }
 
+func TestRunRejectsRuntimeStateRegardlessOfSecretScannerFindings(t *testing.T) {
+	for _, path := range []string{".libredash/libredash.db", ".leapview/data/routes.parquet", ".data/olist/orders.csv"} {
+		for _, historyOnly := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/historyOnly=%t", path, historyOnly), func(t *testing.T) {
+				fixture := newScannerFixture(t)
+				fullPath := filepath.Join(fixture.root, filepath.FromSlash(path))
+				if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(fullPath, []byte{0, 1, 2, 3}, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				runGit(t, fixture.root, "add", "-f", path)
+				if historyOnly {
+					runGit(t, fixture.root, "commit", "--quiet", "-m", "accidentally commit runtime state")
+					runGit(t, fixture.root, "rm", path)
+					runGit(t, fixture.root, "commit", "--quiet", "-m", "remove runtime state")
+				}
+				err := Run(context.Background(), Config{Root: fixture.root, BaseRef: "origin/main", Timeout: 5 * time.Second})
+				if err == nil || !strings.Contains(err.Error(), "runtime state") || !strings.Contains(err.Error(), path) {
+					t.Fatalf("runtime state accepted despite clean scanner results: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestRunAllowsIgnoredRuntimeStateAndAuthoredFixtures(t *testing.T) {
+	fixture := newScannerFixture(t)
+	if err := os.WriteFile(filepath.Join(fixture.root, ".gitignore"), []byte(".libredash/\n.leapview/\n.data/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".libredash/libredash.db", ".leapview/runtime.db", ".data/orders.csv", "internal/example/testdata/orders.parquet"} {
+		fullPath := filepath.Join(fixture.root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Run(context.Background(), Config{Root: fixture.root, BaseRef: "origin/main", Timeout: 5 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunAllowsRemovalOfPreviouslyTrackedRuntimeState(t *testing.T) {
+	fixture := newScannerFixture(t)
+	path := filepath.Join(fixture.root, ".libredash", "libredash.db")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte{0, 1, 2, 3}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.root, "add", "-f", ".libredash/libredash.db")
+	runGit(t, fixture.root, "commit", "--quiet", "-m", "legacy runtime state")
+	runGit(t, fixture.root, "branch", "-f", "origin/main", "HEAD")
+	runGit(t, fixture.root, "rm", ".libredash/libredash.db")
+	runGit(t, fixture.root, "commit", "--quiet", "-m", "remove legacy runtime state")
+	if err := Run(context.Background(), Config{Root: fixture.root, BaseRef: "origin/main", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("runtime cleanup was blocked: %v", err)
+	}
+}
+
 func TestRunUsesPrivateScanRootIndependentOfAmbientTMPDIR(t *testing.T) {
 	fixture := newScannerFixture(t)
 	// Nix and hosted runners can select locations outside the scanner's allowed

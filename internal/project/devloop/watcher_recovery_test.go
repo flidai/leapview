@@ -66,7 +66,7 @@ func TestWatcherReportsInvalidNewResourceAndPreservesCandidate(t *testing.T) {
 
 	resource := filepath.Join(root, "connections", "customer.yaml")
 	writeWatcherResource(t, resource, "not a resource envelope\n")
-	invalid := awaitWatcherInvalidEdit(t, updates, initial.Result)
+	invalid := awaitWatcherInvalidation(t, updates, initial.Result)
 	require.Equal(t, StatusInvalid, invalid.Result.Status)
 	require.Error(t, invalid.Err)
 	require.Equal(t, initial.Result.Candidate, invalid.Result.Candidate)
@@ -151,27 +151,6 @@ func runFilesystemWatcher(t *testing.T, root string) (<-chan Update, <-chan file
 	return updates, observed, remote
 }
 
-func awaitWatcherInvalidEdit(t *testing.T, updates <-chan Update, previous Result) Update {
-	t.Helper()
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
-	for {
-		select {
-		case update := <-updates:
-			if update.Result.Status == StatusInvalid {
-				return update
-			}
-			// An earlier valid reconcile or its source-resolution error may
-			// arrive first. Neither may replace the last valid candidate.
-			require.Equal(t, previous.Candidate, update.Result.Candidate)
-			require.Equal(t, previous.Snapshot, update.Result.Snapshot)
-		case <-deadline.C:
-			t.Fatal("watcher did not report the invalid filesystem edit")
-			return Update{}
-		}
-	}
-}
-
 func awaitWatcherSnapshot(t *testing.T, updates <-chan Update, path, content string) Update {
 	t.Helper()
 	deadline := time.NewTimer(2 * time.Second)
@@ -193,6 +172,30 @@ func awaitWatcherSnapshot(t *testing.T, updates <-chan Update, path, content str
 			}
 		case <-deadline.C:
 			t.Fatalf("watcher did not synchronize %s after a filesystem change", path)
+			return Update{}
+		}
+	}
+}
+
+func awaitWatcherInvalidation(t *testing.T, updates <-chan Update, previous Result) Update {
+	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case update := <-updates:
+			require.Error(t, update.Err)
+			require.Equal(t, previous.Candidate, update.Result.Candidate)
+			require.Equal(t, previous.Snapshot, update.Result.Snapshot)
+			if update.Result.Status == StatusInvalid {
+				return update
+			}
+			// Run reports a successful reconcile before resolving its source
+			// watches. An edit during that resolution can first report a scan
+			// error with the previous result, before the queued edit is built.
+			require.Equal(t, StatusSynchronized, update.Result.Status)
+		case <-deadline.C:
+			t.Fatal("watcher did not report an invalid resource after a filesystem change")
 			return Update{}
 		}
 	}
