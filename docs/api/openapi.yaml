@@ -37047,6 +37047,7 @@ paths:
             schema:
               $ref: '#/components/schemas/DeliveryPlanRequest'
             example:
+              firstSourcePreparationId: example
               operation: code_change
               sourceAttestationDigest: example
               sourceDigest: example
@@ -82678,7 +82679,11 @@ components:
         sourceAttestationDigest:
           type: string
           example: example
+        firstSourcePreparationId:
+          type: string
+          example: example
       example:
+        firstSourcePreparationId: example
         operation: code_change
         sourceAttestationDigest: example
         sourceDigest: example
