@@ -23,7 +23,7 @@ class FirstSourceCredentials extends DatastarLit(LitElement) {
     input, select, button { font:inherit; padding:var(--base-size-8); border:var(--lv-border-default); border-radius:var(--lv-radius-default); background:var(--lv-bg-panel); color:inherit; }
     input,select { min-width:0; } button { cursor:pointer; } button:disabled { opacity:.6; cursor:default; }
     .actions { display:flex; flex-wrap:wrap; gap:var(--base-size-8); } .hint { color:var(--lv-fg-muted); }
-    [role=alert] { color:var(--lv-fg-danger); } h1,h2,p { margin:0; } h2 { font-size:1.1rem; }
+    [role=alert] { color:var(--lv-fg-danger); } h1,h2,p { margin:0; } h2 { font:var(--lv-type-section-title); }
   `
   connectedCallback() { super.connectedCallback(); document.addEventListener('datastar-fetch', this.fetchResult) }
   disconnectedCallback() { document.removeEventListener('datastar-fetch', this.fetchResult); super.disconnectedCallback() }
