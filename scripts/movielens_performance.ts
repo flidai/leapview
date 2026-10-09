@@ -257,7 +257,8 @@ export async function runPerformanceSuite(): Promise<void> {
 	const logCursor = await refreshLogCursor()
 	const dashboardURL = new URL(suite.dashboardPath, baseURL).toString()
   const browser = await chromium.launch()
-  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 },
+    ...(Bun.env.LEAPVIEW_QA_STORAGE_STATE ? { storageState: Bun.env.LEAPVIEW_QA_STORAGE_STATE } : {}) })
   const browserHealth = collectBrowserHealth(page)
   const samples: Sample[] = []
   let rapidToggle: RapidToggleResult | null = null

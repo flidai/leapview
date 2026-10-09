@@ -648,6 +648,7 @@ tasks:
       - bun run typecheck:tests
       - bun run test:production-assets
       - bun run test:movielens-performance-harness
+      - bun test scripts/performance_browser_profile.test.ts
       - bun run test:viewport-qualification-harness
       - bun run test:public-site-smoke
 

@@ -6,6 +6,14 @@
 
 All four stable shard patterns and every executed test/subtest, outcome and skip reason must match exactly. The maintained PostgreSQL skip environment and MinIO dedicated-lane exclusion are explicit and identical in both arms. Their separate conformance lanes, non-application packages, generated checks and frontend suites remain required; this experiment cannot substitute for canonical CI. The raw per-step command, log, exit, cleanup and resource receipts are retained. The first failure or discrepancy stops the experiment. A single pair per cache condition supports descriptive screening only: its finite decision retains the maintained implementation and makes no statistical gain or adoption claim.
 
+## Olist route profiles
+
+The cached Olist fixture supplies the dense overview, virtual table showcase and three governed tiled maps. `performance_browser_profile.py /absolute/new-evidence-directory` runs three fresh Chromium processes through those routes, retaining instrumented parse/render traces, CDP counters, HTML byte identity, deterministic offline gzip/Brotli sizes and actual resource encoded/decoded/transfer sizes. Offline compression does not imply production HTTP compression. Four table scroll positions must move the virtual window and settle loaded rows; maps must render and request successful non-world tiles. Navigating to an empty document must close every observed client SSE request. This proves client teardown, rather than server reader release.
+
+Before running, `LEAPVIEW_BASE_URL` and `LEAPVIEW_BROWSER_PROFILE_SERVER_RECEIPT` select our dedicated native fixture and its private admission receipt. The receipt contains the frozen `source` commit/tree, `binary.path`/`sha256`, native `pid`/Linux `processStart`, exact `baseURL`, `datasetRoot` and `datasetFiles` path/SHA256 rows covering every CSV once. The driver rechecks executable/process/source/dataset bytes before and after profiling. Create the receipt only after the maintained generated-input, binary build, PostgreSQL pool bootstrap, managed-data publication and readiness checks succeed. Authentication can use the maintained local development session through `LEAPVIEW_QA_STORAGE_STATE`; credentials and raw traces stay private.
+
+The generic maintained interaction runner also accepts `scripts/performance/olist.json` through `LEAPVIEW_PERF_SCENARIO`. It measures purchase-month, category and delivery selections and rapid category supersession against the same overview. The five-session study preserves its existing correctness and absolute guards. Route profiles are descriptive and make no p95 or optimization claim; interaction p95 requires all one hundred samples per scenario across the five fresh sessions.
+
 These studies reuse production boundaries and keep correctness checks active.
 They describe the current implementation. They do not nominate an optimizer,
 accept a baseline, infer user latency from Go microbenchmarks or promise a

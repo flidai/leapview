@@ -23,7 +23,8 @@ FAMILIES = {
 
 
 def digest(path):
-    return hashlib.file_digest(Path(path).open("rb"), "sha256").hexdigest()
+    with Path(path).open("rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()
 
 
 def git(*args):
