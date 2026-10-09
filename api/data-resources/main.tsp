@@ -91,18 +91,6 @@ model ExcelReaderOptions {
   header?: boolean;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", sourceDataIdentityCapability: "unavailable", defaults: #{ delimiter: "\t", quote: "\"", header: false } } })
-model TextReaderOptions {
-  delimiter?: string;
-  quote?: string;
-  header?: boolean;
-}
-
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", sourceDataIdentityCapability: "unavailable", defaults: #{ compression: "auto" } } })
-model BlobReaderOptions {
-  compression?: "auto" | "none" | "gzip" | "zstd";
-}
-
 @apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", sourceDataIdentityCapability: "unavailable", defaults: #{} } })
 model VortexReaderOptions {
   version?: string;
@@ -124,8 +112,6 @@ model ReaderDefaults {
   json?: JSONReaderOptions;
   parquet?: ParquetReaderOptions;
   excel?: ExcelReaderOptions;
-  text?: TextReaderOptions;
-  blob?: BlobReaderOptions;
   vortex?: VortexReaderOptions;
   delta?: DeltaReaderOptions;
   iceberg?: IcebergReaderOptions;
@@ -370,14 +356,14 @@ model ExcelPathSourceLocation extends PathSourceLocation {
   options?: ExcelReaderOptions;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", sourceDataIdentityCapability: "unavailable", allowsOptions: false, defaults: #{} } })
 model TextPathSourceLocation extends PathSourceLocation {
   format: "text";
-  options?: TextReaderOptions;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", sourceDataIdentityCapability: "unavailable", allowsOptions: false, defaults: #{} } })
 model BlobPathSourceLocation extends PathSourceLocation {
   format: "blob";
-  options?: BlobReaderOptions;
 }
 
 model VortexPathSourceLocation extends PathSourceLocation {

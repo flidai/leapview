@@ -213,17 +213,9 @@ func duckDBPathOptions(value *projectcontracts.PathSourceLocation) (map[string]a
 		if variant == nil {
 			return nil, fmt.Errorf("text path variant is nil")
 		}
-		if variant.Options != nil {
-			putString("delim", variant.Options.Delimiter)
-			putString("quote", variant.Options.Quote)
-			putBool("header", variant.Options.Header)
-		}
 	case *projectcontracts.BlobPathSourceLocation:
 		if variant == nil {
 			return nil, fmt.Errorf("blob path variant is nil")
-		}
-		if variant.Options != nil {
-			putString("compression", variant.Options.Compression)
 		}
 	case *projectcontracts.VortexPathSourceLocation:
 		if variant == nil {

@@ -45,9 +45,9 @@ func testPathLocation(format, path string) *projectcontracts.PathSourceLocation 
 	case "excel":
 		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.ExcelPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultExcelReaderOptions()}}
 	case "text":
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultTextReaderOptions()}}
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: base, Format: format}}
 	case "blob":
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultBlobReaderOptions()}}
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: base, Format: format}}
 	case "vortex":
 		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: base, Format: format}}
 	case "delta":

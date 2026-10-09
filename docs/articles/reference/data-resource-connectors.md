@@ -30,8 +30,8 @@ Path Sources retain the scalar ADR shape (`format` plus sibling `options`) where
 | `json` | `JSONReaderOptions` | `unavailable` |
 | `parquet` | `ParquetReaderOptions` | `unavailable` |
 | `excel` | `ExcelReaderOptions` | `unavailable` |
-| `text` | `TextReaderOptions` | `unavailable` |
-| `blob` | `BlobReaderOptions` | `unavailable` |
+| `text` | none | `unavailable` |
+| `blob` | none | `unavailable` |
 | `vortex` | `VortexReaderOptions` | `unavailable` |
 | `delta` | `DeltaReaderOptions` | `unavailable` |
 | `iceberg` | `IcebergReaderOptions` | `unavailable` |

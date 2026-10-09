@@ -173,35 +173,16 @@
             "blob"
           ],
           "type": "string"
-        },
-        "options": {
-          "$ref": "#/$defs/BlobReaderOptions"
         }
       },
       "required": [
         "format"
       ],
       "type": "object",
-      "unevaluatedProperties": false
-    },
-    "BlobReaderOptions": {
-      "properties": {
-        "compression": {
-          "enum": [
-            "auto",
-            "none",
-            "gzip",
-            "zstd"
-          ],
-          "type": "string"
-        }
-      },
-      "type": "object",
       "unevaluatedProperties": false,
       "x-leapview-format": {
-        "defaults": {
-          "compression": "auto"
-        },
+        "allowsOptions": false,
+        "defaults": {},
         "extensions": [
           ".blob"
         ],
@@ -3034,9 +3015,6 @@
     "ReaderDefaults": {
       "description": "Connection defaults are closed by reader format; arbitrary option maps are not public.",
       "properties": {
-        "blob": {
-          "$ref": "#/$defs/BlobReaderOptions"
-        },
         "csv": {
           "$ref": "#/$defs/CSVReaderOptions"
         },
@@ -3054,9 +3032,6 @@
         },
         "parquet": {
           "$ref": "#/$defs/ParquetReaderOptions"
-        },
-        "text": {
-          "$ref": "#/$defs/TextReaderOptions"
         },
         "vortex": {
           "$ref": "#/$defs/VortexReaderOptions"
@@ -4136,37 +4111,16 @@
             "text"
           ],
           "type": "string"
-        },
-        "options": {
-          "$ref": "#/$defs/TextReaderOptions"
         }
       },
       "required": [
         "format"
       ],
       "type": "object",
-      "unevaluatedProperties": false
-    },
-    "TextReaderOptions": {
-      "properties": {
-        "delimiter": {
-          "type": "string"
-        },
-        "header": {
-          "type": "boolean"
-        },
-        "quote": {
-          "type": "string"
-        }
-      },
-      "type": "object",
       "unevaluatedProperties": false,
       "x-leapview-format": {
-        "defaults": {
-          "delimiter": "\t",
-          "header": false,
-          "quote": "\""
-        },
+        "allowsOptions": false,
+        "defaults": {},
         "extensions": [
           ".txt"
         ],
