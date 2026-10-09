@@ -14,6 +14,20 @@ Confirm `LEAPVIEW_HOME`, analytical data, and managed-data runtime directories e
 
 Verify required secrets are present by name without printing their values. An incomplete OIDC, Azure, S3, or credential pair is intentionally rejected.
 
+If startup reports that the current cursor-signing key is revoked, the instance
+has loaded publicly exposed key material. Replace that active key through the
+PostgreSQL owner workflow before restarting; a new key ID with the same secret
+does not repair the exposure. Generate at least 32 fresh bytes with a
+cryptographically secure random generator and preserve the single-active-key
+transaction boundary. LeapView immediately excludes known exposed verification
+keys, even during the ordinary rotation grace period.
+
+Keep `.libredash/`, `.leapview/`, and `.data/` out of Git. The source-security
+gate checks both the current Git view and candidate commits for runtime state,
+including binary databases and Parquet files. If runtime state was committed,
+remove it from the candidate commits and assess any exposed credentials;
+deleting it in a subsequent commit leaves the earlier contents accessible.
+
 ## Liveness or readiness fails
 
 If the process is absent or `/healthz` fails, inspect process exit and startup logs. If liveness passes but `/readyz` fails, investigate required state attachment and runtime readiness rather than restarting repeatedly.
