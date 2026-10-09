@@ -20,7 +20,6 @@ jobs:
       STUDY_TREE: 499ae5f1d280795e0066752cb2395d230faa88f6
       STUDY_WORKFLOW_SHA: ${{ github.workflow_sha }}
       STUDY_DISPATCH_SHA: ${{ github.sha }}
-      STUDY_ROOT: ${{ runner.temp }}/october-ci-efficiency
       GOMAXPROCS: "2"
       GOMEMLIMIT: 2GiB
       GOFLAGS: -p=1 -tags=duckdb_arrow -mod=readonly
@@ -38,11 +37,14 @@ jobs:
           persist-credentials: false
 
       - name: Reserve owned evidence and record the workflow identity
+        env:
+          STUDY_ROOT: ${{ runner.temp }}/october-ci-efficiency
         shell: bash
         run: |
           set -euo pipefail
           mkdir "$STUDY_ROOT"
           mkdir "$STUDY_ROOT/artifact"
+          printf 'STUDY_ROOT=%s\n' "$STUDY_ROOT" >> "$GITHUB_ENV"
           test "$(git rev-parse HEAD)" = "$STUDY_SOURCE"
           test "$(git rev-parse HEAD^{tree})" = "$STUDY_TREE"
           test -z "$(git status --porcelain)"
