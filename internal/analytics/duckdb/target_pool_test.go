@@ -282,7 +282,7 @@ func TestTargetRuntimePoolResolvesTargetOwnedConnectionAfterProviderSnapshotIsDe
 	}
 	resolved, err := resolver.Resolve(
 		t.Context(),
-		"warehouse",
+		"connection:warehouse",
 		semanticmodel.Connection{Kind: "postgres"},
 	)
 	require.NoError(t, err)
@@ -299,7 +299,7 @@ func TestTargetRuntimePoolResolvesTargetOwnedConnectionAfterProviderSnapshotIsDe
 	}
 	if _, err := resolver.Resolve(
 		t.Context(),
-		"warehouse",
+		"connection:warehouse",
 		semanticmodel.Connection{Kind: "postgres"},
 	); !errors.Is(err, connectionbinding.ErrProviderUnavailable) {
 		t.Fatalf("Resolve() after pool close error = %v", err)

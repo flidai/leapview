@@ -309,7 +309,7 @@ func (pool *targetRuntimePool) HealthCheck(ctx context.Context) error {
 
 func (pool *targetRuntimePool) Resolve(
 	ctx context.Context,
-	name string,
+	_ string,
 	logical semanticmodel.Connection,
 ) (semanticmodel.Connection, error) {
 	if err := ctx.Err(); err != nil {
@@ -343,7 +343,9 @@ func (pool *targetRuntimePool) Resolve(
 		resolved.RuntimeOptions.DataPath = pool.connection.RuntimeOptions.DataPath
 	}
 	resolved.Auth = maps.Clone(pool.connection.Auth)
-	validated, err := resolved.Validate(strings.TrimSpace(name))
+	// Validate connector configuration using its private SQL alias; the caller's
+	// resource ID may include a namespace and remains owned by the runtime graph.
+	validated, err := resolved.Validate(targetRuntimeConnectionAlias)
 	if err != nil {
 		clear(resolved.Auth)
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
