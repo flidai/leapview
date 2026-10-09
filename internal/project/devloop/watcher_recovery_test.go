@@ -66,7 +66,7 @@ func TestWatcherReportsInvalidNewResourceAndPreservesCandidate(t *testing.T) {
 
 	resource := filepath.Join(root, "connections", "customer.yaml")
 	writeWatcherResource(t, resource, "not a resource envelope\n")
-	invalid := awaitUpdate(t, updates)
+	invalid := awaitWatcherInvalidEdit(t, updates, initial.Result)
 	require.Equal(t, StatusInvalid, invalid.Result.Status)
 	require.Error(t, invalid.Err)
 	require.Equal(t, initial.Result.Candidate, invalid.Result.Candidate)
@@ -149,6 +149,27 @@ func runFilesystemWatcher(t *testing.T, root string) (<-chan Update, <-chan file
 		}
 	})
 	return updates, observed, remote
+}
+
+func awaitWatcherInvalidEdit(t *testing.T, updates <-chan Update, previous Result) Update {
+	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case update := <-updates:
+			if update.Result.Status == StatusInvalid {
+				return update
+			}
+			// An earlier valid reconcile or its source-resolution error may
+			// arrive first. Neither may replace the last valid candidate.
+			require.Equal(t, previous.Candidate, update.Result.Candidate)
+			require.Equal(t, previous.Snapshot, update.Result.Snapshot)
+		case <-deadline.C:
+			t.Fatal("watcher did not report the invalid filesystem edit")
+			return Update{}
+		}
+	}
 }
 
 func awaitWatcherSnapshot(t *testing.T, updates <-chan Update, path, content string) Update {
