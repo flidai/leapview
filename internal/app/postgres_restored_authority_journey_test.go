@@ -322,9 +322,7 @@ func TestPostgresPhysicalRestorePreservesApplicationJourneys(t *testing.T) {
 	}
 	api.assertQuery(ownerToken, "120", http.StatusOK)
 	api.assertQuery(outsiderToken, "", http.StatusForbidden)
-	if err := restoredGraph.Access.DeleteSession(t.Context(), session); err != nil {
-		t.Fatal(err)
-	}
+	assertRestoredJourneyQueryParity(t, api, restoredConfig, restoredGraph.Access, restoredBootstrap.RuntimePool(), session, ownerCredential.Principal.ID, outsider.Principal.ID, outsiderToken)
 	api.assertSession(session, http.StatusFound)
 	t.Log("verified one physical control/catalog backup + home restore preserves credentials, sessions, policy, publication and actual governed query; fresh canonical refresh and independently approved deployment change actual results with principal isolation")
 }
