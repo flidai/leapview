@@ -1081,3 +1081,23 @@ esac
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('hosted Linux CI configures the Docker Hub cache before container work', () => {
+  const development = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const helper = 'scripts/configure_ci_docker_mirror.py'
+  for (const setup of [steps, development.jobs.development.steps, development.jobs.image.steps]) {
+    const index = setup.findIndex((step: any) => step.run?.includes(helper))
+    expect(index).toBeGreaterThanOrEqual(0)
+    expect(setup[index].if).toBe("runner.os == 'Linux' && runner.environment == 'github-hosted'")
+    expect(setup[index].run).toContain('sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3')
+    expect(setup[index]['continue-on-error']).toBeUndefined()
+    const containerWork = setup.findIndex((step: any) => /Install.*Nix|ci:prepare|nix:smoke|#leapview-image/.test(step.name ?? step.run ?? ''))
+    expect(index).toBeLessThan(containerWork)
+  }
+  for (const file of [helper, 'scripts/tests/test_ci_docker_mirror.py']) {
+    expect(development.on.pull_request.paths.some((pattern: string) => new Bun.Glob(pattern).match(file))).toBe(true)
+  }
+  const result = spawnSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_ci_docker_mirror.py'], { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stdout + result.stderr)
+  expect(result.status).toBe(0)
+})
