@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -307,16 +308,43 @@ func TestPostgresBuildEnsuresClaimedProjectIdentity(t *testing.T) {
 }
 
 func TestPostgresBuildWiresNativeAgentSettingsAuthority(t *testing.T) {
-	contents, err := os.ReadFile("postgres_build.go")
+	file, err := parser.ParseFile(token.NewFileSet(), "postgres_build.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := string(contents)
-	if !strings.Contains(source, "workflowAssemblyInputs{AgentSettings: graph.Bootstrap") {
-		t.Fatal("PostgreSQL composition does not pass the graph-owned settings authority to workflow assembly")
-	}
-	if strings.Contains(source, "AgentSettings: store") {
-		t.Fatal("PostgreSQL composition falls back to the local SQLite settings store")
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		name, ok := literal.Type.(*ast.Ident)
+		if !ok || name.Name != "workflowAssemblyInputs" {
+			return true
+		}
+		for _, element := range literal.Elts {
+			field, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := field.Key.(*ast.Ident)
+			if !ok || key.Name != "AgentSettings" {
+				continue
+			}
+			value, ok := field.Value.(*ast.SelectorExpr)
+			if !ok {
+				t.Fatal("workflow agent settings are not graph-owned")
+			}
+			owner, ok := value.X.(*ast.Ident)
+			if !ok || owner.Name != "graph" || value.Sel.Name != "Bootstrap" {
+				t.Fatal("workflow agent settings do not use the graph-owned PostgreSQL bootstrap authority")
+			}
+			found = true
+		}
+		return true
+	})
+	if !found {
+		t.Fatal("PostgreSQL workflow assembly has no graph-owned agent settings authority")
 	}
 }
 

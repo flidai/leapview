@@ -11,7 +11,7 @@ import (
 
 func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := credentialgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 4; got != want {
+	if got, want := len(contracts), 14; got != want {
 		t.Fatalf("Credential generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range contracts {
@@ -40,8 +40,8 @@ func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	if save.Command.Owner != "LeapViewAPI.Credential" || save.Command.Idempotency != "forbidden" || save.Command.Audit.SuccessAction != "credential.draft.saved" || save.Command.Audit.Guarantee != "transactional" {
 		t.Fatalf("credential draft save command contract = %#v", save.Command)
 	}
-	if save.Command.UI != nil || len(save.Command.AdditionalExposures) != 0 {
-		t.Fatalf("credential draft save unexpectedly exposes another command surface: %#v", save.Command)
+	if save.Command.UI == nil || len(save.Command.AdditionalExposures) != 1 || save.Command.AdditionalExposures[0] != "ui" {
+		t.Fatalf("credential draft save must expose only the audited UI surface: %#v", save.Command)
 	}
 	if payload := save.Command.Audit.Payload; payload == nil || payload.Schema != "CredentialDraftAuditPayload" {
 		t.Fatalf("credential draft audit payload contract = %#v", payload)
@@ -64,6 +64,56 @@ func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	}
 }
 
+func TestCredentialRetirementContractsPreserveExactAuthorityAndAtomicAudit(t *testing.T) {
+	contracts := credentialgen.GetAPIGenOperationContracts()
+	for _, spec := range []struct{ read, retire, action, resolver, audit string }{
+		{"getCredentialVersionStatus", "retireCredentialVersion", "connection.manage", "connection", "credential.version.retired_local"},
+		{"getAgentCredentialVersionStatus", "retireAgentCredentialVersion", "platform.settings.update", "instance", "credential.agent_version.retired_local"},
+	} {
+		for _, operation := range []string{spec.read, spec.retire} {
+			contract, ok := contracts[operation]
+			if !ok || contract.Authz == nil || contract.Authz.Action != spec.action || contract.Authz.Resolver != spec.resolver {
+				t.Fatalf("%s lost exact credential retirement authority", operation)
+			}
+			if operation == spec.read {
+				if contract.Command != nil {
+					t.Fatalf("%s must remain a read", operation)
+				}
+				continue
+			}
+			command := contract.Command
+			if command == nil || command.Idempotency != "forbidden" || command.Audit.Guarantee != "transactional" || command.Audit.SuccessAction != spec.audit || command.Audit.Payload == nil || command.Audit.Payload.Schema != "CredentialVersionRetiredAuditPayload" {
+				t.Fatalf("%s lost its non-replayable atomic retirement audit", operation)
+			}
+		}
+	}
+}
+
+func TestCredentialActivationContractPreservesAuthorizationAndAtomicAudit(t *testing.T) {
+	contracts := credentialgen.GetAPIGenOperationContracts()
+	for operation, action := range map[string]string{
+		"startCredentialActivation": "credential.activation.requested",
+		"retryCredentialActivation": "credential.activation.retried",
+		"abortCredentialActivation": "credential.activation.aborted",
+	} {
+		contract, ok := contracts[operation]
+		if !ok || contract.Authz == nil || contract.Authz.Action != "connection.manage" || contract.Authz.Resolver != "connection" {
+			t.Fatalf("%s must require exact connection management", operation)
+		}
+		command := contract.Command
+		if command == nil || command.Idempotency != "forbidden" || command.Audit.Guarantee != "transactional" || command.Audit.SuccessAction != action || command.Owner != "LeapViewAPI.Credential" {
+			t.Fatalf("%s activation/audit contract = %#v", operation, command)
+		}
+		if command.UI == nil || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" || command.Audit.Payload == nil || command.Audit.Payload.Schema != "CredentialActivationAuditPayload" {
+			t.Fatalf("%s must expose the audited UI and retain metadata-only audit", operation)
+		}
+	}
+	status, ok := contracts["getCredentialActivation"]
+	if !ok || status.Authz == nil || status.Authz.Action != "connection.read" || status.Authz.Resolver != "connection" || status.Command != nil {
+		t.Fatal("activation status must remain an authorized read")
+	}
+}
+
 func TestCredentialValidationContractRequiresFreshExplicitProbe(t *testing.T) {
 	contract, ok := credentialgen.GetAPIGenOperationContracts()["validateCredentialDraft"]
 	if !ok || contract.Command == nil {
@@ -76,8 +126,8 @@ func TestCredentialValidationContractRequiresFreshExplicitProbe(t *testing.T) {
 	if command.Idempotency != "forbidden" || command.Audit.SuccessAction != "credential.draft.validated" || command.Audit.Guarantee != "transactional" {
 		t.Fatalf("validation command: %#v", command)
 	}
-	if command.UI != nil || len(command.AdditionalExposures) != 0 {
-		t.Fatal("validation must remain API only until saved draft selection is implemented")
+	if command.UI == nil || command.UI.ActionID != "credential.draft.validate" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {
+		t.Fatal("validation must expose only the explicit saved-draft UI action")
 	}
 	if payload := command.Audit.Payload; payload == nil || payload.Schema != "CredentialValidationAuditPayload" || len(payload.Fields) != 6 {
 		t.Fatalf("validation audit payload: %#v", payload)

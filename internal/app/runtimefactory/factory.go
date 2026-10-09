@@ -122,7 +122,7 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 		Directory: duckDir, SnapshotID: input.State.DuckLakeSnapshotID,
 		Identity: identity, SemanticModelDigest: input.State.Digest,
 		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
-		Definition: projectDefinition, DependencyEvidence: dependencyEvidence,
+		Definition: projectDefinition, ConnectionIDs: compiled.Manifest.NameIndex.Connections, DependencyEvidence: dependencyEvidence,
 	}
 	if input.Candidate != nil {
 		runtimeInput.CandidateID = input.Candidate.CandidateID
@@ -241,7 +241,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
 		TargetID: targetID, SnapshotSealID: snapshotSealID,
 		SkipInitialRefresh: true,
-		Definition:         projectDefinition, DependencyEvidence: dependencyEvidence,
+		Definition:         projectDefinition, ConnectionIDs: compiled.Manifest.NameIndex.Connections, DependencyEvidence: dependencyEvidence,
 	}
 	if environment.IsPostgresCatalog() {
 		runtimeInput.SnapshotID = environment.PostgresSnapshotVersion()

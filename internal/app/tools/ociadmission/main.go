@@ -11,6 +11,12 @@ import (
 
 func main() {
 	run := func() error {
+		if len(os.Args) > 1 && os.Args[1] == "verify-nix-pair" {
+			return runNixPair(os.Args[2:], os.Stdout, os.Stderr)
+		}
+		if len(os.Args) > 1 && os.Args[1] == "admit-nix" {
+			return runNixAdmission(os.Args[2:], os.Environ(), os.Stdout, os.Stderr)
+		}
 		if len(os.Args) > 1 && os.Args[1] == "verify-receipt" {
 			return runVerifyReceipt(os.Args[2:], os.Stdout, os.Stderr)
 		}

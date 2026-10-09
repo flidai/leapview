@@ -49,21 +49,22 @@ func (e *DeliveryError) Unwrap() error {
 // The source digest is deliberately returned by the remote source snapshot
 // synchronizer; callers must not invent a digest from arbitrary local bytes.
 type DeliveryPlanOptions struct {
-	SourceRoot              string
-	Credentials             cliapi.Credentials
-	TargetID                string
-	Operation               string
-	CandidateKey            string
-	UploadConcurrency       int
-	Format                  string
-	CandidateID             string
-	ResolveCandidatePlan    bool
-	ProjectID               string
-	SourceDigest            string
-	SourceAttestationDigest string
-	Environment             string
-	// IdempotencyKey is supplied by a retained deployment operation. Empty
-	// retains the standalone plan command's deterministic-key behavior.
+	SourceRoot               string
+	Credentials              cliapi.Credentials
+	TargetID                 string
+	Operation                string
+	CandidateKey             string
+	UploadConcurrency        int
+	Format                   string
+	CandidateID              string
+	ResolveCandidatePlan     bool
+	ProjectID                string
+	SourceDigest             string
+	SourceAttestationDigest  string
+	FirstSourcePreparationID string
+	Environment              string
+	// IdempotencyKey is supplied explicitly or by a retained operation. Empty
+	// retains generated keys for normal plans; prepared plans require a key.
 	IdempotencyKey string
 	// SourceSnapshot is an immutable local capture retained by deploy before
 	// its first remote request. Resume passes this exact capture; it never
@@ -176,6 +177,12 @@ func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations)
 			if values.Format != "text" && values.Format != "json" {
 				return cliapi.NewUsageError(fmt.Errorf("plan format must be text or json"))
 			}
+			if command.Flags().Changed("first-source-preparation-id") && values.FirstSourcePreparationID == "" {
+				return cliapi.NewUsageError(fmt.Errorf("first-source preparation identity must not be empty"))
+			}
+			if (command.Flags().Changed("idempotency-key") || values.FirstSourcePreparationID != "") && (values.IdempotencyKey == "" || values.IdempotencyKey != strings.TrimSpace(values.IdempotencyKey)) {
+				return cliapi.NewUsageError(fmt.Errorf("prepared plans require an explicit nonempty canonical --idempotency-key"))
+			}
 			result, err := operations.Create(ctx, values)
 			if err != nil {
 				return err
@@ -188,6 +195,8 @@ func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations)
 	command.Flags().StringVar(&values.Credentials.Token, "token", "", "ephemeral API token for one-shot automation")
 	command.Flags().StringVar(&values.Credentials.ProjectID, "project-id", "", "target-bound Project identity")
 	command.Flags().StringVar(&values.Operation, "operation", values.Operation, "delivery operation: code_change, restatement, binding_change, or policy_change")
+	command.Flags().StringVar(&values.FirstSourcePreparationID, "first-source-preparation-id", "", "exact server-owned first-source preparation for an initial code_change plan")
+	command.Flags().StringVar(&values.IdempotencyKey, "idempotency-key", "", "explicit plan operation key (required with --first-source-preparation-id)")
 	command.Flags().StringVar(&values.CandidateKey, "candidate-key", values.CandidateKey, "stable source synchronization key")
 	command.Flags().IntVar(&values.UploadConcurrency, "upload-concurrency", values.UploadConcurrency, "maximum parallel source uploads (1-16)")
 	command.Flags().StringVar(&values.Format, "format", values.Format, "output format: text or json")

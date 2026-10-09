@@ -239,14 +239,47 @@ type ConnectionAdministrationCommandSignal struct {
 }
 
 type ConnectionAdministrationSignal struct {
-	Command ConnectionAdministrationCommandSignal `json:"command" yaml:"command"`
-	Status  ConnectionAdministrationStatusSignal  `json:"status" yaml:"status"`
+	Command     ConnectionAdministrationCommandSignal `json:"command" yaml:"command"`
+	Status      ConnectionAdministrationStatusSignal  `json:"status" yaml:"status"`
+	Credentials *ConnectionCredentialSignal           `json:"credentials,omitempty" yaml:"credentials,omitempty"`
 }
 
 type ConnectionAdministrationStatusSignal struct {
 	Error   string `json:"error" yaml:"error"`
 	Loading bool   `json:"loading" yaml:"loading"`
 	Message string `json:"message" yaml:"message"`
+}
+
+type ConnectionCredentialCommandSignal struct {
+	Action            string `json:"action" yaml:"action"`
+	AssetID           string `json:"assetId" yaml:"assetId"`
+	LogicalConnection string `json:"logicalConnection" yaml:"logicalConnection"`
+	VersionID         string `json:"versionId" yaml:"versionId"`
+	ReceiptID         string `json:"receiptId" yaml:"receiptId"`
+	ExpectedRevision  int64  `json:"expectedRevision" yaml:"expectedRevision"`
+	OperationID       string `json:"operationId" yaml:"operationId"`
+	Username          string `json:"username" yaml:"username"`
+	Password          string `json:"password" yaml:"password"`
+	BeforeVersionID   string `json:"beforeVersionId" yaml:"beforeVersionId"`
+}
+
+type ConnectionCredentialDraftSignal struct {
+	VersionID string `json:"versionId" yaml:"versionId"`
+	CreatedAt string `json:"createdAt" yaml:"createdAt"`
+}
+
+type ConnectionCredentialSignal struct {
+	VersionStatus       *CredentialVersionStatusSignal       `json:"versionStatus,omitempty" yaml:"versionStatus,omitempty"`
+	Command             ConnectionCredentialCommandSignal    `json:"command" yaml:"command"`
+	Drafts              []ConnectionCredentialDraftSignal    `json:"drafts" yaml:"drafts"`
+	NextBeforeVersionID string                               `json:"nextBeforeVersionId" yaml:"nextBeforeVersionId"`
+	ReceiptID           string                               `json:"receiptId" yaml:"receiptId"`
+	ReceiptExpiresAt    string                               `json:"receiptExpiresAt" yaml:"receiptExpiresAt"`
+	BindingRevision     int64                                `json:"bindingRevision" yaml:"bindingRevision"`
+	OperationID         string                               `json:"operationId" yaml:"operationId"`
+	Phase               string                               `json:"phase" yaml:"phase"`
+	RuntimeReady        bool                                 `json:"runtimeReady" yaml:"runtimeReady"`
+	Status              ConnectionAdministrationStatusSignal `json:"status" yaml:"status"`
 }
 
 type ConnectionLifecycleActionSignal struct {
@@ -257,6 +290,7 @@ type ConnectionLifecycleActionSignal struct {
 }
 
 type ConnectionLifecycleSignal struct {
+	CredentialsAvailable  *bool                             `json:"credentialsAvailable,omitempty" yaml:"credentialsAvailable,omitempty"`
 	Actions               []ConnectionLifecycleActionSignal `json:"actions" yaml:"actions"`
 	AssetID               string                            `json:"assetId" yaml:"assetId"`
 	AuthenticationMode    string                            `json:"authenticationMode" yaml:"authenticationMode"`
@@ -315,6 +349,19 @@ type ConnectionsPageSignal struct {
 	Kind        RouteKind                 `json:"kind" yaml:"kind"`
 	Query       *string                   `json:"query,omitempty" yaml:"query,omitempty"`
 	Title       string                    `json:"title" yaml:"title"`
+}
+
+type CredentialVersionDependencySignal struct {
+	Kind string `json:"kind" yaml:"kind"`
+	ID   string `json:"id" yaml:"id"`
+}
+
+type CredentialVersionStatusSignal struct {
+	VersionID        string                              `json:"versionId" yaml:"versionId"`
+	State            string                              `json:"state" yaml:"state"`
+	RetiredAt        string                              `json:"retiredAt" yaml:"retiredAt"`
+	Dependencies     []CredentialVersionDependencySignal `json:"dependencies" yaml:"dependencies"`
+	MoreDependencies bool                                `json:"moreDependencies" yaml:"moreDependencies"`
 }
 
 type DashboardAppearanceSignal struct {
@@ -1334,6 +1381,35 @@ type FilterMenuSignal struct {
 	SummaryLabel *string                   `json:"summaryLabel,omitempty" yaml:"summaryLabel,omitempty"`
 }
 
+type FirstSourceCredentialCommandSignal struct {
+	Action                  string `json:"action" yaml:"action"`
+	Password                string `json:"password" yaml:"password"`
+	VersionID               string `json:"versionId" yaml:"versionId"`
+	ReceiptID               string `json:"receiptId" yaml:"receiptId"`
+	OperationID             string `json:"operationId" yaml:"operationId"`
+	SourceDigest            string `json:"sourceDigest" yaml:"sourceDigest"`
+	SourceAttestationDigest string `json:"sourceAttestationDigest" yaml:"sourceAttestationDigest"`
+	PlanIdempotencyKey      string `json:"planIdempotencyKey" yaml:"planIdempotencyKey"`
+}
+
+type FirstSourceCredentialEnvelope struct {
+	FirstSourceCredentials FirstSourceCredentialSignal `json:"firstSourceCredentials" yaml:"firstSourceCredentials"`
+}
+
+type FirstSourceCredentialSignal struct {
+	ConnectionID     string                             `json:"connectionId" yaml:"connectionId"`
+	Host             string                             `json:"host" yaml:"host"`
+	Database         string                             `json:"database" yaml:"database"`
+	SourceIdentity   string                             `json:"sourceIdentity" yaml:"sourceIdentity"`
+	TargetRevision   int64                              `json:"targetRevision" yaml:"targetRevision"`
+	Command          FirstSourceCredentialCommandSignal `json:"command" yaml:"command"`
+	Drafts           []ConnectionCredentialDraftSignal  `json:"drafts" yaml:"drafts"`
+	ReceiptExpiresAt string                             `json:"receiptExpiresAt" yaml:"receiptExpiresAt"`
+	Phase            string                             `json:"phase" yaml:"phase"`
+	Message          string                             `json:"message" yaml:"message"`
+	Error            string                             `json:"error" yaml:"error"`
+}
+
 type ModelFieldDrawerSignal struct {
 	FieldKey string `json:"fieldKey" yaml:"fieldKey"`
 	Open     bool   `json:"open" yaml:"open"`
@@ -1800,18 +1876,19 @@ type ResourceTabSignal struct {
 type RouteKind string
 
 const (
-	RouteKindCatalog           RouteKind = "catalog"
-	RouteKindDashboard         RouteKind = "dashboard"
-	RouteKindDashboardBuilder  RouteKind = "dashboard_builder"
-	RouteKindPipelines         RouteKind = "pipelines"
-	RouteKindPipelineDetail    RouteKind = "pipeline_detail"
-	RouteKindPipelineRunDetail RouteKind = "pipeline_run_detail"
-	RouteKindChat              RouteKind = "chat"
-	RouteKindConnections       RouteKind = "connections"
-	RouteKindConnectionAsset   RouteKind = "connection_asset"
-	RouteKindData              RouteKind = "data"
-	RouteKindAdmin             RouteKind = "admin"
-	RouteKindLogin             RouteKind = "login"
+	RouteKindCatalog                RouteKind = "catalog"
+	RouteKindDashboard              RouteKind = "dashboard"
+	RouteKindDashboardBuilder       RouteKind = "dashboard_builder"
+	RouteKindPipelines              RouteKind = "pipelines"
+	RouteKindPipelineDetail         RouteKind = "pipeline_detail"
+	RouteKindPipelineRunDetail      RouteKind = "pipeline_run_detail"
+	RouteKindChat                   RouteKind = "chat"
+	RouteKindConnections            RouteKind = "connections"
+	RouteKindConnectionAsset        RouteKind = "connection_asset"
+	RouteKindFirstSourceCredentials RouteKind = "first_source_credentials"
+	RouteKindData                   RouteKind = "data"
+	RouteKindAdmin                  RouteKind = "admin"
+	RouteKindLogin                  RouteKind = "login"
 )
 
 type RouteRuntimeSignal struct {

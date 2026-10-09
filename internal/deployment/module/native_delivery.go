@@ -135,7 +135,10 @@ type NativeDeliveryPlanRequest struct {
 	Operation               string
 	SourceDigest            string
 	SourceAttestationDigest string
-	IdempotencyKey          string
+	// FirstSourcePreparationID selects an exact server-owned initial-source
+	// preparation. It is intent, not a credential version or binding pin.
+	FirstSourcePreparationID string
+	IdempotencyKey           string
 	// PipelinePlan carries the immutable generation-bound refresh selection
 	// into native delivery planning. The PostgreSQL authority persists this
 	// rich plan document; callers cannot reconstruct it from a digest later.
@@ -379,6 +382,11 @@ func (r NativeDeliveryPlanRequest) validate(environment string) error {
 	if err := platformdigest.ValidateSHA256Identity(r.SourceAttestationDigest); err != nil {
 		return fmt.Errorf("%w: source attestation digest: %v", deployment.ErrDeliveryInvalid, err)
 	}
+	if r.FirstSourcePreparationID != "" {
+		if err := validateFirstSourcePreparationIntent(r.FirstSourcePreparationID, r.Operation, r.PipelinePlan != nil); err != nil {
+			return err
+		}
+	}
 	if r.PipelinePlan != nil {
 		canonical := r.PipelinePlan.Canonical()
 		if err := canonical.Validate(); err != nil {
@@ -392,6 +400,14 @@ func (r NativeDeliveryPlanRequest) validate(environment string) error {
 	case deployment.DeliveryOperationCodeChange, deployment.DeliveryOperationRestatement, deployment.DeliveryOperationBindingChange, deployment.DeliveryOperationPolicyChange:
 	default:
 		return fmt.Errorf("%w: native delivery operation is unsupported", deployment.ErrDeliveryInvalid)
+	}
+	return nil
+}
+
+func validateFirstSourcePreparationIntent(id, operation string, pipeline bool) error {
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed == uuid.Nil || parsed.String() != id || operation != string(deployment.DeliveryOperationCodeChange) || pipeline {
+		return fmt.Errorf("%w: first-source preparation requires a canonical UUID and code_change intent without a pipeline plan", deployment.ErrDeliveryInvalid)
 	}
 	return nil
 }

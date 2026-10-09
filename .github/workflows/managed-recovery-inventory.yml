@@ -1,0 +1,47 @@
+name: Protected managed recovery capacity inventory
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: managed-recovery-capacity-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: leapview-ephemeral-qualification
+    steps:
+      - name: Check out the protected read-only inventory command
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Fetch existing protected ephemeral infrastructure authority
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+
+      - name: Read public capacity metadata without creating infrastructure
+        run: python3 scripts/managed_recovery_inventory.py "$RUNNER_TEMP/managed-recovery-inventory.json"
+
+      - name: Retain only public capacity metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-recovery-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-recovery-inventory.json
+          if-no-files-found: error
+          retention-days: 7

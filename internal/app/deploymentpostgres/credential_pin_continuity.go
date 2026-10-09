@@ -16,6 +16,12 @@ import (
 // after its predecessor CAS check. Local credential pins must remain unchanged
 // across ordinary publication. It never resolves or decrypts credentials.
 func verifyPublicationCredentialContinuity(ctx context.Context, tx deploymentpostgres.Tx, delivery *deploymentpostgres.Repository, provenance candidateProvenanceTransactionReader, publication deploymentpostgres.DeliveryPublication) error {
+	return verifyCredentialActivationContinuity(ctx, tx, delivery, provenance, publication, "")
+}
+
+// Only operation-bound credential admission may exempt its separately verified
+// exact connection pin. Every other immutable pin remains byte-for-byte equal.
+func verifyCredentialActivationContinuity(ctx context.Context, tx deploymentpostgres.Tx, delivery *deploymentpostgres.Repository, provenance candidateProvenanceTransactionReader, publication deploymentpostgres.DeliveryPublication, activatedConnection string) error {
 	if ctx == nil || typednil.IsNil(tx) || publication.State != "pending" {
 		return deploymentpostgres.ErrInvalid
 	}
@@ -58,6 +64,10 @@ func verifyPublicationCredentialContinuity(ctx context.Context, tx deploymentpos
 			return credentialPinContinuityConflict()
 		}
 		previous = predecessorPins
+	}
+	if activatedConnection != "" {
+		delete(previous, activatedConnection)
+		delete(pins, activatedConnection)
 	}
 	if !maps.Equal(previous, pins) {
 		return credentialPinContinuityConflict()

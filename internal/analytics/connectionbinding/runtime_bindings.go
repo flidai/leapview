@@ -35,6 +35,9 @@ type RuntimeBindingLeaserConfig struct {
 }
 
 type RuntimeBindingLeaser struct {
+	providerAdmission           RuntimeProviderAdmission
+	localPins                   LocalCredentialPins
+	localPools                  LocalCredentialPools
 	bindings                    BindingCatalog
 	pools                       ValidatedPoolDirectory
 	authorize                   RuntimeBindingAuthorizer
@@ -56,10 +59,11 @@ type RuntimeBindingRequest struct {
 // RuntimeBindingLeases holds target-owned pool generations for the lifetime of
 // one candidate runtime. It contains only non-secret validation evidence.
 type RuntimeBindingLeases struct {
-	once     sync.Once
-	mu       sync.RWMutex
-	leases   []ValidatedPoolLease
-	evidence []RuntimeBindingEvidence
+	providerRelease func()
+	once            sync.Once
+	mu              sync.RWMutex
+	leases          []ValidatedPoolLease
+	evidence        []RuntimeBindingEvidence
 }
 
 func NewRuntimeBindingLeaser(config RuntimeBindingLeaserConfig) (*RuntimeBindingLeaser, error) {
@@ -95,7 +99,7 @@ func NewRuntimeBindingLeaser(config RuntimeBindingLeaserConfig) (*RuntimeBinding
 	}, nil
 }
 
-func (leaser *RuntimeBindingLeaser) Acquire(
+func (leaser *RuntimeBindingLeaser) acquireBindings(
 	ctx context.Context,
 	request RuntimeBindingRequest,
 ) (_ *RuntimeBindingLeases, resultErr error) {
@@ -128,7 +132,7 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	}()
 	for _, item := range validated {
 		requirement, binding := item.requirement, item.binding
-		lease, err := leaser.pools.AcquireValidated(ctx, binding, request.Actor)
+		lease, err := leaser.acquireRuntimePool(ctx, request, binding)
 		if err != nil {
 			return nil, err
 		}
@@ -177,10 +181,10 @@ func (leaser *RuntimeBindingLeaser) Inspect(
 		// Inspection is deliberately backed by durable health evidence. A
 		// pending or degraded binding must go through pool acquisition and
 		// health validation before it can be used for runtime compatibility.
-		if binding.Health != HealthHealthy || strings.TrimSpace(binding.ValidatedVersion) == "" || binding.LastValidatedAt.IsZero() {
-			return nil, ErrIncompatibleBinding
+		persistentEvidence, err := leaser.inspectRuntimeBinding(ctx, request, binding)
+		if err != nil {
+			return nil, err
 		}
-		persistentEvidence := binding.Evidence()
 		persistentEvidence.Access = requirement.Access
 		runtimeEvidence := RuntimeBindingEvidence{BindingEvidence: persistentEvidence, Identity: request.Identity}
 		if err := validateRuntimeBindingEvidence(binding, requirement, runtimeEvidence); err != nil {
@@ -339,6 +343,9 @@ func (leases *RuntimeBindingLeases) Release() {
 		}
 		leases.leases = nil
 		leases.evidence = nil
+		if leases.providerRelease != nil {
+			leases.providerRelease()
+		}
 	})
 }
 
@@ -395,7 +402,7 @@ func validateRuntimeBindingEvidence(
 		evidence.ConnectorKind != binding.ConnectorKind ||
 		evidence.Scope != binding.Scope ||
 		evidence.BindingRevision < 1 ||
-		strings.TrimSpace(evidence.ValidatedVersion) == "" ||
+		(CredentialIdentity{ProviderVersion: evidence.ValidatedVersion, CredentialVersionID: evidence.CredentialVersionID}).Validate() != nil ||
 		evidence.Health == HealthDisabled {
 		return ErrIncompatibleBinding
 	}

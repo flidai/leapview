@@ -92,6 +92,8 @@ class DesktopAttestationTests(unittest.TestCase):
         with patch.object(attestation.desktop, 'run_command', side_effect=AssertionError('candidate execution')):
             binding = self.verify()
         self.assertEqual(binding['archive']['sha256'], self.record['artifact']['sha256'])
+        self.assertEqual(binding['archive']['version'], self.record['artifact']['version'])
+        self.assertEqual(binding['archive']['platform'], self.record['artifact']['platform'])
         self.assertEqual(binding['candidateDigest'], self.record['candidateDigest'])
         self.assertIs(binding['releaseAdmission'], False)
         self.assertEqual(len(binding['evidence']), 7)

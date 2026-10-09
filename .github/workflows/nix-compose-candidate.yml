@@ -662,7 +662,7 @@ jobs:
           retention-days: 14
 
   host-qualification:
-    name: Fresh Linux host (${{ matrix.guest-os }}, ${{ matrix.arch }}, ${{ matrix.install-mode }})
+    name: Fresh Linux host (${{ matrix.guest-os }}, ${{ matrix.arch }}, ${{ matrix.install-mode }}, ${{ matrix.postgres-profile }})
     needs: [authorize, build-bundles, preflight, controller-evidence]
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.runner }}
@@ -676,6 +676,7 @@ jobs:
         arch: [amd64, arm64]
         guest-os: [ubuntu2404, debian13]
         install-mode: [bootstrap, nix-controller]
+        postgres-profile: [external, bundled]
         include:
           - arch: amd64
             runner: ubuntu-24.04
@@ -779,6 +780,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
           GUEST_OS: ${{ matrix.guest-os }}
           INSTALL_MODE: ${{ matrix.install-mode }}
+          POSTGRES_PROFILE: ${{ matrix.postgres-profile }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
           PROTECTED_REVISION: ${{ github.sha }}
           IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
@@ -833,7 +835,7 @@ jobs:
               --controller-binary-verifier "$RUNNER_TEMP/host-controller-binary-verifier" \
               --protected-root . --protected-revision "$PROTECTED_REVISION" \
               --first-publication-verifier "$RUNNER_TEMP/host-first-publication-verifier" \
-              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE"
+              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE" --postgres-profile "$POSTGRES_PROFILE"
           '
           python3 scripts/nix_compose_host_guest.py verify-receipt \
             --receipt host-evidence/guest/host-guest-receipt.json --evidence-dir host-evidence/guest/evidence
@@ -841,7 +843,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nix-compose-host-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}
+          name: nix-compose-host-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}-${{ matrix.postgres-profile }}
           path: host-evidence/
           include-hidden-files: true
           if-no-files-found: warn

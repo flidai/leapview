@@ -26,13 +26,21 @@ import zipfile
 REPOSITORY = "flidai/leapview"
 WORKFLOW = REPOSITORY + "/.github/workflows/artifacts.yml"
 PRODUCERS = {".github/workflows/artifacts.yml": "push",
-             ".github/workflows/release.yml": "workflow_dispatch"}
+             ".github/workflows/release.yml": "workflow_dispatch",
+             ".github/workflows/nix-output-admission.yml": "workflow_dispatch"}
+NIX_WORKFLOW = REPOSITORY + "/.github/workflows/nix-output-admission.yml"
+NIX_FILES = frozenset({"admission.json", "admission.digest", "binding.json",
+                    "verified-attestation.json", "sbom.json", "container-vulnerability-policy.json",
+                    "vulnerability-report.json", "trivy-report.json"})
 BUNDLE_FILES = frozenset({"admission.json", "admission.digest", "binding.json",
                           "verified-attestation.json", "sbom.json", "image-config.json",
                           "container-vulnerability-policy.json", "vulnerability-report.json", "trivy-report.json"})
 MAX_ZIP_BYTES = 64 * 1024 * 1024
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
 MAX_TOTAL_BYTES = 128 * 1024 * 1024
+MAX_NIX_ZIP_BYTES = 256 * 1024 * 1024
+MAX_NIX_MEMBER_BYTES = 128 * 1024 * 1024
+MAX_NIX_TOTAL_BYTES = 512 * 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 180
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 REVISION = re.compile(r"[0-9a-f]{40}\Z")
@@ -63,7 +71,8 @@ def _validate_selection(run_id, attempt, artifact_id, source, platform):
         raise HandoffError("run, attempt, artifact, source and platform must be exact identities")
 
 
-def authorize(run, workflow, artifact, *, run_id, attempt, artifact_id, source, platform, now=None):
+def authorize(run, workflow, artifact, *, run_id, attempt, artifact_id, source, platform, now=None,
+              producer_revision=None, kind=None):
     """Cross-check raw authenticated REST responses against operator selection."""
     now = now or datetime.now(timezone.utc)
     _validate_selection(run_id, attempt, artifact_id, source, platform)
@@ -72,32 +81,44 @@ def authorize(run, workflow, artifact, *, run_id, attempt, artifact_id, source, 
     repository = run.get("repository") or {}
     head_repository = run.get("head_repository") or {}
     producer = workflow.get("path")
+    nix = producer == ".github/workflows/nix-output-admission.yml"
+    if nix:
+        if kind not in ("application-image", "site-image") or not isinstance(producer_revision, str) or not REVISION.fullmatch(producer_revision):
+            raise HandoffError("Nix handoff requires exact output kind and separate protected producer revision")
+    elif producer_revision is not None or kind is not None:
+        raise HandoffError("conventional handoff cannot borrow Nix producer identity")
+    signing_revision = producer_revision if nix else source
     if (run.get("id") != run_id or run.get("run_attempt") != attempt
             or not _positive(workflow.get("id")) or run.get("workflow_id") != workflow["id"]
             or run.get("path") != producer
             or producer not in PRODUCERS or run.get("event") != PRODUCERS[producer]
             or run.get("status") != "completed" or run.get("conclusion") != "success"
-            or run.get("head_branch") != "main" or run.get("head_sha") != source
+            or run.get("head_branch") != "main" or run.get("head_sha") != signing_revision
             or repository.get("full_name") != REPOSITORY or head_repository.get("full_name") != REPOSITORY
             or not _positive(repository.get("id")) or head_repository.get("id") != repository["id"]):
         raise HandoffError("run is not the selected successful protected producer on main")
     artifact_run = artifact.get("workflow_run") or {}
     digest = artifact.get("digest")
     expected_name = f"managed-admission-{run_id}-{attempt}-{platform.split('/')[1]}"
+    if nix:
+        expected_name = f"nix-admission-{kind}-{run_id}-{attempt}-{platform.split('/')[1]}"
     if (artifact.get("id") != artifact_id or artifact.get("name") != expected_name
             or artifact.get("expired") is not False or not isinstance(digest, str) or not DIGEST.fullmatch(digest)
-            or not _positive(artifact.get("size_in_bytes")) or artifact["size_in_bytes"] > MAX_ZIP_BYTES
+            or not _positive(artifact.get("size_in_bytes")) or artifact["size_in_bytes"] > (MAX_NIX_ZIP_BYTES if nix else MAX_ZIP_BYTES)
             or artifact_run.get("id") != run_id or artifact_run.get("repository_id") != repository["id"]
             or artifact_run.get("head_repository_id") != repository["id"]
-            or artifact_run.get("head_branch") != "main" or artifact_run.get("head_sha") != source):
+            or artifact_run.get("head_branch") != "main" or artifact_run.get("head_sha") != signing_revision):
         raise HandoffError("artifact is not the exact unexpired producer attempt and source")
     if (not _timestamp(run.get("run_started_at")) <= _timestamp(artifact.get("created_at")) <= _timestamp(run.get("updated_at"))
             or _timestamp(artifact.get("expires_at")) <= now):
         raise HandoffError("artifact timestamp is outside the selected attempt or expired")
-    return {"repository": REPOSITORY, "workflow": REPOSITORY + "/" + producer,
+    result = {"repository": REPOSITORY, "workflow": REPOSITORY + "/" + producer,
             "event": run["event"], "ref": "refs/heads/main", "runId": str(run_id), "runAttempt": str(attempt),
             "sourceRevision": source, "platform": platform, "artifactId": artifact_id,
             "artifactName": expected_name, "artifactDigest": digest, "workflowId": workflow["id"]}
+    if nix:
+        result.update(producerRevision=producer_revision, kind=kind)
+    return result
 
 
 def _strict_json(data):
@@ -115,38 +136,55 @@ def _strict_json(data):
 
 
 def verify_bundle(data, digest, authorization, *, image):
-    if len(data) > MAX_ZIP_BYTES or "sha256:" + hashlib.sha256(data).hexdigest() != digest:
+    nix = authorization["workflow"] == NIX_WORKFLOW
+    member_limit = MAX_NIX_MEMBER_BYTES if nix else MAX_MEMBER_BYTES
+    if len(data) > (MAX_NIX_ZIP_BYTES if nix else MAX_ZIP_BYTES) or "sha256:" + hashlib.sha256(data).hexdigest() != digest:
         raise HandoffError("downloaded artifact differs from its authenticated GitHub SHA-256")
     files = {}
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            if len(archive.infolist()) != len(BUNDLE_FILES):
+            if (not nix and len(archive.infolist()) != len(BUNDLE_FILES)) or not 1 <= len(archive.infolist()) <= 4096:
                 raise HandoffError("artifact must contain exactly the producer handoff files")
             total = 0
             for member in archive.infolist():
                 mode = stat.S_IFMT(member.external_attr >> 16)
-                if (member.filename not in BUNDLE_FILES or member.filename in files or mode not in (0, stat.S_IFREG)
+                name = member.filename
+                safe_nix = (name in NIX_FILES or (name.startswith("evidence/") and name == Path(name).as_posix()
+                            and ".." not in Path(name).parts and "\\" not in name and not name.endswith("/")))
+                if ((not nix and name not in BUNDLE_FILES) or (nix and not safe_nix) or name in files or mode not in (0, stat.S_IFREG)
                         or member.flag_bits & 1 or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
-                        or not 0 < member.file_size <= MAX_MEMBER_BYTES):
+                        or not 0 < member.file_size <= member_limit):
                     raise HandoffError("artifact contains an unsafe, repeated or oversized member")
                 total += member.file_size
-                if total > MAX_TOTAL_BYTES:
+                if total > (MAX_NIX_TOTAL_BYTES if nix else MAX_TOTAL_BYTES):
                     raise HandoffError("artifact unpacked size exceeds its limit")
                 with archive.open(member) as stream:
-                    content = stream.read(MAX_MEMBER_BYTES + 1)
+                    content = stream.read(member_limit + 1)
                 if len(content) != member.file_size:
                     raise HandoffError("artifact member size differs from its metadata")
                 files[member.filename] = content
     except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, EOFError):
         raise HandoffError("artifact ZIP cannot be safely read") from None
+    if not (NIX_FILES if nix else BUNDLE_FILES).issubset(files):
+        raise HandoffError("artifact is missing required producer evidence")
     binding = _strict_json(files["binding.json"])
     expected_fields = {"schemaVersion", "repository", "workflow", "event", "ref", "sourceRevision", "image",
                        "platform", "admissionDigest", "runId", "runAttempt", "files"}
+    if nix:
+        expected_fields.add("producerRevision")
+        if not NIX_FILES.issubset(files) or len(files) == len(NIX_FILES):
+            raise HandoffError("Nix handoff lacks its complete raw evidence inventory")
     if not isinstance(binding, dict) or set(binding) != expected_fields or type(binding["schemaVersion"]) is not int or binding["schemaVersion"] != 1:
         raise HandoffError("producer binding has an unsupported shape")
     for field in ("repository", "workflow", "event", "ref", "sourceRevision", "platform", "runId", "runAttempt"):
         if binding[field] != authorization[field]:
             raise HandoffError(f"producer binding differs from authenticated {field}")
+    if nix:
+        receipt = _strict_json(files["admission.json"])
+        if (binding["producerRevision"] != authorization["producerRevision"]
+                or receipt.get("nixEvidence", {}).get("kind") != authorization["kind"]
+                or receipt.get("nixEvidence", {}).get("verifierRevision") != authorization["producerRevision"]):
+            raise HandoffError("Nix receipt differs from authenticated producer revision or output kind")
     if binding["image"] != image or not isinstance(binding["admissionDigest"], str) or not DIGEST.fullmatch(binding["admissionDigest"]):
         raise HandoffError("producer binding differs from the selected immutable image or receipt")
     if files["admission.digest"] not in (binding["admissionDigest"].encode(), (binding["admissionDigest"] + "\n").encode()):
@@ -154,6 +192,8 @@ def verify_bundle(data, digest, authorization, *, image):
     expected_hashes = {name: "sha256:" + hashlib.sha256(content).hexdigest() for name, content in files.items() if name != "binding.json"}
     if binding["files"] != expected_hashes:
         raise HandoffError("producer file hashes differ from authenticated evidence")
+    if any(str(parent) in files for name in files for parent in Path(name).parents if str(parent) != "."):
+        raise HandoffError("artifact contains a file/directory collision")
     return files
 
 
@@ -222,6 +262,7 @@ def retain_evidence(directory, files, artifact, authorization):
     descriptor = None
     created = False
     written = []
+    directories = set()
     complete = False
     try:
         os.mkdir(directory.name, mode=0o700, dir_fd=parent)
@@ -230,6 +271,12 @@ def retain_evidence(directory, files, artifact, authorization):
         contents = {**files, "artifact.zip": artifact,
                     "github-authorization.json": (json.dumps(authorization, sort_keys=True) + "\n").encode()}
         for name, data in contents.items():
+            parts = Path(name).parts
+            for index in range(1, len(parts)):
+                relative = str(Path(*parts[:index]))
+                if relative not in directories:
+                    os.mkdir(relative, mode=0o700, dir_fd=descriptor)
+                    directories.add(relative)
             fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
             written.append(name)
             with os.fdopen(fd, "wb") as output:
@@ -237,6 +284,12 @@ def retain_evidence(directory, files, artifact, authorization):
                 output.flush()
                 os.fchmod(output.fileno(), 0o400)
                 os.fsync(output.fileno())
+        for name in sorted(directories, key=lambda value: len(Path(value).parts), reverse=True):
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            try:
+                os.fsync(child)
+            finally:
+                os.close(child)
         os.fsync(descriptor)
         os.fsync(parent)
         complete = True
@@ -247,6 +300,8 @@ def retain_evidence(directory, files, artifact, authorization):
             if created and not complete:
                 for name in written:
                     os.unlink(name, dir_fd=descriptor)
+                for name in sorted(directories, key=lambda value: len(Path(value).parts), reverse=True):
+                    os.rmdir(name, dir_fd=descriptor)
                 os.rmdir(directory.name, dir_fd=parent)
                 os.fsync(parent)
         finally:
@@ -288,7 +343,7 @@ def _github(path, *, limit):
         process.stdout.close()
 
 
-def fetch(run_id, attempt, artifact_id, source, platform):
+def fetch(run_id, attempt, artifact_id, source, platform, *, producer_revision=None, kind=None):
     _validate_selection(run_id, attempt, artifact_id, source, platform)
     run = _strict_json(_github(f"actions/runs/{run_id}/attempts/{attempt}", limit=4 * 1024 * 1024))
     workflow_id = run.get("workflow_id") if isinstance(run, dict) else None
@@ -297,8 +352,9 @@ def fetch(run_id, attempt, artifact_id, source, platform):
     workflow = _strict_json(_github(f"actions/workflows/{workflow_id}", limit=1024 * 1024))
     artifact = _strict_json(_github(f"actions/artifacts/{artifact_id}", limit=1024 * 1024))
     authorization = authorize(run, workflow, artifact, run_id=run_id, attempt=attempt,
-                              artifact_id=artifact_id, source=source, platform=platform)
-    data = _github(f"actions/artifacts/{artifact_id}/zip", limit=MAX_ZIP_BYTES)
+                              artifact_id=artifact_id, source=source, platform=platform,
+                              producer_revision=producer_revision, kind=kind)
+    data = _github(f"actions/artifacts/{artifact_id}/zip", limit=MAX_NIX_ZIP_BYTES if producer_revision is not None else MAX_ZIP_BYTES)
     return authorization, data
 
 
@@ -308,6 +364,8 @@ def main(argv=None):
     parser.add_argument("--run-attempt", type=int, required=True)
     parser.add_argument("--artifact-id", type=int, required=True)
     parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--producer-revision", help="exact protected Nix admission revision, distinct from build source")
+    parser.add_argument("--kind", choices=("application-image", "site-image"), help="Nix output kind; conventional imports omit")
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"), required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--verifier", type=Path, required=True, help="trusted locally built ociadmission executable")
@@ -317,15 +375,19 @@ def main(argv=None):
     try:
         if os.geteuid() != 0 or sys.platform != "linux":
             raise HandoffError("authenticated managed receipt import requires Linux root")
-        authorization, data = fetch(args.run_id, args.run_attempt, args.artifact_id, args.source_revision, args.platform)
+        authorization, data = fetch(args.run_id, args.run_attempt, args.artifact_id, args.source_revision, args.platform,
+                                    producer_revision=args.producer_revision, kind=args.kind)
         files = verify_bundle(data, authorization["artifactDigest"], authorization, image=args.image)
         binding = _strict_json(files["binding.json"])
         with tempfile.TemporaryDirectory(prefix="managed-admission-") as temporary:
             for name, content in files.items():
+                Path(temporary, name).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 Path(temporary, name).write_bytes(content)
             command = [str(args.verifier), "verify-receipt", "--bundle", temporary, "--image", args.image,
                        "--source-revision", args.source_revision, "--platform", args.platform,
                        "--expected-workflow", authorization["workflow"], "--admission-digest", binding["admissionDigest"]]
+            if args.producer_revision is not None:
+                command += ["--producer-revision", args.producer_revision]
             result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
             if result.returncode != 0 or result.stdout.strip() != binding["admissionDigest"]:
                 raise HandoffError("Go canonical receipt and evidence verification failed")

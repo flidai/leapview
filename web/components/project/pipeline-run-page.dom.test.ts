@@ -11,9 +11,12 @@ let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/project-page-test')
 
-async function openRun(page: Page, url: string): Promise<void> {
+async function openRun(page: Page, url: string, mark: (phase: string) => void = () => {}): Promise<void> {
+  mark('navigation')
   await page.goto(url)
+  mark('signals')
   await page.waitForFunction(() => Boolean((document.querySelector('lv-pipeline-run-page') as any)?.signals?.page?.execution))
+  mark('ready')
 }
 
 beforeAll(async () => {
@@ -141,10 +144,58 @@ test('run detail duration ticks until the persisted finish arrives', async () =>
 }, 15_000)
 
 test('pipeline run investigation separates execution and publication and exposes diagnostics truthfully', async () => {
-  const page = await browser.newPage()
+  const startedAt = performance.now()
+  const events: Array<{ elapsedMs: number; phase: string; event: string; detail?: unknown }> = []
+  let phase = 'new-page'
+  let omittedEvents = 0
+  let slow = false
+  const emit = (reason: string) => console.error('[pipeline investigation lifecycle]', JSON.stringify({
+    reason, elapsedMs: performance.now() - startedAt, phase, events, omittedEvents,
+  }))
+  const record = (event: string, detail?: unknown) => {
+    if (events.length === 40) { events.shift(); omittedEvents++ }
+    events.push({ elapsedMs: performance.now() - startedAt, phase, event, ...(detail === undefined ? {} : { detail }) })
+    if (slow) emit('progress-after-deadline-warning')
+  }
+  const mark = (next: string) => { phase = next; record('phase') }
+  let page: Page | undefined
+  // Bun can kill the shared browser at the test deadline without reaching
+  // catch/finally. Report progress first, without waiting on the browser.
+  const warning = setTimeout(() => {
+    slow = true
+    emit('deadline-approaching')
+    if (page && !page.isClosed()) {
+      void page.evaluate(() => {
+        const host = document.querySelector('lv-pipeline-run-page') as any
+        return {
+          readyState: document.readyState,
+          registered: Boolean(customElements.get('lv-pipeline-run-page')),
+          host: Boolean(host),
+          signalKeys: Object.keys(host?.signals ?? {}),
+          execution: Boolean(host?.signals?.page?.execution),
+        }
+      }).then(state => record('readiness-state', state), error => record('readiness-state-error', { name: error.name }))
+    }
+  }, 12_000)
+  warning.unref()
+  const disconnected = () => record('browser-disconnected')
+  browser.on('disconnected', disconnected)
   try {
-    await openRun(page, `${baseURL}/`)
+    page = await browser.newPage()
+    page.on('crash', () => record('page-crash'))
+    page.on('close', () => record('page-close'))
+    page.on('pageerror', error => record('page-error', { name: error.name, message: error.message.slice(0, 500) }))
+    page.on('requestfailed', request => record('request-failed', {
+      path: new URL(request.url()).pathname, resourceType: request.resourceType(), error: request.failure()?.errorText,
+    }))
+    page.on('response', response => {
+      if (response.status() >= 400) record('http-error', { path: new URL(response.url()).pathname, status: response.status() })
+    })
+    const stage = (name: string) => (step: string) => mark(`${name}:${step}`)
+    await openRun(page, `${baseURL}/`, stage('initial'))
+    mark('initial-render')
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
+    mark('initial-snapshot')
     const snapshot = await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot!
@@ -173,6 +224,7 @@ test('pipeline run investigation separates execution and publication and exposes
       }
     })
 
+    mark('initial-assertions')
     expect(snapshot).toEqual({
       breadcrumbs: ['/pipelines', '/pipelines/pipeline:sales/details', '/pipelines/pipeline%3Asales/runs'],
       breadcrumbLabels: ['Pipelines', 'Sales refresh', 'Runs', '# run:latest'],
@@ -201,20 +253,29 @@ test('pipeline run investigation separates execution and publication and exposes
       ],
     })
 
-    await openRun(page, `${baseURL}/?section=execution&status=failed`)
+    await openRun(page, `${baseURL}/?section=execution&status=failed`, stage('failed-execution'))
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
-    await openRun(page, `${baseURL}/?section=details&status=failed`)
+    await openRun(page, `${baseURL}/?section=details&status=failed`, stage('failed-details'))
+    mark('failed-details-render')
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
+    mark('failed-details-assertions')
     const terminalMissingFinish = await page.locator('lv-pipeline-run-page .facts .fact').filter({ hasText: 'Finished' }).locator('strong').textContent()
     expect(terminalMissingFinish?.trim()).toBe('Not recorded')
     expect(await page.getByRole('region', { name: 'Attempts' }).getByText('Attempt 1 · Failed').count()).toBe(1)
 
-    await openRun(page, `${baseURL}/?section=events`)
+    await openRun(page, `${baseURL}/?section=events`, stage('events'))
+    mark('events-render')
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
+    mark('events-assertions')
     const eventUnavailable = await page.locator('lv-pipeline-run-page .graph-message').textContent()
     expect(eventUnavailable?.trim()).toBe('Run events could not be loaded.')
+  } catch (error) {
+    emit('failure')
+    throw error
   } finally {
-    await page.close()
+    clearTimeout(warning)
+    browser.off('disconnected', disconnected)
+    await page?.close()
   }
 }, 15_000)
 

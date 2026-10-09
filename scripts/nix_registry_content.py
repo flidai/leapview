@@ -34,10 +34,17 @@ def bind_registry(image, kind, records, platforms):
         raise ValueError('candidate output kind differs from registry repository')
     with tempfile.TemporaryDirectory(prefix='leapview-nix-registry-') as temporary:
         layout = Path(temporary) / 'layout'
+        # Skopeo's conventional GPG policy cannot authenticate GitHub Sigstore
+        # attestations. Permit only this exact repository for content retrieval;
+        # bind every fetched byte and verify live Sigstore statements separately
+        # before any successful caller can issue an admission receipt.
+        policy = Path(temporary) / 'fetch-policy.json'
+        policy.write_text(json.dumps({'default': [{'type': 'reject'}], 'transports': {
+            'docker': {REPOSITORIES[kind]: [{'type': 'insecureAcceptAnything'}]}}}))
         try:
             # TLS verification stays enabled. Authentication is supplied through
             # Skopeo's credential file, never command arguments or diagnostics.
-            subprocess.run(['skopeo', 'copy', '--all', '--preserve-digests', '--src-tls-verify=true',
+            subprocess.run(['skopeo', '--policy', str(policy), 'copy', '--all', '--preserve-digests', '--src-tls-verify=true',
                             'docker://' + image, 'oci:' + str(layout) + ':candidate'],
                            check=True, timeout=300, stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL)

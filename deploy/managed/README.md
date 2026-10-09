@@ -238,9 +238,12 @@ never print rendered production configuration/secrets into public CI logs.
 The template describes a prebootstrapped application. It supplies PostgreSQL
 runtime URLs plus distinct, bounded control/DuckLake maintenance URLs for retention.
 Migrator, upgrade-coordinator, schema-owner, cloud and backup credentials belong
-only in their separate operations. Preserve the agent credential encryption key
-independently of database backups; losing it makes stored integration credentials
-unreadable. Root/Docker deployment access remains highly privileged. The app
+only in their separate operations. Preserve the shared customer credential keyring through an independent encrypted
+recovery copy, including keys required by retained database backups. Missing keys
+leave encrypted credentials unreadable. Configure its private read-only runtime
+file explicitly; the old agent-only key does not enable customer credential
+storage. Follow the [credential lifecycle runbook](../credentials.md) before an
+incompatible format transition. Root/Docker deployment access remains highly privileged. The app
 volume uses the current release image's UID/GID 999.
 
 Kamal checks the image's `service=leapview` label before running it; the release
@@ -289,7 +292,8 @@ the exclusive home lock before app build, and `/readyz` requires an active runti
 lease, so an overlapping candidate cannot become ready on the shared home. The
 bounded-maintenance implementation includes a [host-local compatible-image
 controller](maintenance.md), including closed startup admission, draining and
-restart recovery. Full managed-profile qualification remains outstanding. The
+restart recovery. The project owner [accepted this update design](decision-reconciliation-20261009.md)
+on 9 October 2026. Full managed-profile qualification remains outstanding. The
 previous stop-first rehearsal does not qualify that sequence. Preserve a restart rollback path and
 measure interruption. An old image is usable only while database and
 application-state compatibility still permits it; container retention is not a

@@ -17,6 +17,10 @@ import (
 )
 
 func (d credentialDraftAPIGenDispatcher) ValidateCredentialDraft(w http.ResponseWriter, r *http.Request, project, target, connection, version string) {
+	d.validateCredentialDraft(w, r, project, target, connection, version, apigencommand.SurfaceAPI)
+}
+
+func (d credentialDraftAPIGenDispatcher) validateCredentialDraft(w http.ResponseWriter, r *http.Request, project, target, connection, version string, surface apigencommand.Surface) {
 	w.Header().Set("Cache-Control", "no-store")
 	actor, ok := d.principal(w, r)
 	if !ok {
@@ -31,7 +35,7 @@ func (d credentialDraftAPIGenDispatcher) ValidateCredentialDraft(w http.Response
 		return
 	}
 	invocation := credentialgen.GenValidateCredentialDraftCommandInvocation{
-		Surface: apigencommand.SurfaceAPI, Connection: connection,
+		Surface: surface, Connection: connection,
 		RequestID:     strings.TrimSpace(r.Header.Get("X-Request-ID")),
 		CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
 	}

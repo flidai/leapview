@@ -6,26 +6,29 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	credentialmodule "github.com/flidai/leapview/internal/credential/module"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 )
 
 const (
-	routeLogin             = "login"
-	routeCatalog           = "catalog"
-	routeData              = "data"
-	routeConnections       = "connections"
-	routeConnectionAsset   = "connection_asset"
-	routePipelines         = "pipelines"
-	routePipelineDetail    = "pipeline_detail"
-	routePipelineRunDetail = "pipeline_run_detail"
-	routeAsset             = "asset"
-	routeDashboard         = "dashboard"
-	routeDashboardBuilder  = "dashboard_builder"
-	routeChat              = "chat"
-	routeAdmin             = "admin"
+	routeLogin                  = "login"
+	routeCatalog                = "catalog"
+	routeData                   = "data"
+	routeConnections            = "connections"
+	routeConnectionAsset        = "connection_asset"
+	routeFirstSourceCredentials = "first_source_credentials"
+	routePipelines              = "pipelines"
+	routePipelineDetail         = "pipeline_detail"
+	routePipelineRunDetail      = "pipeline_run_detail"
+	routeAsset                  = "asset"
+	routeDashboard              = "dashboard"
+	routeDashboardBuilder       = "dashboard_builder"
+	routeChat                   = "chat"
+	routeAdmin                  = "admin"
 )
 
 func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *platformServices, policy *httpPolicy) {
@@ -33,6 +36,11 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		switch route {
 		case routeLogin:
 			return next, true
+		case routeFirstSourceCredentials:
+			if routes.firstSourcePreparation == nil {
+				return nil, false
+			}
+			return routes.accessModule.Authenticate(next), true
 		case routeCatalog, routeData, routeConnections, routeConnectionAsset, routePipelines, routePipelineDetail, routePipelineRunDetail, routeAsset:
 			if routes.projectBrowser == nil {
 				return nil, false
@@ -89,6 +97,29 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		handlers[routePipelineDetail] = http.HandlerFunc(routes.projectBrowser.Updates)
 		handlers[routePipelineRunDetail] = http.HandlerFunc(routes.projectBrowser.Updates)
 		handlers[routeAsset] = http.HandlerFunc(routes.projectBrowser.Updates)
+	}
+	if routes.firstSourcePreparation != nil {
+		handlers[routeFirstSourceCredentials] = routes.firstSourcePreparation.bindSelectedScope(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			state, actor, resource, ok := routes.firstSourcePreparation.describe(w, r)
+			if !ok {
+				return
+			}
+			result, err := credentialmodule.RunFirstSourceBrowser(r.Context(), routes.firstSourcePreparation.config, actor, resource, credentialmodule.BrowserInput{Action: "list"}, credentialmodule.FirstSourcePreparationCommandRequest{})
+			if err != nil {
+				http.Error(w, "First source credentials are unavailable.", http.StatusForbidden)
+				return
+			}
+			for _, draft := range result.Drafts {
+				state.Drafts = append(state.Drafts, projectmodule.ConnectionCredentialDraftSignal{VersionID: draft.VersionID, CreatedAt: draft.CreatedAt})
+			}
+			policy.clientIDs.PatchOnce(firstSourceNoStoreWriter{w}, r, map[string]any{"firstSourceCredentials": state})
+		}), func(r *http.Request) string {
+			values := r.URL.Query()["connection"]
+			if len(values) != 1 {
+				return ""
+			}
+			return values[0]
+		})
 	}
 	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{Authorize: authorize, Handlers: handlers})
 }

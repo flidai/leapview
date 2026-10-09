@@ -87,6 +87,7 @@ type NativeCreatePlanConfig struct {
 	Sources         project.CandidateSourceAttestationReader
 	Artifacts       NativeReleaseArtifactInspector
 	BindingEvidence deployment.CandidateConnectionEvidenceResolver
+	FirstSource     NativeFirstSourcePlanAuthority
 
 	// ArtifactInspector is an expressive alias retained for composition code
 	// that names the read-only phase explicitly. Artifacts takes precedence.
@@ -128,6 +129,7 @@ type NativeCreatePlanCoordinator struct {
 	sources                      project.CandidateSourceAttestationReader
 	artifacts                    NativeReleaseArtifactInspector
 	bindingEvidence              deployment.CandidateConnectionEvidenceResolver
+	firstSource                  NativeFirstSourcePlanAuthority
 	runtimeVersion               string
 	policy                       runtimefactory.CandidateDeliveryPolicy
 	policyResolver               NativeDeliveryPolicyResolver
@@ -202,7 +204,7 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 	}
 	return &NativeCreatePlanCoordinator{
 		repository: config.Repository, targetID: config.TargetID, environment: config.Environment,
-		sources: config.Sources, artifacts: inspector, bindingEvidence: config.BindingEvidence,
+		sources: config.Sources, artifacts: inspector, bindingEvidence: config.BindingEvidence, firstSource: config.FirstSource,
 		runtimeVersion: strings.TrimSpace(config.RuntimeVersion), policy: config.Policy, policyResolver: config.PolicyResolver, semanticActivation: config.SemanticActivation, clock: clock,
 		authorizeDelivery: config.AuthorizeDelivery, requireCompoundAuthorization: config.RequireCompoundAuthorization,
 		events: config.Events, eventReader: eventReader, audit: config.Audit, auditReader: auditReader, workflow: config.Workflow,
@@ -227,6 +229,9 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	}
 	if err := validateNativeCreatePlanRequest(request); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	if request.FirstSourcePreparationID != "" && nativeBuildAuthorityNil(c.firstSource) {
+		return deploymentmodule.NativeDeliveryPlan{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	if request.TargetID != c.targetID || request.Environment != c.environment {
 		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("%w: target or environment differs from configured instance", deployment.ErrDeliveryConflict)
@@ -319,7 +324,7 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("resolve semantic activation evidence: %w", err)
 	}
 	bindingRequest := nativeCandidateConnectionRequest(inspectID, request.PrincipalID, request.TargetID, inspected)
-	bindingEvidence, bindingDigest, err := resolveNativeCandidateBindingEvidence(ctx, c.bindingEvidence, bindingRequest)
+	bindingEvidence, bindingDigest, err := c.resolvePlanBindings(ctx, request, preflightTarget, bindingRequest)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
 	}
@@ -395,6 +400,9 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 			return deploymentmodule.NativeDeliveryPlan{}, err
 		}
 		if err := validateNativePlanReplay(rich, request, outcome); err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
+		if err := c.validateFirstSourcePlanReplay(ctx, tx, request, rich); err != nil {
 			return deploymentmodule.NativeDeliveryPlan{}, err
 		}
 		projection, err := nativeDeliveryPlanProjection(rich)
@@ -482,6 +490,14 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	}
 	if err := validateNativePlanReplay(storedRich, request, nativePlanOutcome{OperationID: operationID, PlanID: operationID, ProjectID: request.ProjectID.String(), TargetID: request.TargetID, SourceDigest: request.SourceDigest, SourceAttestationDigest: request.SourceAttestationDigest, Status: "accepted", PlanDigest: storedRich.Digest}); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	if request.FirstSourcePreparationID != "" {
+		if target.ActiveGenerationID != "" || target.ActivePublicationID != "" {
+			return deploymentmodule.NativeDeliveryPlan{}, deployment.ErrDeliveryConflict
+		}
+		if err := c.firstSource.BindTx(ctx, tx, request, target, storedRich); err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
 	}
 	projection, err := nativeDeliveryPlanProjection(storedRich)
 	if err != nil {
@@ -590,6 +606,9 @@ func (c *NativeCreatePlanCoordinator) replayNativePlan(ctx context.Context, requ
 		return deploymentmodule.NativeDeliveryPlan{}, err
 	}
 	if err := validateNativePlanReplay(rich, request, outcome); err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	if err := c.validateFirstSourcePlanReplay(ctx, tx, request, rich); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
 	}
 	projection, err := nativeDeliveryPlanProjection(rich)

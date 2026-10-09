@@ -14,6 +14,7 @@ import (
 	projectcli "github.com/flidai/leapview/internal/project/cli"
 	"github.com/flidai/leapview/internal/project/devloop"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -40,6 +41,15 @@ type projectDeliveryPlanOperations struct {
 func (operations projectDeliveryPlanOperations) Create(ctx context.Context, options projectcli.DeliveryPlanOptions) (projectcli.DeliveryPlanResult, error) {
 	if operations.client == nil {
 		return projectcli.DeliveryPlanResult{}, fmt.Errorf("delivery plan API client is required")
+	}
+	var preparationID *string
+	if options.FirstSourcePreparationID != "" {
+		parsed, err := uuid.Parse(options.FirstSourcePreparationID)
+		operation := strings.TrimSpace(options.Operation)
+		if err != nil || parsed == uuid.Nil || parsed.String() != options.FirstSourcePreparationID || (operation != "" && operation != "code_change") || options.ResolveCandidatePlan || options.IdempotencyKey == "" || options.IdempotencyKey != strings.TrimSpace(options.IdempotencyKey) {
+			return projectcli.DeliveryPlanResult{}, cliapi.NewUsageError(fmt.Errorf("first-source preparation requires a canonical UUID, an explicit canonical idempotency key and a new code_change plan"))
+		}
+		preparationID = &options.FirstSourcePreparationID
 	}
 	targetSelector := strings.TrimSpace(options.Credentials.Target)
 	if targetSelector == "" {
@@ -170,7 +180,7 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	response, err := deploymentgen.NewGenClient(transport).CreateDeliveryPlan(ctx, deploymentgen.GenCreateDeliveryPlanClientRequest{
 		Project: projectID,
 		Headers: deploymentgen.GenCreateDeliveryPlanClientHeaders{IdempotencyKey: operationKey},
-		Body:    deploymentgen.DeliveryPlanRequest{TargetId: targetID, Operation: deploymentgen.DeliveryOperationKind(operation), SourceDigest: sourceDigest, SourceAttestationDigest: sourceAttestationDigest},
+		Body:    deploymentgen.DeliveryPlanRequest{TargetId: targetID, Operation: deploymentgen.DeliveryOperationKind(operation), SourceDigest: sourceDigest, SourceAttestationDigest: sourceAttestationDigest, FirstSourcePreparationId: preparationID},
 	})
 	if err != nil {
 		return projectcli.DeliveryPlanResult{}, mapDeliveryCLIError("create delivery plan", err)

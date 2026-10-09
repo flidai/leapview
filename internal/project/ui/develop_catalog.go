@@ -77,10 +77,23 @@ func connectionAdministrationRouteBridge(commands ConnectionCommandBindings) []g
 			"enable":  commands.Enable,
 			"disable": commands.Disable,
 		}, "/connections/administration/lifecycle", "connectionAdmin")
-	return []g.Node{
+	nodes := []g.Node{
 		g.Attr("data-on:lv-connection-administration-save", configuration),
 		g.Attr("data-on:lv-connection-administration-action", lifecycle),
 	}
+	if len(commands.Credentials) != 0 {
+		initialize := "$connectionAdmin.credentials = {command: evt.detail, drafts: [], nextBeforeVersionId: '', receiptId: '', receiptExpiresAt: '', bindingRevision: 0, operationId: evt.detail.operationId, phase: '', runtimeReady: false, status: {loading: true, error: '', message: ''}}; "
+		mutation := "(async () => { try { switch ($connectionAdmin.credentials.command.action) {"
+		for _, action := range []string{"save", "validate", "prepare", "retry", "abort", "retire"} {
+			mutation += "case '" + action + "': await " + uiactions.CommandPost(commands.Credentials[action], "/connections/administration/credentials", "connectionAdmin.credentials") + "; break; "
+		}
+		mutation += "} } finally { $connectionAdmin.credentials.command.username = ''; $connectionAdmin.credentials.command.password = ''; evt.detail.username = ''; evt.detail.password = ''; } })()"
+		nodes = append(nodes,
+			g.Attr("data-on:lv-connection-credential-query", initialize+"$connectionAdmin.credentials.command.username = ''; $connectionAdmin.credentials.command.password = ''; "+uiactions.Get("/connections/administration/credentials", "connectionAdmin.credentials")),
+			g.Attr("data-on:lv-connection-credential-command", initialize+mutation),
+		)
+	}
+	return nodes
 }
 
 func projectAssetFilterRouteBridge(area string) []g.Node {

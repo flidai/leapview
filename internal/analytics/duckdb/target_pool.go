@@ -92,7 +92,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	ctx context.Context,
 	binding connectionbinding.TargetBinding,
 	snapshot connectionbinding.CredentialSnapshot,
-) (connectionbinding.RuntimePool, error) {
+) (result connectionbinding.RuntimePool, resultErr error) {
 	if factory == nil || factory.open == nil {
 		return nil, connectionbinding.ErrProviderUnavailable
 	}
@@ -125,7 +125,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		}
 	}
 
-	secret, ok, err := compileConnectionSecret(binding.ConnectionID.String(), connection)
+	secret, ok, err := compileConnectionSecret(targetRuntimeConnectionAlias, connection)
 	if err != nil || !ok {
 		return nil, connectionbinding.ErrInvalidCredentialBundle
 	}
@@ -134,7 +134,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	activationStatements := make([]string, 0, 2)
 	switch spec.AttachKind {
 	case connectors.AttachDatabase:
-		attach, err := compileDatabaseAttach(binding.ConnectionID.String(), connection)
+		attach, err := compileDatabaseAttach(targetRuntimeConnectionAlias, connection)
 		if err != nil {
 			return nil, connectionbinding.ErrInvalidCredentialBundle
 		}
@@ -158,7 +158,9 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	closeOnFailure := true
 	defer func() {
 		if closeOnFailure {
-			_ = session.Close()
+			if session.Close() != nil {
+				resultErr = connectionbinding.ErrProviderCleanupUncertain
+			}
 		}
 	}()
 	statements, err := (duckdbsession.ResourcePolicy{
@@ -307,7 +309,7 @@ func (pool *targetRuntimePool) HealthCheck(ctx context.Context) error {
 
 func (pool *targetRuntimePool) Resolve(
 	ctx context.Context,
-	name string,
+	_ string,
 	logical semanticmodel.Connection,
 ) (semanticmodel.Connection, error) {
 	if err := ctx.Err(); err != nil {
@@ -341,7 +343,9 @@ func (pool *targetRuntimePool) Resolve(
 		resolved.RuntimeOptions.DataPath = pool.connection.RuntimeOptions.DataPath
 	}
 	resolved.Auth = maps.Clone(pool.connection.Auth)
-	validated, err := resolved.Validate(strings.TrimSpace(name))
+	// Validate connector configuration using its private SQL alias; the caller's
+	// resource ID may include a namespace and remains owned by the runtime graph.
+	validated, err := resolved.Validate(targetRuntimeConnectionAlias)
 	if err != nil {
 		clear(resolved.Auth)
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding

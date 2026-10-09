@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -33,21 +34,83 @@ func (m *configurationMemory) SaveConfiguration(_ context.Context, expected int6
 	m.rows = append(m.rows, r)
 	return r, nil
 }
+
+// configurationLifecycleStub models the shared port; credential cryptography and
+// durable receipt validation belong to the lifecycle backend's own tests.
+type configurationLifecycleStub struct {
+	store                    ConfigurationStore
+	versions                 map[string]string
+	drafts                   map[string]configurationDraft
+	used                     []string
+	testCalls, activateCalls int
+	install                  func(context.Context, int64) error
+	bindError                error
+}
+type configurationDraft struct {
+	actor    string
+	expected int64
+	input    ConfigurationInput
+}
+
+func newConfigurationLifecycleStub(store ConfigurationStore) *configurationLifecycleStub {
+	return &configurationLifecycleStub{store: store, versions: map[string]string{}, drafts: map[string]configurationDraft{}}
+}
+func (s *configurationLifecycleStub) BindRuntime(install func(context.Context, int64) error, refresh func(context.Context) error) error {
+	s.install = install
+	if refresh == nil {
+		return errors.New("missing runtime refresh callback")
+	}
+	return s.bindError
+}
+func (s *configurationLifecycleStub) Test(_ context.Context, actor string, expected int64, input ConfigurationInput) (string, error) {
+	s.testCalls++
+	token := fmt.Sprintf("validation:%d", s.testCalls)
+	s.drafts[token] = configurationDraft{actor: actor, expected: expected, input: input}
+	return token, nil
+}
+func (s *configurationLifecycleStub) Activate(ctx context.Context, actor string, expected int64, input ConfigurationInput, token string) (ConfigurationRevision, error) {
+	s.activateCalls++
+	draft, ok := s.drafts[token]
+	if !ok || draft.actor != actor || draft.expected != expected || draft.input != input {
+		return ConfigurationRevision{}, errors.New("validation receipt does not match actor, revision and input")
+	}
+	version := fmt.Sprintf("credential-version:%d", expected+1)
+	config := Config{Model: input.Model, BaseURL: input.BaseURL, APIMode: input.APIMode, ReasoningEffort: input.ReasoningEffort}
+	saved, err := s.store.SaveConfiguration(ctx, expected, ConfigurationRevision{Enabled: input.Enabled, Config: config, CredentialVersionID: version, ActorID: actor})
+	if err != nil {
+		return ConfigurationRevision{}, err
+	}
+	s.versions[version] = input.APIKey
+	if err = s.install(ctx, saved.Revision); err != nil {
+		return ConfigurationRevision{}, err
+	}
+	return saved, nil
+}
+func (s *configurationLifecycleStub) UseConfiguration(_ context.Context, revision ConfigurationRevision, use func(Config) error) error {
+	s.used = append(s.used, revision.CredentialVersionID)
+	secret, ok := s.versions[revision.CredentialVersionID]
+	if !ok {
+		return errors.New("customer credential version is unavailable")
+	}
+	config := revision.Config
+	config.APIKey = secret
+	return use(config)
+}
+
 func TestAdminConfigurationTestSaveAndRestart(t *testing.T) {
 	ctx := context.Background()
 	repo := &configurationMemory{}
 	service := NewService(nil, Config{})
 	service.ConfigureDefaultModel(func(Config) agentcore.Model { return newRecordingAgentModel() })
-	calls := 0
-	probe := func(context.Context, Config) error { calls++; return nil }
-	manager, err := NewConfigurationManager(repo, service, strings.Repeat("ab", 32), probe)
+	credentials := newConfigurationLifecycleStub(repo)
+	manager, err := NewConfigurationManager(repo, service, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate := ConfigurationInput{Enabled: true, Model: "my-model", BaseURL: "https://example.com/v1", APIMode: "responses", APIKey: "private-secret"}
 	token, err := manager.Test(ctx, "admin", 0, candidate)
-	if err != nil || calls != 1 {
-		t.Fatalf("test: %v calls=%d", err, calls)
+	if err != nil || credentials.testCalls != 1 {
+		t.Fatalf("test: %v calls=%d", err, credentials.testCalls)
 	}
 	if service.Enabled() {
 		t.Fatal("testing activated configuration")
@@ -67,7 +130,7 @@ func TestAdminConfigurationTestSaveAndRestart(t *testing.T) {
 	if saved.Revision != 1 || !service.Enabled() {
 		t.Fatal("not activated")
 	}
-	if repo.rows[0].Config.APIKey != "" || strings.Contains(string(repo.rows[0].Credential), "private-secret") {
+	if repo.rows[0].Config.APIKey != "" || len(repo.rows[0].Credential) != 0 || repo.rows[0].CredentialVersionID != "credential-version:1" {
 		t.Fatal("stored plaintext credential")
 	}
 	if _, err = manager.Save(ctx, "admin", 0, candidate, token); !errors.Is(err, ErrConfigurationConflict) {
@@ -81,12 +144,17 @@ func TestAdminConfigurationTestSaveAndRestart(t *testing.T) {
 	}
 	restarted := NewService(nil, Config{})
 	restarted.ConfigureDefaultModel(func(Config) agentcore.Model { return newRecordingAgentModel() })
-	manager, err = NewConfigurationManager(repo, restarted, strings.Repeat("ab", 32), probe)
+	restartedCredentials := newConfigurationLifecycleStub(repo)
+	restartedCredentials.versions = credentials.versions
+	manager, err = NewConfigurationManager(repo, restarted, restartedCredentials)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = manager.Refresh(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if len(restartedCredentials.used) != 1 || restartedCredentials.used[0] != saved.CredentialVersionID {
+		t.Fatal("restart did not resolve the exact saved credential version")
 	}
 	if restarted.RuntimeStatus().Model != "my-model" {
 		t.Fatal("restart lost config")
@@ -103,12 +171,13 @@ func TestUnspecifiedReasoningRemainsUnspecified(t *testing.T) {
 	}
 }
 
-func TestAdminConfigurationRejectsUnsafeTransitionsAndBadKeys(t *testing.T) {
+func TestAdminConfigurationRejectsUnsafeTransitionsAndMissingVersions(t *testing.T) {
 	ctx := context.Background()
 	repo := &configurationMemory{}
 	service := NewService(nil, Config{APIKey: "legacy-secret", Model: "legacy", BaseURL: "https://old.example/v1"})
 	service.ConfigureDefaultModel(func(Config) agentcore.Model { return newRecordingAgentModel() })
-	manager, err := NewConfigurationManager(repo, service, strings.Repeat("cd", 32), func(context.Context, Config) error { return nil })
+	credentials := newConfigurationLifecycleStub(repo)
+	manager, err := NewConfigurationManager(repo, service, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,9 +197,9 @@ func TestAdminConfigurationRejectsUnsafeTransitionsAndBadKeys(t *testing.T) {
 	if _, err = manager.Save(ctx, "admin", 0, input, token); err != nil {
 		t.Fatal(err)
 	}
-	wrong, _ := NewConfigurationManager(repo, service, strings.Repeat("ef", 32), func(context.Context, Config) error { return nil })
-	if _, err = wrong.RestoreInput(ctx, 1); err == nil {
-		t.Fatal("wrong encryption key decrypted saved credential")
+	unavailable, _ := NewConfigurationManager(repo, service, newConfigurationLifecycleStub(repo))
+	if _, err = unavailable.RestoreInput(ctx, 1); err == nil || !strings.Contains(err.Error(), "credential version is unavailable") {
+		t.Fatalf("missing immutable credential version accepted: %v", err)
 	}
 	disable := ConfigurationInput{Enabled: false, Model: "new", BaseURL: input.BaseURL, APIMode: "responses"}
 	token, err = manager.Test(ctx, "admin", 1, disable)
@@ -169,7 +238,8 @@ func TestAdminConfigurationPreparationFailureDoesNotPersist(t *testing.T) {
 	service := NewService(nil, Config{})
 	service.ConfigureDefaultModel(func(Config) agentcore.Model { return nil })
 	repo := &configurationMemory{}
-	manager, err := NewConfigurationManager(repo, service, strings.Repeat("ab", 32), func(context.Context, Config) error { return nil })
+	credentials := newConfigurationLifecycleStub(repo)
+	manager, err := NewConfigurationManager(repo, service, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +251,128 @@ func TestAdminConfigurationPreparationFailureDoesNotPersist(t *testing.T) {
 	if _, err = manager.Save(t.Context(), "admin", 0, input, token); err == nil {
 		t.Fatal("accepted a runtime that cannot activate")
 	}
-	if len(repo.rows) != 0 || service.Enabled() {
+	if len(repo.rows) != 0 || service.Enabled() || credentials.activateCalls != 0 {
 		t.Fatal("failed preparation changed durable or active configuration")
+	}
+}
+
+func TestAdminConfigurationRejectsLegacyCiphertextWithoutCredentialFallback(t *testing.T) {
+	for _, row := range []ConfigurationRevision{
+		{Revision: 1, Credential: []byte("legacy ciphertext"), CredentialVersionID: "credential-version:1"},
+		{Revision: 1},
+	} {
+		repo := &configurationMemory{rows: []ConfigurationRevision{row}}
+		credentials := newConfigurationLifecycleStub(repo)
+		service := NewService(nil, Config{})
+		manager, err := NewConfigurationManager(repo, service, credentials)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = manager.Refresh(t.Context())
+		expected := "complete credential setup"
+		if len(row.Credential) > 0 {
+			expected = "legacy agent credential format is unsupported"
+		}
+		if err == nil || !strings.Contains(err.Error(), expected) {
+			t.Fatalf("unsupported revision: %v", err)
+		}
+		if _, err = manager.RestoreInput(t.Context(), 1); err == nil {
+			t.Fatal("unsupported history was restored")
+		}
+		if len(credentials.used) != 0 || service.Enabled() {
+			t.Fatal("unsupported storage reached credentials/runtime")
+		}
+	}
+}
+
+func TestAdminConfigurationRequiresActorAndExactRevisionBeforeCredentialAccess(t *testing.T) {
+	repo := &configurationMemory{}
+	credentials := newConfigurationLifecycleStub(repo)
+	manager, err := NewConfigurationManager(repo, NewService(nil, Config{}), credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ConfigurationInput{Enabled: true, Model: "model", BaseURL: "https://provider.example", APIMode: "responses", APIKey: "secret"}
+	for _, actor := range []string{"", "admin"} {
+		expected := int64(0)
+		if actor != "" {
+			expected = 3
+		}
+		if _, err = manager.Test(t.Context(), actor, expected, input); err == nil {
+			t.Fatal("invalid actor/revision reached test")
+		}
+		if _, err = manager.Save(t.Context(), actor, expected, input, "receipt"); err == nil {
+			t.Fatal("invalid actor/revision reached activation")
+		}
+	}
+	if credentials.testCalls != 0 || credentials.activateCalls != 0 || len(credentials.used) != 0 {
+		t.Fatal("invalid actor/revision reached lifecycle backend")
+	}
+}
+
+func TestAdminConfigurationRequiresCredentialBackendAndRuntimeBinding(t *testing.T) {
+	repo := &configurationMemory{}
+	service := NewService(nil, Config{})
+	var absent *configurationLifecycleStub
+	for _, backend := range []ConfigurationCredentials{nil, absent} {
+		if _, err := NewConfigurationManager(repo, service, backend); err == nil {
+			t.Fatal("missing credential backend accepted")
+		}
+	}
+	backend := newConfigurationLifecycleStub(repo)
+	backend.bindError = errors.New("runtime binding failed")
+	if _, err := NewConfigurationManager(repo, service, backend); !errors.Is(err, backend.bindError) {
+		t.Fatalf("runtime binding error lost: %v", err)
+	}
+}
+
+func TestAdminConfigurationHistoricalRuntimeResolvesPinnedCredentialVersion(t *testing.T) {
+	repo := &configurationMemory{rows: []ConfigurationRevision{
+		{Revision: 1, Enabled: true, Config: Config{Model: "old", BaseURL: "https://provider.example", APIMode: "responses"}, CredentialVersionID: "immutable:first"},
+		{Revision: 2, Enabled: true, Config: Config{Model: "new", BaseURL: "https://provider.example", APIMode: "responses"}, CredentialVersionID: "immutable:second"},
+	}}
+	credentials := newConfigurationLifecycleStub(repo)
+	credentials.versions = map[string]string{"immutable:first": "old-secret", "immutable:second": "new-secret"}
+	service := NewService(nil, Config{})
+	service.ConfigureDefaultModel(func(Config) agentcore.Model { return newRecordingAgentModel() })
+	manager, err := NewConfigurationManager(repo, service, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = manager.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	historical, err := manager.runtimeForRevision(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if historical.config.Revision != 1 || historical.config.APIKey != "old-secret" || historical.config.Model != "old" {
+		t.Fatal("historical runtime substituted the current credential")
+	}
+	if service.runtimeSnapshot().config.APIKey != "new-secret" {
+		t.Fatal("historical resolution changed active credentials")
+	}
+	if len(credentials.used) != 2 || credentials.used[0] != "immutable:second" || credentials.used[1] != "immutable:first" {
+		t.Fatalf("resolved wrong immutable versions: %v", credentials.used)
+	}
+	if err = credentials.install(t.Context(), 1); !errors.Is(err, ErrConfigurationConflict) {
+		t.Fatalf("stale install callback accepted: %v", err)
+	}
+}
+
+func TestConfigurationVersionMetadataDoesNotResolveProviderSecret(t *testing.T) {
+	repo := &configurationMemory{rows: []ConfigurationRevision{{Revision: 1, CredentialVersionID: "immutable:first"}, {Revision: 2, CredentialVersionID: "immutable:second"}}}
+	credentials := newConfigurationLifecycleStub(repo)
+	service := NewService(nil, Config{})
+	manager, err := NewConfigurationManager(repo, service, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := manager.CredentialVersion(t.Context(), 1)
+	if err != nil || version != "immutable:first" || len(credentials.used) != 0 {
+		t.Fatalf("metadata resolved wrong version or consumed provider secret: %s %v", version, err)
+	}
+	if _, err = manager.CredentialVersion(t.Context(), 3); !errors.Is(err, ErrConfigurationNotFound) {
+		t.Fatal("unknown configuration metadata was accepted")
 	}
 }

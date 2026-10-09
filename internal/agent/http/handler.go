@@ -666,7 +666,7 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		input.SystemPrompt = signals.AdminAgentCommand.SystemPrompt
 	}
 	auditInput := ""
-	if input.Provider != nil || input.RestoreRevision > 0 {
+	if input.Provider != nil || input.RestoreRevision > 0 || input.Action != "" {
 		auditInput = "provider-configuration"
 	} else if input.SystemPrompt != nil {
 		auditInput = *input.SystemPrompt
@@ -718,7 +718,7 @@ func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, input api.AdminAgentConfigPatchRequest) {
-	if input.Provider != nil || input.RestoreRevision > 0 {
+	if input.Provider != nil || input.RestoreRevision > 0 || input.Action != "" {
 		h.updateProviderConfig(w, r, input)
 		return
 	}
@@ -792,6 +792,9 @@ func agentConfigResponse(details api.AdminAgentResponse) agentgen.GenSchemaAgent
 		SystemPrompt:          details.SystemPrompt,
 		ConfigurationRevision: details.ConfigurationRevision, AdminManaged: details.AdminManaged, CredentialConfigured: details.CredentialConfigured, ConfigurationAvailable: details.ConfigurationAvailable,
 	}
+	if details.CredentialVersionID != "" {
+		response.CredentialVersionId = &details.CredentialVersionID
+	}
 	if details.BaseURL != "" {
 		response.BaseUrl = &details.BaseURL
 	}
@@ -832,6 +835,10 @@ func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, err
 			out.BaseURL, out.APIMode, out.ConfigurationRevision = c.NormalizedBaseURL(), c.APIMode, c.Revision
 			out.ConfigurationAvailable, out.AdminManaged = true, c.Revision > 0
 			out.CredentialConfigured = h.options.Service.HasProviderCredential()
+			out.CredentialVersionID, err = manager.CredentialVersion(ctx, c.Revision)
+			if err != nil {
+				return out, err
+			}
 			if out.APIMode == "" {
 				out.APIMode = "chat-completions"
 				if strings.Contains(strings.ToLower(c.Model), "gpt-6-luna") {
