@@ -113,6 +113,8 @@ pkgs.stdenv.mkDerivation {
     # binaries, including independent-session readback and linked SQLite ID.
     go test -count=1 -tags="$tags" ./internal/extension \
       ./internal/deployment/extensionsupply ./internal/analytics/duckdbsession
+    go test -count=1 -tags="$tags" -run '^TestAdmittedExtensionLoad' \
+      ./internal/analytics/ducklake
     runHook postCheck
   '';
   installPhase = ''
