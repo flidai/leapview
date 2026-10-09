@@ -50,6 +50,10 @@ func TestCompiledSQLiteWritesAndReadsWithoutExtensionFiles(t *testing.T) {
 	if _, err := second.ExecContext(ctx, "ATTACH "+path+" AS reopened (TYPE SQLITE, READ_ONLY)"); err != nil {
 		t.Fatal(err)
 	}
+	var sqliteVersion, sqliteSourceID string
+	if err := second.QueryRowContext(ctx, "SELECT * FROM sqlite_query('reopened', 'SELECT sqlite_version(), sqlite_source_id()')").Scan(&sqliteVersion, &sqliteSourceID); err != nil || sqliteVersion != "3.53.4" || sqliteSourceID != builtin.SQLiteSourceID {
+		t.Fatalf("linked SQLite identity = %q / %q, error = %v", sqliteVersion, sqliteSourceID, err)
+	}
 	var sum int64
 	if err := second.QueryRowContext(ctx, "SELECT sum(id) FROM reopened.sample").Scan(&sum); err != nil || sum != 30 {
 		t.Fatalf("independent SQLite session readback = %d, error = %v", sum, err)
