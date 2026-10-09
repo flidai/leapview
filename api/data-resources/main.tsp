@@ -91,18 +91,17 @@ model ExcelReaderOptions {
   header?: boolean;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", sourceDataIdentityCapability: "unavailable", defaults: #{} } })
-model VortexReaderOptions {
-  version?: string;
-}
-
 @apigen.metadata(#{ `x-leapview-format`: #{ name: "delta", extensions: #[], scanKind: "table_function", scanFunction: "delta_scan", requiredExtension: "delta", sourceDataIdentityCapability: "unavailable", tableLike: true, defaults: #{} } })
 model DeltaReaderOptions {
+  /** Nonnegative signed 64-bit Delta log version, as an exact decimal string. */
+  @pattern("^(0|[1-9][0-9]{0,18})$")
   version?: string;
 }
 
 @apigen.metadata(#{ `x-leapview-format`: #{ name: "iceberg", extensions: #[], scanKind: "table_function", scanFunction: "iceberg_scan", requiredExtension: "iceberg", sourceDataIdentityCapability: "unavailable", tableLike: true, defaults: #{} } })
 model IcebergReaderOptions {
+  /** Nonnegative signed 64-bit Iceberg snapshot ID, as an exact decimal string (not a timestamp or metadata version). */
+  @pattern("^(0|[1-9][0-9]{0,18})$")
   snapshot?: string;
 }
 
@@ -112,7 +111,6 @@ model ReaderDefaults {
   json?: JSONReaderOptions;
   parquet?: ParquetReaderOptions;
   excel?: ExcelReaderOptions;
-  vortex?: VortexReaderOptions;
   delta?: DeltaReaderOptions;
   iceberg?: IcebergReaderOptions;
 }
@@ -366,9 +364,9 @@ model BlobPathSourceLocation extends PathSourceLocation {
   format: "blob";
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", sourceDataIdentityCapability: "unavailable", allowsOptions: false, defaults: #{} } })
 model VortexPathSourceLocation extends PathSourceLocation {
   format: "vortex";
-  options?: VortexReaderOptions;
 }
 
 model DeltaPathSourceLocation extends PathSourceLocation {

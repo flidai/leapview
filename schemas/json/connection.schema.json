@@ -604,6 +604,8 @@
     "DeltaReaderOptions": {
       "properties": {
         "version": {
+          "description": "Nonnegative signed 64-bit Delta log version, as an exact decimal string.",
+          "pattern": "^(0|[1-9][0-9]{0,18})$",
           "type": "string"
         }
       },
@@ -928,6 +930,8 @@
     "IcebergReaderOptions": {
       "properties": {
         "snapshot": {
+          "description": "Nonnegative signed 64-bit Iceberg snapshot ID, as an exact decimal string (not a timestamp or metadata version).",
+          "pattern": "^(0|[1-9][0-9]{0,18})$",
           "type": "string"
         }
       },
@@ -1526,9 +1530,6 @@
         },
         "parquet": {
           "$ref": "#/$defs/ParquetReaderOptions"
-        },
-        "vortex": {
-          "$ref": "#/$defs/VortexReaderOptions"
         }
       },
       "type": "object",
@@ -2002,26 +2003,15 @@
             "vortex"
           ],
           "type": "string"
-        },
-        "options": {
-          "$ref": "#/$defs/VortexReaderOptions"
         }
       },
       "required": [
         "format"
       ],
       "type": "object",
-      "unevaluatedProperties": false
-    },
-    "VortexReaderOptions": {
-      "properties": {
-        "version": {
-          "type": "string"
-        }
-      },
-      "type": "object",
       "unevaluatedProperties": false,
       "x-leapview-format": {
+        "allowsOptions": false,
         "defaults": {},
         "extensions": [
           ".vortex"

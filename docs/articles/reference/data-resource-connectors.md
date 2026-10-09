@@ -32,7 +32,7 @@ Path Sources retain the scalar ADR shape (`format` plus sibling `options`) where
 | `excel` | `ExcelReaderOptions` | `unavailable` |
 | `text` | none | `unavailable` |
 | `blob` | none | `unavailable` |
-| `vortex` | `VortexReaderOptions` | `unavailable` |
+| `vortex` | none | `unavailable` |
 | `delta` | `DeltaReaderOptions` | `unavailable` |
 | `iceberg` | `IcebergReaderOptions` | `unavailable` |
 | `lance` | none | `unavailable` |

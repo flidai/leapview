@@ -2091,7 +2091,6 @@ type ReaderDefaults struct {
 	JSON    *JSONReaderOptions    `json:"json,omitempty" yaml:"json,omitempty"`
 	Parquet *ParquetReaderOptions `json:"parquet,omitempty" yaml:"parquet,omitempty"`
 	Excel   *ExcelReaderOptions   `json:"excel,omitempty" yaml:"excel,omitempty"`
-	Vortex  *VortexReaderOptions  `json:"vortex,omitempty" yaml:"vortex,omitempty"`
 	Delta   *DeltaReaderOptions   `json:"delta,omitempty" yaml:"delta,omitempty"`
 	Iceberg *IcebergReaderOptions `json:"iceberg,omitempty" yaml:"iceberg,omitempty"`
 }
@@ -3327,10 +3326,5 @@ type UniqueDatasetCheck struct {
 
 type VortexPathSourceLocation struct {
 	PathSourceLocationBase
-	Format  string               `json:"format" yaml:"format"`
-	Options *VortexReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
-}
-
-type VortexReaderOptions struct {
-	Version *string `json:"version,omitempty" yaml:"version,omitempty"`
+	Format string `json:"format" yaml:"format"`
 }

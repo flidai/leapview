@@ -173,6 +173,17 @@ func duckDBPathOptions(value *projectcontracts.PathSourceLocation) (map[string]a
 			options[name] = int(*pointer)
 		}
 	}
+	putNonnegativeDecimal := func(name string, pointer *string) error {
+		if pointer == nil {
+			return nil
+		}
+		value, err := strconv.ParseInt(*pointer, 10, 64)
+		if err != nil || value < 0 || strconv.FormatInt(value, 10) != *pointer {
+			return fmt.Errorf("%s must be a nonnegative signed 64-bit decimal integer", name)
+		}
+		options[name] = *pointer
+		return nil
+	}
 	switch variant := value.Value.(type) {
 	case *projectcontracts.CSVPathSourceLocation:
 		if variant == nil {
@@ -221,22 +232,23 @@ func duckDBPathOptions(value *projectcontracts.PathSourceLocation) (map[string]a
 		if variant == nil {
 			return nil, fmt.Errorf("vortex path variant is nil")
 		}
-		if variant.Options != nil {
-			putString("version", variant.Options.Version)
-		}
 	case *projectcontracts.DeltaPathSourceLocation:
 		if variant == nil {
 			return nil, fmt.Errorf("delta path variant is nil")
 		}
 		if variant.Options != nil {
-			putString("version", variant.Options.Version)
+			if err := putNonnegativeDecimal("version", variant.Options.Version); err != nil {
+				return nil, err
+			}
 		}
 	case *projectcontracts.IcebergPathSourceLocation:
 		if variant == nil {
 			return nil, fmt.Errorf("iceberg path variant is nil")
 		}
 		if variant.Options != nil {
-			putString("snapshot", variant.Options.Snapshot)
+			if err := putNonnegativeDecimal("snapshot_from_id", variant.Options.Snapshot); err != nil {
+				return nil, err
+			}
 		}
 	case *projectcontracts.LancePathSourceLocation:
 		if variant == nil {

@@ -1,0 +1,32 @@
+{
+  "repo": "duckdb/duckdb-iceberg",
+  "sha": "f3752a2407cf1cabe711c0c84cb32d084a4f2b1b",
+  "files": [
+    {
+      "path": "data/persistent/case_sensitive_names/default.db/case_sensitive_names/data/00000-0-81af3af1-c807-48d2-b022-696b1f81a188.parquet",
+      "bytes": 982,
+      "SHA256": "62eca495e6027289b14aabd050384b1a6a557f9e42e58b4eceffca5eae183360"
+    },
+    {
+      "path": "data/persistent/case_sensitive_names/default.db/case_sensitive_names/metadata/00000-c86b5eba-44ed-4a98-8b59-1b0dc9fac4ff.metadata.json",
+      "bytes": 943,
+      "SHA256": "35dd96d50b00cb3518fc173a2e20aff21290aacd4a2bc5e09cee8a2ea2f0ee2b"
+    },
+    {
+      "path": "data/persistent/case_sensitive_names/default.db/case_sensitive_names/metadata/00001-a7a3a44c-4aac-4619-bebd-11be37b27351.metadata.json",
+      "bytes": 1965,
+      "SHA256": "14fc82769310a14d539583c123f389c9d1398eeec8027537eb38271c99ac213c"
+    },
+    {
+      "path": "data/persistent/case_sensitive_names/default.db/case_sensitive_names/metadata/81af3af1-c807-48d2-b022-696b1f81a188-m0.avro",
+      "bytes": 4342,
+      "SHA256": "4b67454d750595d2fe5703553c63947ddf0d2003008e1916253d1bd7488c9c87"
+    },
+    {
+      "path": "data/persistent/case_sensitive_names/default.db/case_sensitive_names/metadata/snap-5298355539581857556-0-81af3af1-c807-48d2-b022-696b1f81a188.avro",
+      "bytes": 1806,
+      "SHA256": "43a3bcfe967df5823e2233c87b9d4156d521f7e6456695d144739411acfdfa0f"
+    }
+  ],
+  "fixture": "Unmodified3row+empty Iceberg fixture; producer scripts/persistent/case_sensitive_names.py. Test copies under disposable cwd preserving relative paths, avoiding allow_moved_paths override."
+}

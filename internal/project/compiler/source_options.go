@@ -108,11 +108,7 @@ func ResolveEffectivePathLocation(source semanticmodel.Source, connection semant
 		if variant == nil {
 			return nil, fmt.Errorf("vortex path location variant is nil")
 		}
-		var connectionOptions *projectcontracts.VortexReaderOptions
-		if defaults != nil {
-			connectionOptions = defaults.Vortex
-		}
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "vortex"), Format: "vortex", Options: mergeVortex(variant.Options, connectionOptions)}}, nil
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "vortex"), Format: "vortex"}}, nil
 	case *projectcontracts.DeltaPathSourceLocation:
 		if variant == nil {
 			return nil, fmt.Errorf("delta path location variant is nil")
@@ -257,18 +253,6 @@ func generatedString[T any](value *T, getter func(*T) *string) *string {
 	return fieldString(value, getter)
 }
 func generatedInt32[T any](value *T, getter func(*T) *int32) *int32 { return fieldInt32(value, getter) }
-func mergeVortex(source, connection *projectcontracts.VortexReaderOptions) *projectcontracts.VortexReaderOptions {
-	if source == nil && connection == nil {
-		return nil
-	}
-	result := &projectcontracts.VortexReaderOptions{}
-	if source != nil && source.Version != nil {
-		result.Version = cloneString(source.Version)
-	} else if connection != nil {
-		result.Version = cloneString(connection.Version)
-	}
-	return result
-}
 func mergeDelta(source, connection *projectcontracts.DeltaReaderOptions) *projectcontracts.DeltaReaderOptions {
 	if source == nil && connection == nil {
 		return nil

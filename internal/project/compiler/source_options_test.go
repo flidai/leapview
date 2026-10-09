@@ -21,7 +21,7 @@ func pathBase(format string) projectcontracts.PathSourceLocationBase {
 func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testing.T) {
 	trueValue, falseValue := true, false
 	semicolon, pipe, quote, singleQuote, escape, backslash := ";", "|", `"`, "'", `\\`, "NA"
-	jsonExplicit, jsonDefault, sheet, version, snapshot := "array", "newline_delimited", "Data", "v2", "42"
+	jsonExplicit, jsonDefault, sheet, version, snapshot, defaultSnapshot := "array", "newline_delimited", "Data", "2", "42", "43"
 
 	tests := []struct {
 		name     string
@@ -103,12 +103,11 @@ func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testin
 		{
 			name:     "vortex",
 			format:   "vortex",
-			location: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: pathBase("vortex"), Format: "vortex", Options: &projectcontracts.VortexReaderOptions{Version: &version}},
-			defaults: &projectcontracts.ReaderDefaults{Vortex: &projectcontracts.VortexReaderOptions{Version: &quote}},
+			location: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: pathBase("vortex"), Format: "vortex"},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
 				v := got.Value.(*projectcontracts.VortexPathSourceLocation)
-				if *v.Options.Version != version {
-					t.Fatalf("vortex options = %#v", v.Options)
+				if v.Format != "vortex" {
+					t.Fatalf("vortex location = %#v", v)
 				}
 			},
 		},
@@ -128,7 +127,7 @@ func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testin
 			name:     "iceberg",
 			format:   "iceberg",
 			location: &projectcontracts.IcebergPathSourceLocation{PathSourceLocationBase: pathBase("iceberg"), Format: "iceberg", Options: &projectcontracts.IcebergReaderOptions{Snapshot: &snapshot}},
-			defaults: &projectcontracts.ReaderDefaults{Iceberg: &projectcontracts.IcebergReaderOptions{Snapshot: &quote}},
+			defaults: &projectcontracts.ReaderDefaults{Iceberg: &projectcontracts.IcebergReaderOptions{Snapshot: &defaultSnapshot}},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
 				v := got.Value.(*projectcontracts.IcebergPathSourceLocation)
 				if *v.Options.Snapshot != snapshot {
