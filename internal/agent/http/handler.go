@@ -819,54 +819,6 @@ func agentConfigResponse(details api.AdminAgentResponse) agentgen.GenSchemaAgent
 	return response
 }
 
-func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, error) {
-	prompt, err := h.SystemPrompt(ctx)
-	if err != nil {
-		return api.AdminAgentResponse{}, err
-	}
-	out := api.AdminAgentResponse{SystemPrompt: prompt, Status: string(agent.AgentRuntimeDisabled)}
-	if h.options.Service != nil {
-		if manager := h.options.Service.ConfigurationManager(); manager != nil {
-			if err := manager.Refresh(ctx); err != nil {
-				h.options.Service.ReportRuntimeConfigError()
-				if errors.Is(err, agent.ErrConfigurationReentryRequired) {
-					retained, readErr := manager.CurrentMetadata(ctx)
-					if readErr != nil {
-						return out, readErr
-					}
-					out.ConfigurationRevision, out.AdminManaged = retained.Revision, retained.Revision > 0
-					out.ConfigurationAvailable = true
-					out.Model, out.BaseURL, out.APIMode, out.ReasoningEffort = retained.Config.Model, retained.Config.NormalizedBaseURL(), retained.Config.APIMode, retained.Config.ReasoningEffort
-					out.Status = string(agent.AgentRuntimeDegraded)
-					out.StatusDetail = "Complete customer credential setup and explicitly enter the provider key again. Historical credentials remain available only in the old deployment for recovery."
-					return out, nil
-				}
-				return out, err
-			}
-			c := h.options.Service.DeploymentConfig()
-			out.BaseURL, out.APIMode, out.ConfigurationRevision = c.NormalizedBaseURL(), c.APIMode, c.Revision
-			out.ConfigurationAvailable, out.AdminManaged = true, c.Revision > 0
-			out.CredentialConfigured = h.options.Service.HasProviderCredential()
-			out.CredentialVersionID, err = manager.CredentialVersion(ctx, c.Revision)
-			if err != nil {
-				return out, err
-			}
-			if out.APIMode == "" {
-				out.APIMode = "chat-completions"
-				if strings.Contains(strings.ToLower(c.Model), "gpt-6-luna") {
-					out.APIMode = "responses"
-				}
-			}
-		}
-		status := h.options.Service.RuntimeStatus()
-		out.Configured, out.Enabled = status.Configured, status.Enabled
-		out.Status, out.StatusDetail = string(status.State), status.Detail
-		out.Model, out.ReasoningEffort = status.Model, status.ReasoningEffort
-		out.Tools = adminAgentToolDTOs(h.options.Service.ToolDefinitions(agent.Scope{PrincipalID: "admin", DevAuthBypass: true}), h.options.APIGenToolContracts)
-	}
-	return out, nil
-}
-
 func (h *Handler) agentRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (*agent.Service, agent.Scope, bool) {
 	if h.options.Service == nil || !h.options.Service.Enabled() {
 		writeJSONError(w, agent.ErrDisabled, stdhttp.StatusServiceUnavailable)
