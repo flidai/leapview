@@ -2,6 +2,8 @@
 
 Prepared 2026-10-08. This file records the preregistered local legal-v1 discovery pilot and an evolution impact analysis. All nine preregistered first attempts were submitted and scored against the real compiler and frozen intent oracles; no agent-performance winner is claimed.
 
+Separate follow-up completed 2026-10-09: see the [90-attempt design comparison](dashboard-design-evaluation/comparison/README.md) and [executed evolution probes](dashboard-design-evaluation/evolution/README.md). This historical nine-attempt pilot and its frozen controls/results remain unchanged; its counts must not be combined with the later experiment.
+
 ## Scope and controls
 
 The reviewed plan proposes 90 runs across three broader design candidates. This initial 9-run pilot instead compares three existing legal representations before new contract/layout prototypes are qualified: explicit layout defaults, omitted equivalent defaults, and confined visuals/pages fragments. Three tasks have one independent fresh-context submission in each representation. This is a discovery screen, not a statistically reliable comparison or completion of the 90-run evaluation.
@@ -62,7 +64,7 @@ Source byte counts are raw submitted YAML, including fragment files. They are de
 | omitted-grain | 1266 | evaluation.yaml |
 | omitted-reuse | 1932 | evaluation.yaml |
 
-Per-trial elapsed time and tokens were not available, and no speed or cost improvement is claimed. There is one observation per task/form, a small supplied catalog/reference and no execution of dashboard queries. These tasks did not discriminate the existing forms; this is not proof of general equivalence or superiority. The broader 90-run A/B/C comparison remains unexecuted, and no new syntax prototype is being shipped.
+Per-trial elapsed time and tokens were not available, and no speed or cost improvement is claimed. There is one observation per task/form, a small supplied catalog/reference and no execution of dashboard queries. These tasks did not discriminate the existing forms; this is not proof of general equivalence or superiority. At the pilot date the broader 90-run A/B/C comparison was unexecuted; the separate completed follow-up is linked above. No new syntax prototype is being shipped.
 
 ## Local delivery decision
 
