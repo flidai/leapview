@@ -17,39 +17,40 @@ class DashboardGeneration extends LitElement {
   @property({ type: Boolean, reflect: true }) compact = false
 
   static styles = css`
-    :host { display: block; height: 100%; min-height: 0; color: var(--lv-fg-default); }
+    :host { display: block; height: 100%; min-height: 0; overflow: auto; overscroll-behavior: contain; color: var(--lv-fg-default); }
     * { box-sizing: border-box; }
-    .stage { min-height: 100%; display: flex; flex-direction: column; background: var(--lv-bg-app, #f6f8fa); }
+    .card, .bar { --delay: 0s; }
+    .stage { min-height: 100%; display: flex; flex-direction: column; background: var(--lv-bg-app); }
     .toolbar { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 12px 20px; border-bottom: var(--lv-border-default); background: var(--lv-bg-panel); font: var(--lv-type-body-compact); }
     .toolbar svg { width: 16px; height: 16px; color: var(--lv-accent); }
     .tag { margin-left: auto; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .content { width: min(100%, 1030px); margin: auto; padding: clamp(20px, 4vw, 48px); }
     .intro { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 28px; }
-    .spark { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 12px; background: color-mix(in srgb, var(--lv-accent, #0969da) 10%, transparent); color: var(--lv-accent); }
+    .spark { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: var(--lv-radius-large); background: var(--lv-bg-accent-muted); color: var(--lv-accent); }
     .spark svg { width: 20px; height: 20px; }
-    h2 { margin: 0 0 7px; font: var(--lv-type-section-title, 600 20px/1.3 system-ui); }
-    p { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-body-compact, 14px/1.5 system-ui); }
-    .canvas { position: relative; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; padding: 22px; border: var(--lv-border-default, 1px solid #d0d7de); border-radius: 12px; background: var(--lv-bg-panel, #fff); box-shadow: 0 12px 40px #00000006; overflow: hidden; }
-    .canvas::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(110deg, transparent 35%, color-mix(in srgb, var(--lv-accent, #0969da) 5%, transparent) 50%, transparent 65%); transform: translateX(-100%); animation: scan 5s ease-in-out infinite; }
-    .card { grid-column: span 2; min-width: 0; border: var(--lv-border-muted, 1px solid #d8dee4); border-radius: 8px; padding: 16px; background: var(--lv-bg-panel, #fff); animation: assemble 4.8s ease-in-out infinite; animation-delay: var(--delay, 0s); }
+    h2 { margin: 0 0 7px; font: var(--lv-type-section-title); }
+    p { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
+    .canvas { position: relative; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; padding: 22px; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-resting-sm); overflow: hidden; }
+    .canvas::after { content: ''; opacity: .25; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(110deg, transparent 35%, var(--lv-bg-accent-muted) 50%, transparent 65%); transform: translateX(-100%); animation: scan 5s ease-in-out infinite; }
+    .card { grid-column: span 2; min-width: 0; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: 16px; background: var(--lv-bg-panel); animation: assemble 4.8s ease-in-out infinite; animation-delay: var(--delay); }
     .card.trend { grid-column: span 4; }
     .card.bars { grid-column: span 2; }
-    .skeleton { height: 7px; border-radius: 4px; background: var(--lv-bg-control, #eaeef2); }
+    .skeleton { height: 7px; border-radius: var(--lv-radius-tight); background: var(--lv-bg-control); }
     .heading { width: 48%; margin-bottom: 16px; }
-    .metric { width: 60%; height: 22px; margin-bottom: 14px; background: color-mix(in srgb, var(--lv-accent, #0969da) 15%, var(--lv-bg-control, #eaeef2)); }
+    .metric { width: 60%; height: 22px; margin-bottom: 14px; background: var(--lv-data-1-muted); }
     .foot { width: 35%; height: 5px; }
     .chart { display: block; width: 100%; height: 150px; overflow: visible; }
-    .grid { stroke: var(--lv-line-muted, #d8dee4); stroke-width: .6; fill: none; }
-    .line { fill: none; stroke: var(--lv-accent, #0969da); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 540; stroke-dashoffset: 540; animation: trace 4.8s ease-in-out infinite; }
-    .area { fill: color-mix(in srgb, var(--lv-accent, #0969da) 8%, transparent); animation: appear 4.8s ease-in-out infinite; }
-    .bar { fill: color-mix(in srgb, var(--lv-accent, #0969da) 35%, var(--lv-bg-control, #eaeef2)); transform-box: fill-box; transform-origin: bottom; animation: grow 4.8s ease-in-out infinite; animation-delay: var(--delay, 0s); }
-    .bar:nth-of-type(even) { fill: color-mix(in srgb, var(--lv-accent, #0969da) 65%, var(--lv-bg-control, #eaeef2)); }
-    .caption { margin-top: 12px; text-align: right; font: var(--lv-type-caption, 12px/1.5 system-ui); }
-    .steps { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 25px; color: var(--lv-fg-muted); font: var(--lv-type-caption, 12px/1.5 system-ui); }
+    .grid { stroke: var(--lv-line-muted); stroke-width: .6; fill: none; }
+    .line { fill: none; stroke: var(--lv-data-1); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 540; stroke-dashoffset: 540; animation: trace 4.8s ease-in-out infinite; }
+    .area { fill: var(--lv-data-1-muted); animation: appear 4.8s ease-in-out infinite; }
+    .bar { fill: var(--lv-data-1-muted); transform-box: fill-box; transform-origin: bottom; animation: grow 4.8s ease-in-out infinite; animation-delay: var(--delay); }
+    .bar:nth-of-type(even) { fill: var(--lv-data-1); }
+    .caption { margin-top: 12px; text-align: right; font: var(--lv-type-caption); }
+    .steps { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 25px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .step { display: inline-flex; align-items: center; gap: 7px; }
     .dot { width: 6px; height: 6px; border: 1px solid currentColor; border-radius: 50%; }
     .step.current { color: var(--lv-accent); }
-    .step.current .dot { background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
+    .step.current .dot { background: currentColor; box-shadow: 0 0 0 3px var(--lv-bg-accent-muted); }
     .step svg { width: 12px; height: 12px; }
     .paused *, .paused::after, .paused .canvas::after { animation-play-state: paused; }
     @keyframes assemble { 0%, 10% { opacity: .5; transform: translateY(5px); } 25%, 82% { opacity: 1; transform: translateY(0); } 100% { opacity: .5; transform: translateY(5px); } }
@@ -61,9 +62,9 @@ class DashboardGeneration extends LitElement {
     :host([compact]) .stage { background: transparent; justify-content: center; }
     :host([compact]) .content { padding: 12px; }
     :host([compact]) .intro { margin-bottom: 12px; gap: 8px; }
-    :host([compact]) .spark { width: 26px; height: 26px; flex-basis: 26px; border-radius: 8px; }
+    :host([compact]) .spark { width: 26px; height: 26px; flex-basis: 26px; border-radius: var(--lv-radius-default); }
     :host([compact]) .spark svg { width: 14px; height: 14px; }
-    :host([compact]) h2 { font: var(--lv-type-body-compact, 14px/1.4 system-ui); }
+    :host([compact]) h2 { font: var(--lv-type-body-compact); }
     :host([compact]) .intro p { display: none; }
     :host([compact]) .canvas { padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
     :host([compact]) .card.trend { grid-column: 1 / -1; padding: 0; border: 0; background: transparent; }

@@ -27,7 +27,7 @@ export class ChatVisualPanel extends LitElement {
       height: 100%;
       container-type: inline-size;
       border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-large, 10px);
+      border-radius: var(--lv-radius-large);
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);

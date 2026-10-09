@@ -19,7 +19,7 @@ export const chatPagePreviewStyles = css`
     .preview-panel {
       grid-area: visuals; display: grid; grid-template-rows: auto minmax(0, 1fr);
       min-width: 0; min-height: 0; overflow: hidden; margin: 8px 16px 16px 8px;
-      border: var(--lv-border-default); border-radius: var(--lv-radius-large, 10px);
+      border: var(--lv-border-default); border-radius: var(--lv-radius-large);
       background: var(--lv-bg-panel);
     }
     .preview-scroll { overflow: auto; min-height: 0; padding: 16px; overscroll-behavior: contain; }
