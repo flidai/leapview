@@ -4,20 +4,24 @@ export type VisualFocusMount<T extends Element = Element> = {
   sourceParent: Node
   nextSibling: ChildNode | null
   previousSlot?: string | null
+  preview?: VisualFocusPreview
 }
 
-export function mountVisualFocus<T extends Element>(element: T, target: Node, options: { slot?: string } = {}): VisualFocusMount<T> | null {
+export type VisualFocusPreview = { element: HTMLElement; dispose(): void }
+
+export function mountVisualFocus<T extends Element>(element: T, target: Node, options: { slot?: string; preview?: VisualFocusPreview } = {}): VisualFocusMount<T> | null {
   const sourceParent = element.parentNode
   if (!sourceParent) return null
 
   const previousSlot = options.slot ? element.getAttribute('slot') : undefined
   const placeholder = element.ownerDocument.createComment('lv-visual-focus-placeholder')
   const nextSibling = element.nextSibling
+  if (options.preview) sourceParent.insertBefore(options.preview.element, element)
   if (options.slot) element.setAttribute('slot', options.slot)
   sourceParent.insertBefore(placeholder, element)
   target.appendChild(element)
 
-  return { element, placeholder, sourceParent, nextSibling, previousSlot }
+  return { element, placeholder, sourceParent, nextSibling, previousSlot, preview: options.preview }
 }
 
 export function restoreVisualFocus(mount: VisualFocusMount): void {
@@ -29,6 +33,7 @@ export function restoreVisualFocus(mount: VisualFocusMount): void {
       : null
 
   restoreParent.insertBefore(mount.element, restoreBefore)
+  mount.preview?.dispose()
   mount.placeholder.remove()
   if (mount.previousSlot !== undefined) {
     if (mount.previousSlot === null) mount.element.removeAttribute('slot')

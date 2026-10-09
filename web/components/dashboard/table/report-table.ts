@@ -172,6 +172,8 @@ export class ReportTable extends LitElement {
   private lastResetVersion = -1
   private shouldResetScroll = false
   private shouldReconcileViewport = false
+  private isFocusPreview = false
+  private focusPreviewViewport?: { top: number; left: number }
   private requestSeq = 0
   private scrollFrame = 0
   private jumpTimer = 0
@@ -1220,6 +1222,9 @@ export class ReportTable extends LitElement {
     this.contentResizeObserver?.disconnect()
     this.contentResizeObserver = undefined
     this.contentSizeTargets.clear()
+    // A new containing visual needs a fresh sizing event after reconnect.
+    this.publishedNaturalHeight = -1
+    this.publishedHeight = -1
     if (this.contentSizeFrame) cancelAnimationFrame(this.contentSizeFrame)
     this.contentSizeFrame = 0
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
@@ -1231,6 +1236,7 @@ export class ReportTable extends LitElement {
   }
 
   willUpdate(changedProperties: Map<PropertyKey, unknown>): void {
+    if (changedProperties.has('maxHeight')) this.publishedHeight = -1
 	const previousTable = changedProperties.get('table')
 	if (previousTable) {
 	  this.table = preserveCardinality(previousTable as TableSignal, this.table)
@@ -1264,17 +1270,40 @@ export class ReportTable extends LitElement {
     }
   }
 
+  /** Render the live table's cached window without starting a second query stream. */
+  syncFocusPreview(source: ReportTable): void {
+    this.isFocusPreview = true
+    this.windowRetryController.stop()
+    this.expectedBlocks.clear()
+    this.latestAcceptedSeq.clear()
+    this.clearJumpTimer()
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
+    this.table = { ...source.table, blocks: source.blocks }
+    this.blockCache = { ...source.blocks }
+    this.columnVisibility = { ...source.columnVisibility }
+    this.columnSizing = { ...source.columnSizing }
+    this.hierarchyExpanded = new Set(source.hierarchyExpanded)
+    this.hierarchySort = source.hierarchySort ? { ...source.hierarchySort } : undefined
+    this.hierarchyExpansionIdentity = source.hierarchyExpansionIdentity
+    const viewport = source.bodyViewportRef.value
+    this.focusPreviewViewport = { top: viewport?.scrollTop ?? source.viewportTop, left: viewport?.scrollLeft ?? 0 }
+    this.requestUpdate()
+  }
+
   updated(): void {
     this.syncContentSizeTargets()
     this.syncContentHeight()
-    if (this.shouldResetScroll) {
+    if (this.shouldResetScroll || this.focusPreviewViewport) {
       this.shouldResetScroll = false
+      const previewViewport = this.focusPreviewViewport
+      this.focusPreviewViewport = undefined
       queueMicrotask(() => {
         const viewport = this.bodyViewportRef.value
         if (!viewport) return
-        viewport.scrollTop = 0
-        viewport.scrollLeft = 0
-        this.viewportTop = 0
+        viewport.scrollTop = previewViewport?.top ?? 0
+        viewport.scrollLeft = previewViewport?.left ?? 0
+        this.viewportTop = viewport.scrollTop
         this.viewportHeight = viewport.clientHeight
         this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
         this.scheduleEnsureBlocksForScroll()
@@ -2048,7 +2077,7 @@ export class ReportTable extends LitElement {
 
   private ensureBlocksForScroll(): void {
     if (this.hierarchyTree) return
-    if (this.availableRows <= 0) return
+    if (this.isFocusPreview || this.availableRows <= 0) return
     const currentStart = Math.floor(Math.floor(this.viewportTop / this.rowHeight) / this.chunkSize) * this.chunkSize
     const desired = this.desiredStarts(currentStart)
     const desiredSet = new Set(desired)
@@ -2076,7 +2105,7 @@ export class ReportTable extends LitElement {
   }
 
   private scheduleEnsureBlocksForScroll(): void {
-    if (this.windowRetryController.blocked || this.scrollFrame) return
+    if (this.isFocusPreview || this.windowRetryController.blocked || this.scrollFrame) return
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0
       this.ensureBlocksForScroll()
@@ -2126,7 +2155,7 @@ export class ReportTable extends LitElement {
 
   private emitBlock(block: BlockID | 'all', start: number, sort = this.table.sort, resetVersion = this.table.resetVersion): void {
     const tableId = this.resolvedTableId()
-    if (!tableId) return
+    if (this.isFocusPreview || !tableId) return
     this.windowRetryController.unblock()
     const count = this.chunkSize
     const requestSeq = ++this.requestSeq
