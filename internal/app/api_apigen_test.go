@@ -26,7 +26,7 @@ import (
 
 // Combined generated surface including target-policy and development-profile
 // operations. This count is a contract snapshot, not a feature-coverage claim.
-const expectedAPIGenAggregateOperationCount = 218
+const expectedAPIGenAggregateOperationCount = 222
 
 func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	contracts := accessAPIGenOperationContracts()
