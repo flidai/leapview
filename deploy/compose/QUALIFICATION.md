@@ -108,6 +108,39 @@ used in a baseline comparison. An absolute-budget run without a supplied
 baseline leaves `assertions.comparisonTolerance` false; its success is not
 evidence that a regression comparison ran.
 
+Every phase also retains its raw measured durations with the same exact count.
+Null, missing, nonnumeric, nonfinite or negative observations fail; summaries must
+match nearest-rank percentiles rounded to 0.01 ms. Observed zero durations remain
+valid. The concurrency reader count must match the protocol and its measured wave
+must cover the longest query. Reliability counts must be present and nonnegative;
+the operation count must cover all warm, filter, table, query and concurrent
+operations, plus a creation and at least one poll per measured refresh. Additional
+polls are valid; browser error observations are not bounded by operation count.
+Worker schema, workload and sampling protocol are checked before recording the
+controller's authoritative budgets; disk, environment and image are also
+controller-owned inputs.
+
+Resource evidence uses `resources.schemaVersion: 1`. Unversioned aggregate-only
+reports and unknown resource protocols fail; they are not converted into complete
+evidence. The outer report and performance policy retain their existing version.
+Resource evidence must retain all eight warm-process metric snapshots and a
+before/after pair for every restart-cold load. CPU, resident memory, goroutines
+and connection measurements must be present, finite and nonnegative; resident
+memory and goroutines must be positive. Observed zero CPU and connections are
+valid. CPU counters must not decrease within a process; each deliberately
+restarted cold process has its own pair. Summaries must agree with these
+measurements: peak RSS spans cold and warm loads, CPU is the sum of process
+deltas, and steady-state goroutines and peak connections use the warm process.
+The Go controller supplies disk growth independently. Missing or inconsistent
+candidate or supplied baseline resource evidence fails qualification; this
+validation does not establish independent acceptance of a baseline.
+
+A supplied baseline must be a successfully finalized report with passing
+environment, absolute-budget and error-free assertions and no recorded failures.
+A successful absolute-only baseline need not have a passing comparison assertion;
+requiring that would make the first comparison circular. These outcome checks do
+not establish the baseline's independent acceptance or provenance.
+
 The installed-candidate gate assumes a dedicated Docker runtime with at least
 2 logical CPUs and 4 GiB memory. Its bundled Olist workload contains 24
 synthetic orders. The absolute rc.1 ceilings are:
