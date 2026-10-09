@@ -27,12 +27,12 @@ func pgBackRestFixture(t *testing.T) (*PGBackRest, providerrestore.DatabaseReque
 	}
 	points := []recoveryset.ClusterRecoveryPoint{{DatabaseRole: recoveryset.DatabaseControl, ClusterIdentity: "postgres-system-id:" + frontier.SystemID, DatabaseIdentity: "control", RecoveryIdentity: identity}, {DatabaseRole: recoveryset.DatabaseDuckLake, ClusterIdentity: "postgres-system-id:" + frontier.SystemID, DatabaseIdentity: "ducklake", RecoveryIdentity: identity}}
 	request := providerrestore.DatabaseRequest{TargetID: "target", RecoverySetID: "set", IdempotencyKey: "exact-pg-operation", Points: points, Catalog: recoveryset.CatalogCommit{CatalogID: "catalog", CatalogDatabase: "ducklake", CatalogUUID: "catalog-uuid", CatalogVersion: 3, SnapshotID: 4}}
-	config := PGBackRestConfig{TargetID: "target", RecoverySetID: "set", Points: points, Frontier: frontier, PGBackRest: "/nix/store/pinned/bin/pgbackrest", ConfigFile: file, ConfigDigest: digestBytes(contents), Destination: filepath.Join(root, "replacement")}
-	config.Readback = func(_ context.Context, path string, actual PGFrontier, request providerrestore.DatabaseRequest) ([]providerrestore.DatabaseResult, error) {
+	config := PGBackRestConfig{TargetID: "target", RecoverySetID: "set", Points: points, Frontier: frontier, PGBackRest: "/nix/store/pinned/bin/pgbackrest", Bubblewrap: "/nix/store/pinned/bin/bwrap", ConfigFile: file, ConfigDigest: digestBytes(contents), Destination: filepath.Join(root, "replacement")}
+	config.Readback = func(_ context.Context, cluster *PGStagingCluster, actual PGFrontier, request providerrestore.DatabaseRequest) ([]providerrestore.DatabaseResult, error) {
 		if actual != frontier {
 			t.Fatal("readback selected another frontier")
 		}
-		if data, err := os.ReadFile(filepath.Join(path, "PG_VERSION")); err != nil || string(data) != "18" {
+		if data, err := os.ReadFile(filepath.Join(cluster.Directory(), "PG_VERSION")); err != nil || string(data) != "18" {
 			return nil, errors.New("cluster not verified")
 		}
 		results := []providerrestore.DatabaseResult{}
@@ -58,13 +58,16 @@ func TestPGBackRestRequiresExactCommandAndVerifiedReadbackBeforeExposure(t *test
 	calls := 0
 	restorer.execute = func(_ context.Context, program string, args []string, lock *os.File) error {
 		calls++
-		if program != restorer.config.PGBackRest || lock == nil || !strings.Contains(strings.Join(args, " "), "--set=20261009-080000F") || !strings.Contains(strings.Join(args, " "), "--target=0/1700000 --target-action=pause") {
+		if program != restorer.config.Bubblewrap || lock == nil || !strings.Contains(strings.Join(args, " "), "--set=20261009-080000F") || !strings.Contains(strings.Join(args, " "), "--target=0/1700000 --target-action=pause") {
 			t.Fatalf("wrong exact restore command: %v", args)
 		}
 		if _, err := os.Lstat(restorer.config.Destination); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("cluster exposed before readback")
 		}
-		stage := strings.TrimPrefix(args[3], "--pg1-path=")
+		stage := pgStageFromArgs(t, args)
+		if err := os.Mkdir(filepath.Join(stage, "pg_tblspc"), 0700); err != nil {
+			return err
+		}
 		return os.WriteFile(filepath.Join(stage, "PG_VERSION"), []byte("18"), 0600)
 	}
 	results, err := restorer.RestoreCluster(t.Context(), request)
@@ -86,7 +89,7 @@ func TestPGBackRestRejectsWrongFrontierConfigurationAndReadback(t *testing.T) {
 	calls := 0
 	restorer.execute = func(_ context.Context, _ string, args []string, _ *os.File) error {
 		calls++
-		return os.WriteFile(filepath.Join(strings.TrimPrefix(args[3], "--pg1-path="), "PG_VERSION"), []byte("wrong"), 0600)
+		return os.WriteFile(filepath.Join(pgStageFromArgs(t, args), "PG_VERSION"), []byte("wrong"), 0600)
 	}
 	wrong := request
 	wrong.Points = append([]recoveryset.ClusterRecoveryPoint{}, request.Points...)
@@ -116,7 +119,7 @@ func TestPGBackRestRejectsIncompleteReadbackAndDuplicateRoles(t *testing.T) {
 	if _, err := NewPGBackRest(config); err == nil {
 		t.Fatal("duplicate database roles accepted")
 	}
-	restorer.config.Readback = func(context.Context, string, PGFrontier, providerrestore.DatabaseRequest) ([]providerrestore.DatabaseResult, error) {
+	restorer.config.Readback = func(context.Context, *PGStagingCluster, PGFrontier, providerrestore.DatabaseRequest) ([]providerrestore.DatabaseResult, error) {
 		return nil, nil
 	}
 	restorer.execute = func(context.Context, string, []string, *os.File) error { return nil }
@@ -126,4 +129,15 @@ func TestPGBackRestRejectsIncompleteReadbackAndDuplicateRoles(t *testing.T) {
 	if _, err := os.Lstat(restorer.config.Destination); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("incomplete readback exposed")
 	}
+}
+
+func pgStageFromArgs(t *testing.T, args []string) string {
+	t.Helper()
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--pg1-path=") {
+			return strings.TrimPrefix(arg, "--pg1-path=")
+		}
+	}
+	t.Fatal("confined stage argument missing")
+	return ""
 }

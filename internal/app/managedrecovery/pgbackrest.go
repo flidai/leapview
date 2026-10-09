@@ -44,7 +44,7 @@ func (frontier PGFrontier) RecoveryIdentity() (string, error) {
 // PGReadback must start only the fenced staging cluster, verify the exact WAL
 // replay/system identity and real application/catalog projection with TLS
 // runtime roles, then stop it before returning. It grants no traffic admission.
-type PGReadback func(context.Context, string, PGFrontier, providerrestore.DatabaseRequest) ([]providerrestore.DatabaseResult, error)
+type PGReadback func(context.Context, *PGStagingCluster, PGFrontier, providerrestore.DatabaseRequest) ([]providerrestore.DatabaseResult, error)
 
 type PGBackRestConfig struct {
 	TargetID      string
@@ -52,6 +52,7 @@ type PGBackRestConfig struct {
 	Points        []recoveryset.ClusterRecoveryPoint
 	Frontier      PGFrontier
 	PGBackRest    string
+	Bubblewrap    string
 	ConfigFile    string
 	ConfigDigest  string
 	Destination   string
@@ -75,12 +76,15 @@ func NewPGBackRest(config PGBackRestConfig) (*PGBackRest, error) {
 		}
 		seen[point.DatabaseRole] = true
 	}
-	if !filepath.IsAbs(config.PGBackRest) || filepath.Clean(config.PGBackRest) != config.PGBackRest || !strings.HasPrefix(config.PGBackRest, "/nix/store/") || !filepath.IsAbs(config.ConfigFile) || !filepath.IsAbs(config.Destination) || filepath.Clean(config.Destination) != config.Destination || config.Destination == "/" {
+	if !pinnedProgram(config.PGBackRest) || !pinnedProgram(config.Bubblewrap) || !filepath.IsAbs(config.ConfigFile) || !filepath.IsAbs(config.Destination) || filepath.Clean(config.Destination) != config.Destination || config.Destination == "/" {
 		return nil, errors.New("pinned pgBackRest and private canonical restore paths required")
 	}
 	value, err := securefs.ReadPrivateFile(config.ConfigFile)
 	if err != nil || len(value) == 0 || digestBytes(value) != config.ConfigDigest {
 		return nil, errors.New("retained private pgBackRest configuration differs")
+	}
+	if err := validatePGRestoreConfig(value); err != nil {
+		return nil, err
 	}
 	config.Points = slices.Clone(config.Points)
 	return &PGBackRest{config: config, execute: runPinnedRestore}, nil
@@ -142,8 +146,10 @@ func (restorer *PGBackRest) RestoreCluster(ctx context.Context, request provider
 		return nil, err
 	}
 	defer os.RemoveAll(stage)
-	args := []string{"--config=" + restorer.config.ConfigFile, "--stanza=" + restorer.config.Frontier.Stanza, "--set=" + restorer.config.Frontier.BackupSet, "--pg1-path=" + stage, "--type=lsn", "--target=" + restorer.config.Frontier.TargetLSN, "--target-action=pause", "--log-level-console=off", "--log-level-file=off", "restore"}
-	if err := restorer.execute(ctx, restorer.config.PGBackRest, args, lock.InheritedFile()); err != nil {
+	args := []string{"--config=" + restorer.config.ConfigFile, "--stanza=" + restorer.config.Frontier.Stanza, "--set=" + restorer.config.Frontier.BackupSet, "--pg1-path=" + stage, "--type=lsn", "--target=" + restorer.config.Frontier.TargetLSN, "--target-action=pause", "--tablespace-map-all=" + filepath.Join(stage, ".managed-tablespaces"), "--no-link-all", "--log-level-console=off", "--log-level-file=off", "restore"}
+	cluster := &PGStagingCluster{directory: stage, bubblewrap: restorer.config.Bubblewrap}
+	args = append(cluster.arguments(), append([]string{restorer.config.PGBackRest}, args...)...)
+	if err := restorer.execute(ctx, restorer.config.Bubblewrap, args, lock.InheritedFile()); err != nil {
 		return nil, err
 	}
 	results, err := restorer.readback(ctx, stage, request, started)
@@ -167,8 +173,16 @@ func (restorer *PGBackRest) RestoreCluster(ctx context.Context, request provider
 }
 
 func (restorer *PGBackRest) readback(ctx context.Context, path string, request providerrestore.DatabaseRequest, started time.Time) ([]providerrestore.DatabaseResult, error) {
-	results, err := restorer.config.Readback(ctx, path, restorer.config.Frontier, request)
+	if err := validateDefaultPGLayout(path); err != nil {
+		return nil, err
+	}
+	results, err := restorer.config.Readback(ctx, &PGStagingCluster{directory: path, bubblewrap: restorer.config.Bubblewrap}, restorer.config.Frontier, request)
 	if err != nil {
+		return nil, err
+	}
+	// WAL can introduce a tablespace absent from the retained base backup.
+	// Recheck after the confined server is stopped, before exposing PGDATA.
+	if err := validateDefaultPGLayout(path); err != nil {
 		return nil, err
 	}
 	if len(results) != len(request.Points) {
