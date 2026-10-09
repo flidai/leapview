@@ -121,7 +121,10 @@ func (a *sourceCredentialActivation) prepareNative(ctx context.Context, actor st
 	if built.TargetID != target.TargetID || built.PlanID != plan.ID.String() || built.CandidateID != candidate.CandidateID || built.SnapshotSealID != build.SealID.String() || built.ServingArtifactDigest != build.ServingArtifactDigest || candidate.TargetID != target.TargetID || candidate.Status != "qualified" {
 		return fail(credentialmodule.ErrValidationConflict)
 	}
-	publicationID := uuid.NewSHA1(uuid.MustParse(row.Request.OperationID), []byte("credential-publication")).String()
+	publicationID, err := sourceCredentialPublicationID(row.Request.OperationID, build.ServingStateID)
+	if err != nil {
+		return fail(err)
+	}
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(row.Request.OperationID+":"+plan.ID.String()+":"+build.CandidateID.String()+":"+build.ServingStateID.String())))
 	err = a.transaction(ctx, func(tx pgx.Tx) error {
 		auth := a.auth(row, actor)
