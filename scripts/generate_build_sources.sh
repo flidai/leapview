@@ -3,7 +3,7 @@ set -eu
 
 # Match setup-ci's HTTP/1.1 workaround for checksum-service HTTP/2 stream
 # failures; transport only, with sqlc checksums and TLS integrity unchanged.
-./scripts/time_build_phase.sh sqlc env GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+./scripts/time_build_phase.sh sqlc env GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
 ./scripts/time_build_phase.sh config go run ./internal/app/tools/configgen
 ./scripts/time_build_phase.sh layout-contract go run ./internal/app/tools/layoutcontractgen
 

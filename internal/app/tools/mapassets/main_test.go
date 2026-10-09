@@ -15,7 +15,7 @@ import (
 )
 
 func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
-	t.Setenv("GOTOOLCHAIN", "go1.27.1")
+	t.Setenv("GOTOOLCHAIN", "go1.27.2")
 	t.Setenv("GODEBUG", "asynctimerchan=1")
 	t.Setenv("LEAPVIEW_MAP_TEST_ENV", "preserved")
 	command := pmtilesCommand(context.Background(), "extract", "input", "output", "--maxzoom=6")
