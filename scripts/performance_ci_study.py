@@ -16,6 +16,18 @@ PACKAGE = 'github.com/flidai/leapview/internal/app'
 SKIP = '^TestMinIOParquetSourceRefreshContract$'
 
 
+def schedule(directory):
+    """Three prospective paired screens; cache identity never crosses pairs."""
+    result = []
+    for pair in range(1, 4):
+        cold_order = ('maintained', 'compile-once') if pair % 2 else ('compile-once', 'maintained')
+        for condition, modes in (('cold', cold_order), ('warm', tuple(reversed(cold_order)))):
+            for mode in modes:
+                result.append({'pair': pair, 'condition': condition, 'mode': mode,
+                    'cache': str(directory / f'pair-{pair}-{mode}-cache')})
+    return result
+
+
 def environment(cache):
     return {**os.environ, 'GOFLAGS': '-tags=duckdb_arrow -p=1 -mod=readonly',
             'GOENV': 'off', 'GOWORK': 'off', 'GOTOOLCHAIN': 'local', 'CGO_ENABLED': '1',
@@ -126,33 +138,33 @@ def run(directory):
     source, original_inputs = identity(), inputs()
     directory.mkdir(parents=True, exist_ok=False)
     write(directory / 'build-inputs.json', original_inputs)
+    planned = schedule(directory)
     write(directory / 'protocol.json', {'source': source, 'kind': 'compile-once-screening',
-        'pairsPerCondition': 1, 'conditions': ['cold', 'warm'],
-        'order': [['cold', 'maintained'], ['cold', 'compile-once'], ['warm', 'compile-once'], ['warm', 'maintained']],
+        'pairsPerCondition': 3, 'conditions': ['cold', 'warm'], 'order': planned,
         'primary': 'whole-arm wallSeconds', 'guardrails': ['child CPU', 'max RSS', 'exact executed test/subtest/skip-reason parity'],
-        'cache': 'separate initially empty owned Go build caches; each warm arm reuses only its own cache; dependency module cache stays warm',
+        'cache': 'separate initially empty owned Go build cache per pair and arm; each warm arm reuses only its own corresponding cold cache; dependency module cache stays warm',
         'selection': 'same four stable application shard patterns; same dedicated-lane MinIO exclusion and PostgreSQL skip environment',
         'environment': {'GOFLAGS': '-tags=duckdb_arrow -p=1 -mod=readonly', 'GOMAXPROCS': '2', 'GOMEMLIMIT': '2GiB'},
         'stop': 'first failed step,900s step timeout,4GiB observed RSS,OOM,cleanup failure,source/input drift,coverage or skip difference',
-        'decision': 'one screening pair per condition cannot support adoption/statistical gain; keep maintained implementation',
+        'decision': 'three screening pairs per condition; no adoption without independent review and prospective >=10-pair confirmation for a promising change; keep maintained implementation',
         'limitation': 'serial application-only experiment; does not replace full CI or dedicated external/postgres/generation/frontend lanes',
         'buildInputsSHA256': digest(directory / 'build-inputs.json'), 'resources': resources()})
-    caches = {}
-    for mode in ('maintained', 'compile-once'):
-        caches[mode] = directory / (mode + '-cache')
-        caches[mode].mkdir()
+    for cache in {step['cache'] for step in planned}:
+        Path(cache).mkdir()
     results, failure = [], None
     try:
-        for condition, mode in [('cold', 'maintained'), ('cold', 'compile-once'), ('warm', 'compile-once'), ('warm', 'maintained')]:
+        for step in planned:
+            pair, condition, mode = step['pair'], step['condition'], step['mode']
             if identity() != source or inputs() != original_inputs:
                 raise ValueError('source or actual build inputs changed')
-            output = directory / (condition + '-' + mode)
+            output = directory / f'pair-{pair}-{condition}-{mode}'
             code = subprocess.run([sys.executable, str(Path(__file__).resolve()), '_arm', str(root),
-                str(output), str(caches[mode]), mode]).returncode
+                str(output), step['cache'], mode]).returncode
             receipt = json.loads((output / 'receipt.json').read_text())
-            results.append({'condition': condition, 'mode': mode, 'receiptSHA256': digest(output / 'receipt.json'), 'receipt': receipt})
+            results.append({'pair': pair, 'condition': condition, 'mode': mode, 'cache': step['cache'],
+                'receiptSHA256': digest(output / 'receipt.json'), 'receipt': receipt})
             if code or receipt['failure'] or receipt['oomKillObserved']:
-                raise ValueError('experiment stopped at ' + condition + '-' + mode)
+                raise ValueError(f'experiment stopped at pair-{pair}-{condition}-{mode}')
             if len(results) > 1 and (receipt['patterns'] != results[0]['receipt']['patterns'] or
                     receipt['coverage'] != results[0]['receipt']['coverage']):
                 raise ValueError('exact discovery/execution/skip parity differs between arms')
@@ -162,7 +174,7 @@ def run(directory):
         failure = str(error)
     write(directory / 'decision.json', {'source': source, 'result': 'stopped' if failure else 'screening-complete',
         'failure': failure, 'arms': results, 'adoption': 'none; retain maintained runner',
-        'limitation': 'one pair per cache condition is descriptive/inconclusive, not statistical performance acceptance'})
+        'limitation': 'three screening pairs per cache condition alone do not authorize adoption; a promising change requires prospective confirmation, no selective retry or extension'})
     return 1 if failure else 0
 
 

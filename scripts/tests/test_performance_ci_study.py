@@ -3,10 +3,26 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from performance_ci_study import pattern, validate_coverage
+from performance_ci_study import pattern, validate_coverage, schedule
 
 
 class CompileOnceCoverageTests(unittest.TestCase):
+    def test_three_paired_screens_alternate_and_own_matching_cold_warm_caches(self):
+        rows = schedule(Path('/private/study'))
+        self.assertEqual(len(rows), 12)
+        self.assertEqual([row['mode'] for row in rows if row['condition'] == 'cold'],
+                         ['maintained', 'compile-once', 'compile-once', 'maintained', 'maintained', 'compile-once'])
+        self.assertEqual([row['mode'] for row in rows if row['condition'] == 'warm'],
+                         ['compile-once', 'maintained', 'maintained', 'compile-once', 'compile-once', 'maintained'])
+        by_cache = {}
+        for row in rows:
+            by_cache.setdefault(row['cache'], []).append(row)
+        self.assertEqual(len(by_cache), 6)
+        for cache, arms in by_cache.items():
+            self.assertEqual([row['condition'] for row in arms], ['cold', 'warm'])
+            self.assertEqual(len({(row['pair'], row['mode']) for row in arms}), 1)
+            self.assertTrue(cache.startswith('/private/study/pair-'))
+
     def fixture(self):
         patterns = ['^(?:TestA|TestMinIOParquetSourceRefreshContract)$', '^(?:TestB)$',
                     '^(?:TestC)$', '^(?:TestD)$']
