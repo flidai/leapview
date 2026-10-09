@@ -65,7 +65,10 @@ sql:
 
   - engine: "postgresql"
     queries: "internal/credential/postgres/queries"
-    schema: "internal/credential/postgres/schema.sql"
+    schema:
+      - "internal/credential/postgres/schema.sql"
+      - "internal/credential/postgres/request_schema.sql"
+      - "internal/credential/postgres/rotation_schema.sql"
     gen:
       go:
         package: "db"

@@ -14,8 +14,33 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticscontract "github.com/flidai/leapview/internal/analytics/runtime"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
+	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func TestRuntimeBuilderPreservesCompiledConnectionNames(t *testing.T) {
+	definition, err := dashboardruntime.NewProjectDefinition("project:test", "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got analyticscontract.ProjectRequest
+	builder := NewRuntimeBuilder(RuntimeFactoryConfig{Projects: analyticscontract.ProjectFactoryFunc(func(_ context.Context, request analyticscontract.ProjectRequest) (analyticscontract.Project, error) {
+		got = request
+		return nil, nil
+	})})
+	service, err := builder(t.Context(), dashboardruntimefactory.Input{
+		Identity:   projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "prod", GenerationID: "state:test"},
+		Definition: definition, TargetID: "target:test", SnapshotSealID: "seal:test",
+		ConnectionIDs: map[string]string{"warehouse": "opaque:resource"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	if got.ConnectionIDs["warehouse"] != "opaque:resource" {
+		t.Fatalf("runtime builder lost connection mapping: %#v", got.ConnectionIDs)
+	}
+}
 
 func TestRequiredProjectExtensionsIncludesSpatialForTiledMaps(t *testing.T) {
 	if got := requiredProjectExtensions((*dashboardruntime.ProjectDefinition)(nil)); got != nil {
@@ -42,6 +67,7 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	factory := NewFactory(Options{
+		ConnectionIDs: map[string]string{"warehouse": "opaque:resource"},
 		Projects: analyticscontract.ProjectFactoryFunc(func(_ context.Context, got analyticscontract.ProjectRequest) (analyticscontract.Project, error) {
 			request = got
 			return nil, nil
@@ -51,6 +77,9 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 	})
 	if _, err := factory.OpenDashboardProjectDataRuntimes(context.Background(), dashboardruntime.ProjectDataRuntimeConfig{Definition: definition}); err != nil {
 		t.Fatal(err)
+	}
+	if request.ConnectionIDs["warehouse"] != "opaque:resource" {
+		t.Fatalf("project request lost compiled connection IDs: %#v", request.ConnectionIDs)
 	}
 	if !request.SkipInitialRefresh {
 		t.Fatal("project request did not preserve SkipInitialRefresh")

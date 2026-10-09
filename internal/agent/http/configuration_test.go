@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,6 +35,61 @@ func (s *adminConfigurationStore) SaveConfiguration(_ context.Context, expected 
 	s.current = r
 	return r, nil
 }
+
+type adminConfigurationCredentials struct {
+	store        agent.ConfigurationStore
+	probes       int
+	aborts       int
+	actor, token string
+	expected     int64
+	input        agent.ConfigurationInput
+	versions     map[string]string
+	install      func(context.Context, int64) error
+}
+
+func (c *adminConfigurationCredentials) AbortConfiguration(_ context.Context, actor string) error {
+	if actor != "admin" {
+		return errors.New("wrong actor")
+	}
+	c.aborts++
+	return nil
+}
+
+func (c *adminConfigurationCredentials) BindRuntime(install func(context.Context, int64) error, _ func(context.Context) error) error {
+	c.install = install
+	return nil
+}
+func (c *adminConfigurationCredentials) Test(_ context.Context, actor string, expected int64, input agent.ConfigurationInput) (string, error) {
+	c.probes++
+	c.actor, c.expected, c.input = actor, expected, input
+	c.token = fmt.Sprintf("validation:%d", c.probes)
+	return c.token, nil
+}
+func (c *adminConfigurationCredentials) Activate(ctx context.Context, actor string, expected int64, input agent.ConfigurationInput, token string) (agent.ConfigurationRevision, error) {
+	if token == "" || token != c.token || actor != c.actor || expected != c.expected || input != c.input {
+		return agent.ConfigurationRevision{}, errors.New("validation receipt mismatch")
+	}
+	version := fmt.Sprintf("immutable:%d", expected+1)
+	saved, err := c.store.SaveConfiguration(ctx, expected, agent.ConfigurationRevision{Enabled: input.Enabled, ActorID: actor, CredentialVersionID: version, Config: agent.Config{Model: input.Model, BaseURL: input.BaseURL, APIMode: input.APIMode, ReasoningEffort: input.ReasoningEffort}})
+	if err != nil {
+		return agent.ConfigurationRevision{}, err
+	}
+	if c.versions == nil {
+		c.versions = map[string]string{}
+	}
+	c.versions[version] = input.APIKey
+	return saved, c.install(ctx, saved.Revision)
+}
+func (c *adminConfigurationCredentials) UseConfiguration(_ context.Context, r agent.ConfigurationRevision, use func(agent.Config) error) error {
+	key, ok := c.versions[r.CredentialVersionID]
+	if !ok {
+		return errors.New("credential version missing")
+	}
+	config := r.Config
+	config.APIKey = key
+	return use(config)
+}
+
 func TestAdminProviderConfigurationAuthorizationAndSecretRedaction(t *testing.T) {
 	service := agent.NewService(nil, agent.Config{})
 	service.ConfigureDefaultModel(func(agent.Config) agentcore.Model {
@@ -41,8 +98,8 @@ func TestAdminProviderConfigurationAuthorizationAndSecretRedaction(t *testing.T)
 		})
 	})
 	store := &adminConfigurationStore{}
-	probes := 0
-	manager, err := agent.NewConfigurationManager(store, service, strings.Repeat("12", 32), func(context.Context, agent.Config) error { probes++; return nil })
+	credentials := &adminConfigurationCredentials{store: store}
+	manager, err := agent.NewConfigurationManager(store, service, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +130,8 @@ func TestAdminProviderConfigurationAuthorizationAndSecretRedaction(t *testing.T)
 		}
 		return rec
 	}
-	if rec := request("test", ""); rec.Code != http.StatusForbidden || probes != 0 {
-		t.Fatalf("non-admin reached provider: status=%d probes=%d", rec.Code, probes)
+	if rec := request("test", ""); rec.Code != http.StatusForbidden || credentials.probes != 0 {
+		t.Fatalf("non-admin reached provider: status=%d probes=%d", rec.Code, credentials.probes)
 	}
 	// The UI command independently enforces the same permission.
 	uiRequest := httptest.NewRequest(http.MethodPost, "/admin/agent/config", strings.NewReader(`{}`))
@@ -124,7 +181,21 @@ func TestAdminProviderConfigurationAuthorizationAndSecretRedaction(t *testing.T)
 	if restoredSave.Code != http.StatusOK || store.current.Revision != 2 {
 		t.Fatalf("restore-only save: %d %s", restoredSave.Code, restoredSave.Body.String())
 	}
+	if store.current.CredentialVersionID != "immutable:2" || store.current.Config.APIKey != "" || len(store.current.Credential) != 0 {
+		t.Fatal("route did not persist an opaque immutable credential reference")
+	}
 	if !service.Enabled() || store.current.ActorID != "admin" {
 		t.Fatal("admin save did not persist/activate")
+	}
+	provider, restoreRevision = nil, 0
+	if canceled := request("abort", ""); canceled.Code != http.StatusOK || credentials.aborts != 1 || store.current.Revision != 2 {
+		t.Fatalf("cancel without provider changed configuration: %d %s", canceled.Code, canceled.Body.String())
+	}
+	if missing := request("test", ""); missing.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing provider: %d %s", missing.Code, missing.Body.String())
+	}
+	isAdmin = false
+	if denied := request("abort", ""); denied.Code != http.StatusForbidden || credentials.aborts != 1 {
+		t.Fatalf("unauthorized cancel reached lifecycle: %d", denied.Code)
 	}
 }

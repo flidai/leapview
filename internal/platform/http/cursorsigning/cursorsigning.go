@@ -61,7 +61,9 @@ func init() {
 }
 
 // Configure installs a key ring. The current key signs new cursors; every key
-// in the ring can verify existing cursors during rotation.
+// in the ring can verify existing cursors during rotation, except publicly
+// exposed key material. An exposed current key fails configuration; exposed
+// verification keys are excluded immediately, without a rotation grace period.
 func Configure(current string, keys map[string][]byte) error {
 	current = strings.TrimSpace(current)
 	if current == "" || strings.Contains(current, ".") {
@@ -72,6 +74,12 @@ func Configure(current string, keys map[string][]byte) error {
 		id = strings.TrimSpace(id)
 		if id == "" || strings.Contains(id, ".") || len(key) < 32 {
 			return fmt.Errorf("cursor signing key %q is invalid", id)
+		}
+		if isRevokedKey(key) {
+			if id == current {
+				return fmt.Errorf("current cursor signing key %q is revoked; replace the exposed key", id)
+			}
+			continue
 		}
 		copyKeys[id] = append([]byte(nil), key...)
 	}

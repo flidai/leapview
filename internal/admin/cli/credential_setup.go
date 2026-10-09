@@ -44,6 +44,6 @@ func credentialSetupCommand(ctx context.Context, operations Operations) *cobra.C
 		},
 	}
 	command.Flags().StringVar(&request.OwnerID, "owner", "", "explicit customer owner ID; immutable once declared")
-	parent.AddCommand(command)
+	parent.AddCommand(command, credentialRotationCommand(ctx, operations))
 	return parent
 }

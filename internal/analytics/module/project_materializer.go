@@ -41,6 +41,8 @@ func (e *duckDBProjectMaterializer) MaterializeWithObservationWriter(ctx context
 	run := e.beginMaterializationRun()
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
+		ProviderAdmission:  e.module.providerAdmission,
+		ExtensionAdmission: e.module.extensionAdmission,
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
@@ -97,6 +99,8 @@ func (e *duckDBProjectMaterializer) MaterializeWithObservations(ctx context.Cont
 	run := e.beginMaterializationRun()
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
+		ProviderAdmission:  e.module.providerAdmission,
+		ExtensionAdmission: e.module.extensionAdmission,
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
@@ -225,15 +229,15 @@ func (e *duckDBProjectMaterializer) connectionResolver(request analyticsmaterial
 		if !ok || resolver == nil {
 			return unavailableConnectionResolver{}
 		}
-		return resolver
+		return connectionNameResolver(resolver, request.ConnectionIDs)
 	}
 	if request.ConnectionEvidenceServingStateID == "" {
 		return nil
 	}
-	return &activeRuntimeConnectionResolver{
+	return connectionNameResolver(&activeRuntimeConnectionResolver{
 		module: e.module, servingStateID: string(request.ConnectionEvidenceServingStateID),
 		projectID: request.Identity.ProjectID, environment: string(servingstate.NormalizeEnvironment(request.Environment)),
-	}
+	}, request.ConnectionIDs)
 }
 
 // unavailableConnectionResolver preserves the resolver contract while

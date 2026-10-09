@@ -238,9 +238,12 @@ never print rendered production configuration/secrets into public CI logs.
 The template describes a prebootstrapped application. It supplies PostgreSQL
 runtime URLs plus distinct, bounded control/DuckLake maintenance URLs for retention.
 Migrator, upgrade-coordinator, schema-owner, cloud and backup credentials belong
-only in their separate operations. Preserve the agent credential encryption key
-independently of database backups; losing it makes stored integration credentials
-unreadable. Root/Docker deployment access remains highly privileged. The app
+only in their separate operations. Preserve the shared customer credential keyring through an independent encrypted
+recovery copy, including keys required by retained database backups. Missing keys
+leave encrypted credentials unreadable. Configure its private read-only runtime
+file explicitly; the old agent-only key does not enable customer credential
+storage. Follow the [credential lifecycle runbook](../credentials.md) before an
+incompatible format transition. Root/Docker deployment access remains highly privileged. The app
 volume uses the current release image's UID/GID 999.
 
 Kamal checks the image's `service=leapview` label before running it; the release

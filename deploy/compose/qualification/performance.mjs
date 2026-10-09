@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import process from 'node:process'
 import { dashboardRevisionSettled } from './performance-status.mjs'
+import { coldResourceDelta, summarizeResources } from './performance-resources.mjs'
 
 const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
 const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
@@ -455,34 +456,6 @@ function metric(values, name) {
   const samples = values[name] || []
   if (samples.length === 0) throw new Error(`metrics omitted ${name}`)
   return Math.max(...samples)
-}
-
-function summarizeResources(samples, coldResources) {
-  if (samples.length === 0) throw new Error('performance workload captured no resource samples')
-  const first = samples[0]
-  const last = samples.at(-1)
-  const coldCPU = coldResources.reduce((sum, sample) => sum + sample.cpuSeconds, 0)
-  return {
-    peakResidentMemoryBytes: Math.max(
-      ...samples.map((sample) => sample.residentMemoryBytes),
-      ...coldResources.map((sample) => sample.peakResidentMemoryBytes),
-    ),
-    cpuSeconds: round(coldCPU + Math.max(0, last.cpuSeconds - first.cpuSeconds)),
-    temporaryDiskGrowthBytes: 0,
-    goroutinesBefore: first.goroutines,
-    goroutinesAfter: last.goroutines,
-    peakOpenConnections: Math.max(...samples.map((sample) => sample.openConnections)),
-    metricSamples: samples.length,
-  }
-}
-
-function coldResourceDelta(samples) {
-  const before = samples[0]
-  const after = samples.at(-1)
-  return {
-    cpuSeconds: round(Math.max(0, after.cpuSeconds - before.cpuSeconds)),
-    peakResidentMemoryBytes: Math.max(...samples.map((sample) => sample.residentMemoryBytes)),
-  }
 }
 
 function emptyResourceDelta() {

@@ -1369,6 +1369,38 @@ model ConnectionAdministrationCommandSignal {
 model ConnectionAdministrationSignal {
   `command`: ConnectionAdministrationCommandSignal;
   `status`: ConnectionAdministrationStatusSignal;
+  `credentials`?: ConnectionCredentialSignal;
+}
+
+model ConnectionCredentialCommandSignal {
+  `action`: string;
+  `assetId`: string;
+  `logicalConnection`: string;
+  `versionId`: string;
+  `receiptId`: string;
+  `expectedRevision`: int64;
+  `operationId`: string;
+  `username`: string;
+  `password`: string;
+  `beforeVersionId`: string;
+}
+
+model ConnectionCredentialDraftSignal {
+  `versionId`: string;
+  `createdAt`: string;
+}
+
+model ConnectionCredentialSignal {
+  `command`: ConnectionCredentialCommandSignal;
+  `drafts`: ConnectionCredentialDraftSignal[];
+  `nextBeforeVersionId`: string;
+  `receiptId`: string;
+  `receiptExpiresAt`: string;
+  `bindingRevision`: int64;
+  `operationId`: string;
+  `phase`: string;
+  `runtimeReady`: boolean;
+  `status`: ConnectionAdministrationStatusSignal;
 }
 
 model ConnectionAdministrationStatusSignal {
@@ -1385,6 +1417,7 @@ model ConnectionLifecycleActionSignal {
 }
 
 model ConnectionLifecycleSignal {
+  `credentialsAvailable`?: boolean;
   `actions`: ConnectionLifecycleActionSignal[];
   `assetId`: string;
   `authenticationMode`: string;

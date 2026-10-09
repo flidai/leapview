@@ -319,7 +319,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("installed-candidate workflow missing %q", required)
 		}
 	}
-	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "performance-status.mjs", "recovery-report.json"} {
+	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "performance-status.mjs", "performance-resources.mjs", "recovery-report.json"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
 		}
@@ -440,6 +440,18 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		if !strings.Contains(runbook, required) {
 			t.Errorf("qualification runbook missing %q", required)
 		}
+	}
+}
+
+func TestQualificationResourceEvidenceHelperShipsAndRunsInCI(t *testing.T) {
+	root := filepath.Join("..", "..")
+	worker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
+	controller := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_installed.go"))
+	if !strings.Contains(worker, "from './performance-resources.mjs'") || !strings.Contains(controller, `"performance-resources.mjs"`) {
+		t.Fatal("the worker's resource-evidence helper must be copied into the qualification container")
+	}
+	if !strings.Contains(read(t, filepath.Join(root, "Taskfile.yml")), "node --test deploy/compose/qualification/performance-resources.test.mjs") {
+		t.Fatal("resource-evidence helper tests must run in maintained CI")
 	}
 }
 

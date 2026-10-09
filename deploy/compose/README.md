@@ -34,12 +34,15 @@ Each PostgreSQL URL must use `sslmode=verify-full` with a trusted provider CA
 `verify-ca` are intentionally rejected because they do not authenticate both
 the server certificate and hostname.
 
-LeapView platform admins configure the chatbot in Agent Settings. Compose
-initialization generates `LEAPVIEW_AGENT_CREDENTIAL_KEY` in private `leapview.env`
-when absent; preserve and back up this encryption key separately from PostgreSQL.
-Existing installations must provision this key and run `./leapviewctl start` once
-before admin-managed settings become available. Subsequent model changes require
-no restart. Do not replace the encryption key after credentials have been saved.
+LeapView platform admins configure the chatbot in Agent Settings after the
+operator configures the shared customer credential keyring and declares its
+owner. Mount the private keyring read-only into the application, set
+`LEAPVIEW_CREDENTIAL_KEYRING_FILE` to that container path, and run
+`admin credentials setup --owner` with the application stopped and the same
+instance home. Keep an independent encrypted recovery copy. See the
+[credential lifecycle runbook](../credentials.md) for the format-transition and
+recovery boundary. An older initializer's `LEAPVIEW_AGENT_CREDENTIAL_KEY` value is
+unused; it does not enable these settings or decrypt legacy revisions.
 
 For legacy installations, `LEAPVIEW_AGENT_API_KEY`, `LEAPVIEW_AGENT_BASE_URL`,
 `LEAPVIEW_AGENT_MODEL`, and optional `LEAPVIEW_AGENT_REASONING_EFFORT` still supply
