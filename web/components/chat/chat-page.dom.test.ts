@@ -997,8 +997,10 @@ test('Preview creates an empty draft instead of implicitly adding every chat vis
       const {mergePatch} = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
       mergePatch({agent:{transcript:[{kind:'tool',status:'complete',artifact:{id:'new-chart',type:'bar'},argumentsJson:JSON.stringify({semanticModelId:'semantic-model:sales',visual:{type:'bar'}})}]}})
       await e.updateComplete
-      await e.saveDashboard(true)
     })
+    expect(await page.getByRole('button', {name: 'Preview dashboard', exact: true}).count()).toBe(1)
+    expect(await page.getByRole('button', {name: 'Open in Builder', exact: true}).count()).toBe(0)
+    await page.getByRole('button', {name: 'Preview dashboard', exact: true}).click()
     await page.waitForTimeout(200)
     const form = new URLSearchParams(submitted)
     expect(form.get('semanticModel')).toBe('semantic-model:sales')
@@ -1114,7 +1116,9 @@ test('side agent exposes dashboard-authored visuals in the individual side view'
   expect(await page.getByRole('combobox',{name:'Dashboard page',exact:true}).inputValue()).toBe('pies')
   expect(await page.getByTitle('Save visual',{exact:true}).count()).toBe(0)
   expect(await page.getByTitle('Unsave visual',{exact:true}).count()).toBe(0)
-  await page.getByRole('button',{name:'Open in Builder',exact:true}).click()
+  expect(await page.getByRole('button',{name:'Open in Builder',exact:true}).count()).toBe(0)
+  expect(await page.getByRole('button',{name:'Preview dashboard',exact:true}).count()).toBe(1)
+  await page.getByRole('button',{name:'Preview dashboard',exact:true}).click()
   expect(await chat.evaluate((e: any)=>({builderOpen:e.builderOpen,page:e.dashboardPageId}))).toEqual({builderOpen:true,page:'pies'})
  } finally {await page.close()}
 })

@@ -143,7 +143,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.saveTimer = window.setTimeout(() => {
       if (!this.savingDashboard) return
       this.savingDashboard = false
-      this.dashboardSaveError = 'The dashboard is taking longer to open. Use its Open in Builder link to retry.'
+      this.dashboardSaveError = 'The dashboard is taking longer to open. Reload the chat to retry.'
     }, 45000)
   }
 
@@ -841,7 +841,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         </div>
         <div class="titlebar-actions">
           ${!this.dashboardPreview && this.previewArtifacts.length ? html`<button class="preview-action open-preview" type="button" @click=${() => this.openDashboardPreview()}>${lucideIcon(LayoutDashboard)} Visuals (${this.previewArtifacts.length})</button>` : null}
-          ${this.savedBuilderHref ? html`<button class="preview-action" type="button" @click=${() => this.enterBuilder()}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
+          ${this.savedBuilderHref || this.previewArtifacts.length ? html`<button class="preview-action" type="button" ?disabled=${this.savingDashboard || this.builderUpdating} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
           ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" @click=${() => this.openDashboardPreview()}>${lucideIcon(Minimize2)}</button>` : null}
         </div>
       </div>
@@ -872,7 +872,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           <div class="preview-actions">
             ${canSave ? html`<button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>` : null}
             <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
-            <button class="preview-action preview-builder-action" type="button" aria-label="Open in Builder" title="Open in Builder" ?disabled=${this.savingDashboard || !artifacts.length} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Open in Builder</button>
             <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
           </div>
         </div>
@@ -944,6 +943,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           .transcript=${this.displayTranscript(agent.transcript ?? [])}
           .pageArtifacts=${this.pageVisualLinks}
           .pageTitle=${this.dashboardPageTitle}
+          .dashboardId=${this.projectedDashboardId}
           .visuals=${this.visuals ?? {}}
           .status=${status}
           .dashboardPreviewAvailable=${this.dashboardPreview || Boolean(this.savedBuilderHref)}
