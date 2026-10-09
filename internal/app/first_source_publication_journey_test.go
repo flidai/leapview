@@ -32,7 +32,7 @@ func TestFirstSourceProductionPublicationInterruptedCompletion(t *testing.T) {
 	runFirstSourceProductionPublicationJourney(t, true)
 }
 
-func runFirstSourceProductionPublicationJourney(t *testing.T, interrupt bool) {
+func runFirstSourceProductionPublicationJourney(t *testing.T, interrupt bool) (*sourceCredentialHTTPJourney, string) {
 	f := newSourceCredentialHTTPJourneyProfile(t, true)
 	token := f.bootstrapProject(t)
 	identity, err := f.graph.Access.CredentialForAPIToken(t.Context(), token)
@@ -140,4 +140,5 @@ func runFirstSourceProductionPublicationJourney(t *testing.T, interrupt bool) {
 	_ = f.querySource(t, token, "30")
 	f.restartWithoutEnvironment(t, true)
 	_ = f.querySource(t, token, "30")
+	return f, token
 }

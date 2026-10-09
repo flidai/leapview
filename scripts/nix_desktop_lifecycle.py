@@ -71,7 +71,11 @@ class Runtime:
             raise ValueError('retained Desktop archive bytes changed')
         desktop.validate_package_paths(archive)
         desktop.reject_maintainer_scripts(archive, Path(self.state['work']))
-        desktop.run_command(['sudo', 'apt-get', 'install', '--no-download', '--yes', '--allow-downgrades', str(archive)])
+        # APT's download-only step caches dependencies, but not this local deb.
+        # Unpack the verified archive directly, then configure it using only
+        # the cached dependencies while the network namespace is isolated.
+        desktop.run_command(['sudo', 'dpkg', '--unpack', str(archive)])
+        desktop.run_command(['sudo', 'apt-get', 'install', '--no-download', '--yes', '--fix-broken'])
         version = desktop.command_output(['dpkg-query', '-W', '-f=${Version}', desktop.PACKAGE_NAME])
         if version != value['version']:
             raise ValueError('installed package version differs from selected exact archive')

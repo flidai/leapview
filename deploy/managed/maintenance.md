@@ -6,6 +6,10 @@ enrolled immutable kamal-proxy v0.9.2 image. It does not migrate a database or
 restore customer files. A compatible predecessor restarts against the current
 state, including writes acknowledged by the candidate.
 
+Database major changes have a separate [restored-data rehearsal and rollback
+boundary](postgres-major-maintenance.md); its component result does not authorize
+a product profile or replace the coordinated recovery gate.
+
 This implementation is a qualification candidate. The full managed-host journey,
 public TLS/SSE/upload behavior, provider failures and production adoption still
 require protected profile evidence. Unit, real SQL, private-socket and pinned

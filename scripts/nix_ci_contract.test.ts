@@ -956,6 +956,52 @@ test('protected Nix controller candidates keep build, qualification, signing, an
     '.github/workflows/nix-cli-candidate.yml']) expect(development.on.pull_request.paths).toContain(path)
 })
 
+test('protected CLI collection follows Nix named-output link semantics for both architectures', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-cli-candidate.yml', 'utf8'))
+  const build = workflow.jobs.build.steps.find((step: any) =>
+    step.name === 'Build both controller archives without signing credentials')
+  const root = mkdtempSync(join(tmpdir(), 'nix-cli-output-links-'))
+  try {
+    mkdirSync(join(root, 'source'))
+    mkdirSync(join(root, 'bin'))
+    writeFileSync(join(root, 'bin', 'git'), '#!/bin/sh\nprintf "%s\\n" "$SOURCE_REVISION"\n', { mode: 0o755 })
+    // The real derivation exports out and arm64. Nix appends the selected
+    // non-default output name to the requested link prefix, even if that
+    // prefix already ends in the architecture name.
+    writeFileSync(join(root, 'bin', 'nix'), `#!/bin/sh
+set -eu
+test "$1" = build && test "$2" = --no-update-lock-file && test "$4" = --out-link
+case "$3" in
+  '.#leapviewctl-linux-amd64') arch=amd64; output="$5" ;;
+  '.#leapviewctl-linux-arm64') arch=arm64; output="$5-arm64" ;;
+  *) exit 2 ;;
+esac
+mkdir -p "$output"
+printf '%s\\n' "$arch archive" > "$output/leapviewctl-linux-$arch.tar.gz"
+printf '%s\\n' "$arch identity" > "$output/archive-identity.json"
+printf '%s\\n' "$arch compatibility" > "$output/static-compatibility.json"
+`, { mode: 0o755 })
+    const run = spawnSync('bash', ['-c', build.run], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, SOURCE_REVISION: 'a'.repeat(40), PATH: `${join(root, 'bin')}:${process.env.PATH}` },
+    })
+    expect(run.stderr).toBe('')
+    expect(run.status).toBe(0)
+    for (const arch of ['amd64', 'arm64']) {
+      for (const [name, value] of [
+        [`leapviewctl-linux-${arch}.tar.gz`, 'archive'],
+        ['archive-identity.json', 'identity'],
+        ['static-compatibility.json', 'compatibility'],
+      ]) {
+        expect(readFileSync(join(root, 'candidate', arch, name), 'utf8')).toBe(`${arch} ${value}\n`)
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('Nix development evaluates the native ARM runtime-security shell without building ARM packages', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const steps = workflow.jobs.development.steps

@@ -38,6 +38,7 @@ type sourceCredentialHTTPJourney struct {
 	source         sourceCredentialUpstream
 	snapshot       projectdevloop.Snapshot
 	control        *postgrestest.Database
+	harness        *postgrestest.Harness
 	production     bool
 }
 
@@ -130,7 +131,7 @@ func newSourceCredentialHTTPJourneyProfile(t *testing.T, production bool) *sourc
 		t.Fatal(err)
 	}
 	setupPostgresOnboardingCustomerCredentials(t, &cfg)
-	journey := &sourceCredentialHTTPJourney{config: cfg, graph: graph, initial: initial, instance: instance, source: source, snapshot: snapshot, control: control, production: production}
+	journey := &sourceCredentialHTTPJourney{config: cfg, graph: graph, initial: initial, instance: instance, source: source, snapshot: snapshot, control: control, harness: h, production: production}
 	journey.start(t)
 	t.Cleanup(func() {
 		if journey.target != nil {

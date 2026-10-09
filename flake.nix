@@ -280,8 +280,13 @@
       devShells.aarch64-linux.runtime-security = runtimeSecurityShell "aarch64-linux";
       devShells.aarch64-linux.host-qualification = hostQualificationShell "aarch64-linux";
       devShells.aarch64-linux.host-verifier = hostVerifierShell "aarch64-linux";
-      checks.${system}.toolchain = import ./nix/check-toolchain.nix {
-        inherit pkgs toolchain;
+      checks.${system} = {
+        toolchain = import ./nix/check-toolchain.nix {
+          inherit pkgs toolchain;
+        };
+        postgres-major-maintenance = import ./nix/check-postgres-major.nix {
+          inherit pkgs;
+        };
       };
       formatter.${system} = pkgs.nixfmt;
     };
