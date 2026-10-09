@@ -88,7 +88,7 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 		if target.ActiveGenerationID == "" {
 			return nil
 		}
-		return c.RuntimeHost.ReconcileSealed(ctx, servingstate.ID(target.ActiveGenerationID))
+		return restoreSourceCredentialGeneration(ctx, c.RuntimeHost, c.Reader, c.Evidence, target)
 	}
 	source, err := newSourceCredentialActivation(sourceCredentialConfig{
 		Pool: c.Pool, Credentials: c.Services.ActivationRepository(), TargetID: c.TargetID, Environment: c.Environment,
@@ -108,7 +108,7 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 			if err := c.Analytics.RetireCredentialPools(ctx); err != nil {
 				return err
 			}
-			return c.RuntimeHost.ReconcileSealed(ctx, servingstate.ID(record.Status.GenerationID))
+			return installSourceCredentialGeneration(ctx, c.RuntimeHost, c.Reader, c.Evidence, c.TargetID, record)
 		}, Restore: restore,
 	})
 	if err != nil {
