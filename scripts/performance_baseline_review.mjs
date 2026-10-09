@@ -22,7 +22,7 @@ export function requiresPerformanceReview(paths) {
       '.github/actions/oci-admission/action.yml'].includes(path))
 }
 
-export function hasIndependentApproval(pull, reviews) {
+export function hasIndependentApproval(pull, reviews, isRepositoryWriter = () => false) {
   const latest = new Map()
   for (const review of [...reviews].sort((a, b) => a.id - b.id)) {
     if (!review.user?.login || review.state === 'COMMENTED' || review.state === 'PENDING') continue
@@ -31,7 +31,25 @@ export function hasIndependentApproval(pull, reviews) {
   return [...latest.values()].some((review) =>
     review.state === 'APPROVED' && review.commit_id === pull.head.sha &&
     review.user.login !== pull.user.login && review.user.type === 'User' &&
-    ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(review.author_association))
+    (['OWNER', 'MEMBER', 'COLLABORATOR'].includes(review.author_association) || isRepositoryWriter(review.user)))
+}
+
+// Actions may see a private organization member as CONTRIBUTOR. Association is
+// not repository authorization; verify write access without broadening which
+// review states, humans, or commits qualify.
+function repositoryWriter(api, repository, user) {
+  let payload
+  try {
+    payload = api(`repos/${repository}/collaborators/${encodeURIComponent(user.login)}/permission`)
+  } catch {
+    throw new Error(`GitHub repository permission lookup for ${user.login} failed; performance review is inconclusive.`)
+  }
+  if (!Array.isArray(payload) || payload.length !== 1 || !payload[0] || typeof payload[0] !== 'object' || Array.isArray(payload[0])) {
+    throw new Error(`GitHub repository permission response for ${user.login} is ambiguous; performance review is inconclusive.`)
+  }
+  const permission = payload[0]
+  return permission.user?.login === user.login && permission.user?.type === 'User' &&
+    ['write', 'admin'].includes(permission.permission)
 }
 
 function github(path) {
@@ -156,7 +174,7 @@ export function checkPerformanceBaselineReview(event, repository, api = github, 
   if (reference === undefined) reference = readPerformanceReference()
   if (reference) verifyTrustedPerformanceReference(reference, api)
   const reviews = api(`repos/${repository}/pulls/${pull.number}/reviews?per_page=100`).flat()
-  if (!hasIndependentApproval(current, reviews)) {
+  if (!hasIndependentApproval(current, reviews, user => repositoryWriter(api, repository, user))) {
     throw new Error(`Performance governance changed: an independent repository collaborator must approve PR #${pull.number} at ${pull.head.sha}. Include calibration and regression evidence in the PR, then rerun the failed CI gate job. Editing approval fields or approving an older commit does not satisfy this gate.`)
   }
   return `Performance governance independently reviewed at ${pull.head.sha}.`
