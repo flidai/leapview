@@ -8,6 +8,7 @@ import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
+import type { VisualFocusPreview } from '../visual-modal-focus'
 import type { ReportTable } from '../table/report-table'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
@@ -83,6 +84,7 @@ export class VisualizationHost extends LitElement {
     if (Object.is(previous, value)) return
     this.envelopeValue = value
     if (!previous && value) this.error = ''
+    if (this.focusPreview) this.focusPreview.envelope = value
     this.requestUpdate('envelope', previous)
   }
 
@@ -151,6 +153,8 @@ export class VisualizationHost extends LitElement {
   private mountEpoch = 0
   private envelopeAssignmentGeneration = 0
   private pendingEnvelopeValidation?: Promise<void>
+  private focusPreview?: VisualizationHost
+  private focusPreviewSource?: VisualizationHost
   private optionsScrollRoots: Array<Document | ShadowRoot> = []
 
   static styles = [visualActionStyles, visualizationHostStyles]
@@ -301,6 +305,49 @@ export class VisualizationHost extends LitElement {
     return this.controller?.snapshot() ?? Promise.reject(new Error('visualization is not mounted'))
   }
 
+  /** Keep the dashboard tile populated while its live renderer is in focus. */
+  createFocusPreview(): VisualFocusPreview {
+    const preview = this.cloneNode(true) as VisualizationHost
+    preview.removeAttribute('id')
+    preview.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'))
+    preview.setAttribute('data-visual-focus-preview', '')
+    preview.setAttribute('aria-hidden', 'true')
+    preview.inert = true
+    preview.deferMount = false
+    preview.authoring = this.authoring
+    preview.actionsEnabled = this.actionsEnabled
+    preview.exploreHref = this.exploreHref
+    preview.focusPreviewSource = this
+    preview.envelope = this.envelope
+    // Rendering a windowed table can request blocks without user input.
+    // Only the live focused renderer may issue commands or resize the tile.
+    for (const name of ['lv-visualization-window-request', 'lv-visualization-size-change', 'lv-visualization-observation']) {
+      preview.addEventListener(name, event => event.stopPropagation())
+    }
+    this.focusPreview = preview
+    return {
+      element: preview,
+      dispose: () => {
+        preview.remove()
+        preview.focusPreviewSource = undefined
+        if (this.focusPreview === preview) this.focusPreview = undefined
+      },
+    }
+  }
+
+  private async syncFocusPreviewTable(): Promise<void> {
+    const source = this.focusPreviewSource
+    if (!source || !this.isConnected) return
+    await this.updateComplete
+    await this.waitForApply()
+    if (source !== this.focusPreviewSource || !this.isConnected) return
+    const table = this.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    const sourceTable = source.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    if (!table || !sourceTable) return
+    await sourceTable.updateComplete
+    if (source === this.focusPreviewSource && this.isConnected) table.syncFocusPreview(sourceTable)
+  }
+
   protected render() {
     const statusError = this.envelope?.status.kind === 'error' ? this.envelope.status.message ?? 'Visualization error' : ''
     const error = this.error || statusError
@@ -429,6 +476,8 @@ export class VisualizationHost extends LitElement {
         this.error = ''
         this.presented = controller.envelope !== undefined
         this.announcement = visualizationChangeAnnouncement(previous, envelope)
+        void this.syncFocusPreviewTable()
+        void this.focusPreview?.syncFocusPreviewTable()
       }
     } catch (error) {
       if (error instanceof VisualPreparationTimeout && generation === this.applyGeneration && controller === this.controller) {
