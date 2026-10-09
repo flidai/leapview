@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       boot_test:
-        description: Also test isolated host updates, rollback, networking and GRUB reboot
+        description: Also test fresh BIOS/UEFI disk installation and isolated host update/rollback reboots
         type: boolean
         default: false
 
@@ -88,6 +88,43 @@ jobs:
       - name: Exercise managed-host updates and rollback plus network and GRUB reboot checks
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
         run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+  fresh-install:
+    if: ${{ github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.boot_test }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        boot-mode: [bios, uefi]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Format a fresh isolated disk and boot the installed firmware profile
+        env:
+          BOOT_MODE: ${{ matrix.boot-mode }}
+        run: |
+          set -euo pipefail
+          nix build "path:./deploy/managed/nixos#fresh-install-$BOOT_MODE" \
+            --out-link "$RUNNER_TEMP/fresh-install-result" --no-update-lock-file \
+            --max-jobs 1 --cores 2 -L 2>&1 | tee "$RUNNER_TEMP/fresh-install.log"
+      - name: Retain exact common-OS installation test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-fresh-install-${{ matrix.boot-mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/fresh-install.log
+            ${{ runner.temp }}/fresh-install-result/
+          if-no-files-found: error
+          retention-days: 21
   application-template:
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
