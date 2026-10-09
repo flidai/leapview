@@ -101,10 +101,10 @@ func (a *sourceCredentialActivation) InstallCommitted(ctx context.Context, recor
 	if err = a.transaction(ctx, func(tx pgx.Tx) error { return a.committed(ctx, tx, row) }); err != nil {
 		return err
 	}
-	return a.config.Install(ctx, record)
+	return a.installRuntime(ctx, record)
 }
 func (a *sourceCredentialActivation) RestoreCurrent(ctx context.Context) error {
-	return a.config.Restore(ctx)
+	return a.withRuntimeAdmission(ctx, a.config.Restore)
 }
 func (a *sourceCredentialActivation) CheckCurrent(ctx context.Context, record credentialmodule.ActivationRecord) error {
 	row, err := a.config.Credentials.GetActivationRequest(ctx, a.config.TargetID, record.Request.OperationID)
