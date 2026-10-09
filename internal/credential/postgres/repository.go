@@ -42,7 +42,7 @@ type Repository struct {
 
 var _ credential.Repository = (*Repository)(nil)
 
-//go:embed schema.sql request_schema.sql rotation_schema.sql
+//go:embed schema.sql request_schema.sql rotation_schema.sql first_source_schema.sql
 var schemaFS embed.FS
 
 var schemaSQL = credentialSchemaSQL(schemaFS)
