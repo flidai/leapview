@@ -80,6 +80,8 @@ on:
       - 'scripts/nix_compose_controller_evidence.py'
       - 'scripts/tests/test_nix_compose_controller_evidence.py'
       - 'scripts/nix_compose_host_guest.py'
+      - 'scripts/nix_compose_bundled_postgres.py'
+      - 'scripts/tests/test_nix_compose_bundled_postgres.py'
       - 'scripts/tests/test_nix_compose_host_guest.py'
       - 'scripts/tests/test_nix_compose_installer_diagnostics.py'
       - 'scripts/nix_compose_guest_launcher.py'

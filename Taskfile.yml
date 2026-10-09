@@ -626,6 +626,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_bundled_postgres.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_installer_diagnostics.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
@@ -1745,6 +1746,11 @@ tasks:
     desc: Exercise managed-host updates and rollback plus network and GRUB reboot checks in NixOS guests
     cmds:
       - nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+
+  managed:hosts:fresh-install-test:
+    desc: Format fresh isolated disks and boot the common OS through BIOS and UEFI GRUB
+    cmds:
+      - nix build path:./deploy/managed/nixos#fresh-install-bios path:./deploy/managed/nixos#fresh-install-uefi --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
 
   managed:hosts:network-test:
     desc: Exercise IPv4/IPv6 Docker ingress in fresh kernel namespaces (requires sudo)

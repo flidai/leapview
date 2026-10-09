@@ -24,6 +24,7 @@ import urllib.parse
 
 import nix_compose_controller_evidence as controller_evidence
 import nix_compose_qualification as qualification
+import nix_compose_bundled_postgres as bundled
 
 
 SCHEMA_VERSION = 1
@@ -1113,7 +1114,9 @@ def _pool_probe_environment(template: bytes, urls: dict[str, str], config: dict)
     return _replace_env_values(template, replacements)
 
 
-def _qualification_operator_config(pool_output: bytes, urls: dict[str, str]) -> bytes:
+def _qualification_operator_config(pool_output: bytes, urls: dict[str, str], *, profile: str = "external") -> bytes:
+    if profile not in {"external", "bundled"}:
+        raise HostGuestError("qualification PostgreSQL profile must be explicit external or bundled")
     if len(pool_output) > 1024**2:
         raise HostGuestError("canonical pool qualification output exceeds the operator-input size limit")
     try:
@@ -1127,8 +1130,8 @@ def _qualification_operator_config(pool_output: bytes, urls: dict[str, str]) -> 
         raise HostGuestError("image-generated physical-pool qualification output has an unsupported schema")
     operator = {
         "schemaVersion": 1,
-        "postgresProfile": "external",
-        "postgres": urls,
+        "postgresProfile": profile,
+        "postgres": urls if profile == "external" else {},
         "physicalPool": {"pool": artifacts["pool"], "evidence": artifacts["evidence"]},
     }
     encoded = _canonical(operator) + b"\n"
@@ -1491,7 +1494,7 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
         raise HostGuestError("pool qualification did not start from a fresh, stopped serving target")
     pool_command = _pool_qualification_command(project_dir, docker_env)
     pool_output = guest.run(pool_command, timeout=900)
-    pool_artifacts = _qualification_operator_config(pool_output, urls)
+    pool_artifacts = _qualification_operator_config(pool_output, urls, profile=getattr(args, "postgres_profile", "external"))
     _record(evidence, "physical-pool-qualification-artifacts.json", pool_output)
     _record(evidence, "physical-pool-qualification-sha256.txt", (_digest(pool_output) + "\n").encode())
     operator_config_path = "/run/leapview/operator-bootstrap.json"
@@ -1739,6 +1742,19 @@ def _install_and_collect(args) -> dict:
             host_config=host_config, nonce=nonce, candidate_image_id=pulled_image_id,
             postgres_init=nix_controller.parent / "qualification/postgres-init.sh",
         )
+        postgres_profile = getattr(args, "postgres_profile", "external")
+        bundled_state = None
+        private_material_proof = paths["root"] + "/bundled-postgres-private-material"
+        record_bundled = lambda name, data: _record(evidence, name, data)
+        if postgres_profile == "bundled":
+            # The pre-install conformance probe remains real and independent.
+            # Its external service must be removed before the installer creates
+            # its own PostgreSQL service and private network.
+            guest.run("set -eu; env " + docker_env + " docker rm --force " + shlex.quote(postgres_fixture["containerName"]) +
+                      " >/dev/null; env " + docker_env + " docker volume rm " + shlex.quote(postgres_fixture["dataVolume"]) +
+                      " >/dev/null; remains=$(env " + docker_env + " docker ps --all --quiet --filter " +
+                      shlex.quote("name=^/" + postgres_fixture["containerName"] + "$") + "); test -z \"$remains\"")
+            _record(evidence, "bundled-postgres-pool-fixture-removed.txt", b"absent\n")
 
         install = _host_install_command(
             mode=args.install_mode, docker_env=docker_env,
@@ -1748,6 +1764,10 @@ def _install_and_collect(args) -> dict:
         _run_host_installer(guest, evidence, install,
                             timeout=1800 if args.install_mode == "bootstrap" else 900,
                             fixture_secrets=fixture_secrets)
+        if postgres_profile == "bundled":
+            bundled_state = {"beforePendingReboot": bundled.capture(guest, record_bundled, docker_env,
+                postgres_fixture, "bundled-postgres-before-pending-reboot")}
+            guest.run(bundled.material_snapshot_command(private_material_proof))
         _record(evidence, "installer-driver.txt", (driver + "\n").encode())
         boundary_result = guest.run(_serving_credential_boundary_command())
         boundary = _json(_record(evidence, "serving-credential-boundary.json", boundary_result), "serving credential boundary")
@@ -1826,7 +1846,7 @@ def _install_and_collect(args) -> dict:
             guest, path="/readyz", expected="503", timeout=args.startup_timeout,
             evidence=evidence, filename="private-bootstrap-readyz-before-reboot.txt",
         )
-        postgres_name = postgres_fixture["containerName"]
+        postgres_name = bundled_state["beforePendingReboot"]["containerName"] if bundled_state else postgres_fixture["containerName"]
         postgres_inspect_command = (
             "env " + docker_env + " docker inspect --format '{{.Id}} {{.Image}} {{.State.Status}} "
             "{{.HostConfig.RestartPolicy.Name}} {{.State.StartedAt}}' " + shlex.quote(postgres_name)
@@ -1876,7 +1896,9 @@ def _install_and_collect(args) -> dict:
                 if (len(fields) == 5 and fields[0] == postgres_before_parts[0]
                         and fields[1:4] == [postgres_fixture["imageID"], "running", "unless-stopped"]
                         and fields[4] != postgres_before_parts[4]):
-                    probe = guest.run(_readiness_after_reboot_command(postgres_name, TLS_ROLE_EXPECTATIONS["controlRuntime"]), timeout=20)
+                    probe_command = (bundled.readiness_command(postgres_name, docker_env, control_only=True)
+                                     if bundled_state else _readiness_after_reboot_command(postgres_name, TLS_ROLE_EXPECTATIONS["controlRuntime"]))
+                    probe = guest.run(probe_command, timeout=20)
                     if _one_line(probe, "post-reboot PostgreSQL TLS role probe") == TLS_ROLE_EXPECTATIONS["controlRuntime"]:
                         postgres_after_line = candidate
                         _record(evidence, "postgres-tls-role-probe-after-reboot.txt", probe)
@@ -1887,6 +1909,11 @@ def _install_and_collect(args) -> dict:
         if postgres_after_line is None:
             raise HostGuestError("pinned TLS PostgreSQL fixture did not automatically restart with persisted role data")
         _record(evidence, "postgres-container-after-reboot.txt", (postgres_after_line + "\n").encode())
+        if bundled_state:
+            bundled_state["afterPendingReboot"] = bundled.capture(guest, record_bundled, docker_env,
+                postgres_fixture, "bundled-postgres-after-pending-reboot")
+            _record(evidence, "bundled-postgres-after-pending-reboot-material-preserved.json",
+                    guest.run(bundled.material_verify_command(private_material_proof)))
 
         inspect_line = None
         probe_history = []
@@ -2032,6 +2059,8 @@ def _install_and_collect(args) -> dict:
             filename="public-activation-https-readiness.txt",
         )
 
+        if bundled_state:
+            guest.run(bundled.material_snapshot_command(private_material_proof))
         guest.run("systemctl reboot", timeout=15, allow_disconnect=True)
         public_boot_after = None
         public_reboot_deadline = time.monotonic() + args.reboot_timeout
@@ -2107,6 +2136,11 @@ def _install_and_collect(args) -> dict:
         _record(evidence, "automatic-restart-probes.json", (json.dumps(probe_history, sort_keys=True) + "\n").encode())
         _record(evidence, "container-inspect.txt", (postpublication_inspect + "\n").encode())
         _record(evidence, "post-public-reboot-container-inspect.txt", (postpublication_inspect + "\n").encode())
+        if bundled_state:
+            bundled_state["afterPublicReboot"] = bundled.capture(guest, record_bundled, docker_env,
+                postgres_fixture, "bundled-postgres-after-public-reboot")
+            _record(evidence, "bundled-postgres-after-public-reboot-material-preserved.json",
+                    guest.run(bundled.material_verify_command(private_material_proof)))
         parts = postpublication_inspect.split()
         container_id, configured_image, image_id, state, health, project, service, started_at = parts
         _record(evidence, "database-secret-boundary.json", (json.dumps({
@@ -2131,6 +2165,8 @@ def _install_and_collect(args) -> dict:
         "postgresFixturePlatform": postgres_fixture["platform"],
         "physicalPoolArtifactsSHA256": pool_info["poolArtifactsSHA256"],
     }
+    if bundled_state:
+        evidence_report["postgresProfile"] = "bundled"
     _write_new(evidence / "qualification-report.json", (json.dumps(evidence_report, indent=2) + "\n").encode(), 0o600)
     try:
         inventory = qualification._qualification_evidence_inventory(evidence)
@@ -2259,6 +2295,9 @@ def _install_and_collect(args) -> dict:
         "excludedGates": ["two-image-upgrade-and-rollback", "full-enterprise-publication-journey"],
         "evidenceInventory": inventory,
     }
+    if bundled_state:
+        receipt["identity"]["postgresProfile"] = "bundled"
+        receipt["guest"]["bundledPostgres"] = bundled_state
     _validate_receipt(receipt, evidence, expected_image=args.image, expected_platform=args.platform)
     _write_new(output / "host-guest-receipt.json", (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(), 0o600)
     return receipt
@@ -2456,10 +2495,13 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             or receipt["result"] != "passed" or receipt["releaseAdmission"] is not False):
         raise HostGuestError("host guest receipt is not a non-admitting successful record")
     identity = receipt["identity"]
+    postgres_profile = identity.get("postgresProfile", "external") if isinstance(identity, dict) else None
     identity_keys = {
         "archiveSHA256", "controllerSHA256", "controllerBuildIdentitySHA256", "image", "sourceRevision",
         "platform", "installMode", "installerDriver", "sourceBootstrapSHA256", "releaseIdentitySHA256",
     }
+    if postgres_profile == "bundled":
+        identity_keys.add("postgresProfile")
     if not isinstance(identity, dict) or set(identity) != identity_keys:
         raise HostGuestError("host guest receipt has incomplete Compose identity")
     for key in ("archiveSHA256", "controllerSHA256", "controllerBuildIdentitySHA256", "releaseIdentitySHA256"):
@@ -2521,11 +2563,14 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             or launcher["runner"]["qemuSystemBinarySHA256"] != runner["qemuSystemBinarySHA256"]
             or launcher["runner"]["qemuVersionSHA256"] != runner["qemuVersionSHA256"]):
         raise HostGuestError("host guest runner identity differs from the immutable launcher receipt")
-    if not isinstance(guest, dict) or set(guest) != {
+    guest_keys = {
         "nonceSHA256", "manifestSHA256", "sourceCloudImageSHA256", "os", "architecture", "kernelBefore",
         "kernelAfter", "bootIDBefore", "bootIDAfter", "systemdPID1", "docker", "container", "markerSHA256",
         "generation", "links", "controllers", "postgresFixture", "physicalPoolArtifactsSHA256",
-    }:
+    }
+    if postgres_profile == "bundled":
+        guest_keys.add("bundledPostgres")
+    if not isinstance(guest, dict) or set(guest) != guest_keys:
         raise HostGuestError("host guest receipt has incomplete guest measurements")
 
     os_record = guest.get("os")
@@ -2608,6 +2653,8 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             or not isinstance(postgres_fixture["initScriptSHA256"], str)
             or SHA256_RE.fullmatch(postgres_fixture["initScriptSHA256"]) is None):
         raise HostGuestError("host guest PostgreSQL fixture identity is not locked, native, and TLS-enabled")
+    if postgres_profile == "bundled":
+        bundled.validate_retained(guest["bundledPostgres"], lambda name: _evidence_bytes(evidence, name), postgres_fixture)
     pool_artifacts_sha = guest["physicalPoolArtifactsSHA256"]
     if not isinstance(pool_artifacts_sha, str) or SHA256_RE.fullmatch(pool_artifacts_sha) is None:
         raise HostGuestError("host guest receipt lacks canonical physical-pool artifact identity")
@@ -2682,11 +2729,16 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             raise HostGuestError(f"independent HTTPS readiness evidence {filename} differs from its receipt")
 
     report = _json(_evidence_bytes(evidence, "qualification-report.json"), "host guest qualification report")
-    if (not isinstance(report, dict) or set(report) != {
+    report_keys = {
         "schemaVersion", "scope", "result", "guestOS", "platform", "installMode", "installerDriver",
         "image", "sourceRevision", "releaseAdmission", "postgresFixtureImage", "postgresFixturePlatform",
         "physicalPoolArtifactsSHA256",
-    } or report.get("schemaVersion") != SCHEMA_VERSION or report.get("scope") != SCOPE or report.get("result") != "passed"
+    }
+    if postgres_profile == "bundled":
+        report_keys.add("postgresProfile")
+    if (not isinstance(report, dict) or set(report) != report_keys
+            or report.get("postgresProfile", "external") != postgres_profile
+            or report.get("schemaVersion") != SCHEMA_VERSION or report.get("scope") != SCOPE or report.get("result") != "passed"
             or report.get("releaseAdmission") is not False or report.get("image") != identity["image"]
             or report.get("sourceRevision") != identity["sourceRevision"] or report.get("platform") != identity["platform"]
             or report.get("installMode") != identity["installMode"]
@@ -2820,6 +2872,8 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             or postgres_after[1:4] != [postgres_fixture["imageID"], "running", "unless-stopped"]
             or not postgres_before[4] or not postgres_after[4] or postgres_before[4] == postgres_after[4]):
         raise HostGuestError("PostgreSQL fixture did not automatically restart from the same persistent container")
+    if postgres_profile == "bundled" and postgres_before[0] != guest["bundledPostgres"]["beforePendingReboot"]["containerID"]:
+        raise HostGuestError("bundled PostgreSQL receipt differs from actual automatic-restart container")
     before_roles = _evidence_bytes(evidence, "postgres-tls-role-probes-before-install.txt").decode("utf-8").strip().splitlines()
     after_control = _one_line(_evidence_bytes(evidence, "postgres-tls-role-probe-after-reboot.txt"), "post-reboot TLS role probe")
     if before_roles != list(TLS_ROLE_EXPECTATIONS.values()) or after_control != TLS_ROLE_EXPECTATIONS["controlRuntime"]:
@@ -2911,6 +2965,7 @@ def main() -> None:
     qualify.add_argument("--launcher-receipt", type=Path, required=True)
     qualify.add_argument("--guest-os", choices=sorted(GUEST_OS), required=True)
     qualify.add_argument("--install-mode", choices=("bootstrap", "nix-controller"), required=True)
+    qualify.add_argument("--postgres-profile", choices=("external", "bundled"), default="external")
     qualify.add_argument("--virtualization-mode", choices=("kvm", "tcg"), required=True)
     qualify.add_argument("--config", type=Path, required=True)
     qualify.add_argument("--output-dir", type=Path, required=True)
