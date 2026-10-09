@@ -594,6 +594,7 @@ tasks:
       - bun test scripts/managed_application_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_managed_admission_handoff.py
       - python3 -m unittest discover -s scripts/tests -p test_managed_application_inputs.py
+      - python3 -m unittest discover -s scripts/tests -p test_managed_recovery_inventory.py
       - python3 -m unittest discover -s deploy/managed/nixos/tests -p 'managed_application*_test.py'
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
       - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
