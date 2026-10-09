@@ -46,6 +46,13 @@ type MultipartStore interface {
 	AbortMultipart(context.Context, storage.MultipartUpload) error
 }
 
+// MultipartRecoveryStore resolves the provider's actual uploaded parts before
+// retrying a durable completion intent. Ordinary completion still requires the
+// caller's explicit ETags; stores without recovery support fail closed.
+type MultipartRecoveryStore interface {
+	RecoverMultipart(context.Context, storage.MultipartUpload, []storage.MultipartPartRequest) (storage.Blob, error)
+}
+
 type Config struct {
 	Backend    string
 	SignExpiry time.Duration

@@ -114,8 +114,8 @@ func TestFinalizeQualificationPerformanceDoesNotClaimUnperformedComparison(t *te
 
 func TestQualificationComparisonDoesNotSkipMeasuredZeroBaseline(t *testing.T) {
 	policy := validQualificationPerformancePolicy()
-	baseline := completeQualificationLatencyReport()
-	candidate := completeQualificationLatencyReport()
+	baseline := comparableQualificationPerformanceReport()
+	candidate := comparableQualificationPerformanceReport()
 	baseline.Latency["governedQueryMs"] = qualificationDurationSummary{Samples: 1}
 	candidate.Latency["governedQueryMs"] = qualificationDurationSummary{Samples: 1, P50: 100, P95: 100, Max: 100}
 	if failures := compareQualificationPerformance(candidate, baseline, policy); len(failures) != 1 || !strings.Contains(failures[0], "governed query") {
@@ -127,8 +127,8 @@ func TestQualificationComparisonRejectsMissingBaselineOrCandidatePhase(t *testin
 	policy := validQualificationPerformancePolicy()
 	for _, which := range []string{"baseline", "candidate"} {
 		t.Run(which, func(t *testing.T) {
-			candidate := completeQualificationLatencyReport()
-			baseline := completeQualificationLatencyReport()
+			candidate := comparableQualificationPerformanceReport()
+			baseline := comparableQualificationPerformanceReport()
 			if which == "baseline" {
 				delete(baseline.Latency, "governedQueryMs")
 			} else {

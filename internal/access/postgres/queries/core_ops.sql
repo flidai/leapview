@@ -111,6 +111,12 @@ FROM access.access_group
 WHERE revoked_at IS NULL
   AND (id = sqlc.arg(id)::uuid OR (provider = sqlc.arg(provider) AND external_id = sqlc.arg(external_id)));
 
+-- name: GetGroupForUpdate :one
+SELECT id, provider, external_id, name, created_at
+FROM access.access_group
+WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL
+FOR UPDATE;
+
 -- name: ListGroups :many
 SELECT id, provider, external_id, name, created_at
 FROM access.access_group
