@@ -45,6 +45,51 @@ useful provenance context, but it does not supply a retained compiled dependency
 receipt for every current payload. Spatial and Iceberg signed payload revisions
 must be resolved independently of the older engine extension-config entries.
 
+## Retained upstream receipt audit
+
+`native-upstream-receipts.json` records the 2026-10-09 read-only audit of all 13
+remaining signed extension source revisions, their exact candidate payload
+digests, resolved reusable workflow revisions and retained response hashes.
+All queried exact-source runs have zero downloadable artifacts and return HTTP
+410 for logs. PostgreSQL has only an integration run at its exact source, so
+that row is explicitly not a distribution receipt. GitHub attestation lookups
+for both architecture payload digests return HTTP 404. These observations do
+not disprove another upstream evidence service, but neither expired logs nor
+workflow metadata establish the missing compiled dependency closure.
+
+SQLite has a smaller reconstructible source boundary: its exact extension root
+vendors `sqlite3.c` and `sqlite3.h`, and its vcpkg manifest has no dependencies.
+The recovered C/header and two CMake files match the upstream Git blob hashes.
+Both actual signed ELF payloads contain SQLite 3.38.1 and the same full SQLite
+source ID. The recorded source-ID functions resolve directly to that literal;
+this binds the observation to code in each payload rather than a guessed
+version from an unrelated string. It remains component evidence, not full
+application admission. A fresh diagnostic Grype scan reports seven HIGH version
+matches; affected-code review or a patched source build is still required.
+The [official SQLite release history](https://sqlite.org/changes.html) publishes
+the source ID and amalgamation SHA3-256 for 3.53.4 as a concrete update candidate.
+
+The cheapest admissible recovery paths and engineering estimates below are
+planning ranges, not measured build results. They exclude native build and CI
+waiting, and assume no further ABI or compiler repairs:
+
+| Missing group | Concrete next proof or controlled build | Estimated implementation and focused proof |
+| --- | --- | --- |
+| SQLite | Review exact bundled source/binary identities and affected code; if affected, pin a current amalgamation in a source-built static extension and test read/write | 2–4 hours |
+| DuckLake / roaring | Resolve the selected roaring source and build options from authenticated receipts, or source-build the pinned wrapper/library | 2–4 hours |
+| HTTPFS / Quack / CURL / TLS | Recover exact triplet, CURL and TLS selections; otherwise build one shared pinned dependency profile and both wrappers | 3–6 hours |
+| Avro / Excel / compression | Resolve custom registry and overlay selection; otherwise pin those sources and build both wrappers | 3–6 hours |
+| PostgreSQL / MySQL / Azure / Iceberg | Resolve database connector, SDK, AWS and shared TLS selections; otherwise source-build those selected closures | 4–8 hours |
+| Spatial / GDAL / GEOS / PROJ | Recover actual GDAL feature/dependency selections, or build a fully pinned native closure | 4–8 hours |
+| Delta / Vortex Rust FFI | Recover selected features, native TLS and actual compiler receipts; otherwise build their pinned Rust/C++ closures | 4–8 hours |
+
+Several groups share dependencies, so these ranges must not be added as
+independent commitments. The current work does not establish a credible
+complete two-architecture application admission within the remaining project
+window. Site, desktop and controller profiles can advance independently.
+The native verifier keeps the application profile closed while these edges
+remain unresolved; source manifests and partial receipts cannot override it.
+
 ## Produce retained diagnostic evidence
 
 Run the collector from the reviewed source checkout against an independently

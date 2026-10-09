@@ -1,0 +1,737 @@
+{
+  "version": 1,
+  "observedAt": "2026-10-09T11:03:27.137960+00:00",
+  "scope": "diagnostic provenance and embedded identities; no compiled-closure or admission assertion",
+  "upstreamBuilds": [
+    {
+      "name": "avro",
+      "repository": "duckdb/duckdb-avro",
+      "sourceRevision": "f9d590297485f0318f480372c70bdd852826e258",
+      "runId": 25789492898,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-avro/actions/runs/25789492898",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5.2",
+          "sha": "344397bb848aac786d260daf396ad09fc6a1d21f",
+          "ref": "refs/heads/v1.5.2"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.2",
+          "sha": "344397bb848aac786d260daf396ad09fc6a1d21f",
+          "ref": "refs/heads/v1.5.2"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:a9171a93d12899ca01007c7e083c81f0710724cf26ed0fee0c6a27fd3210f279",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:91516d5a8cedead17d35a7b9b0a1fbfe8c3f335cbf639d7e700afb3cac40dbfd",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "azure",
+      "repository": "duckdb/duckdb-azure",
+      "sourceRevision": "563589b2f24290a4dcdd4247eaedf2b544f9dbcd",
+      "runId": 26641447611,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-azure/actions/runs/26641447611",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:d245454b603dec347764e7feb11c17353ca7d1d99fd329b60356b32b34bbd90d",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:4df1288da9db1cf582d588893337d038419fa31aeacb9efb193f9ae850267718",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "delta",
+      "repository": "duckdb/duckdb-delta",
+      "sourceRevision": "45c40878601b54b4188b09e08732fe0d576ad222",
+      "runId": 27285737454,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-delta/actions/runs/27285737454",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:592af61bc87dc30aab40e3dbcfbe43341c4669c7efa6698a34b0b79a58ece232",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:bfaab897af48ebf221749191ce16e1f02eff793e3616e5c53f6757bb55e4dbb4",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "ducklake",
+      "repository": "duckdb/ducklake",
+      "sourceRevision": "d318a545571d7d46eb751fa2aa5f6f4389285d3c",
+      "runId": 27348974749,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/ducklake/actions/runs/27348974749",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:00f72402c9c5d1f69c3329f38837f4abd100cddb7c69e76650f46bf35a17babe",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:f73ec9ab68a6de5c3c190cd1ecbba553a5791bf5821a991d70ea65abc5e45562",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "excel",
+      "repository": "duckdb/duckdb-excel",
+      "sourceRevision": "f4c72b5ef04a03b3a78a95b5a2ee94ba93e3178d",
+      "runId": 25797806986,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-excel/actions/runs/25797806986",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:9d299334ece218ffabacda7d3cfa5b149cf7bd7b097826cf7b451d44d7e64ddc",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:fe8ffc44c7f3ed12de47fef6b1a62b2981ba528f63bbc715bfd103a20a32bd66",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "httpfs",
+      "repository": "duckdb/duckdb-httpfs",
+      "sourceRevision": "c3f215ab360f04dc3d3d5305fa81849c0121f111",
+      "runId": 27334664582,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-httpfs/actions/runs/27334664582",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:2e020c7e89b11364e413ddfab8b9ca870b1fc0a16eaf612c9445773ef68989ef",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:6d30a487968cbe5553b7272fd5bad0e4485c4117db96e21fd1e5e2a225a5a538",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "iceberg",
+      "repository": "duckdb/duckdb-iceberg",
+      "sourceRevision": "757264559e745be697e9306e144e8889eb1dc024",
+      "runId": 27626826377,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-iceberg/actions/runs/27626826377",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:9aa62a0e0ea0e10c694619a71c22a240a3dcd9d35d5c1879a393241143266841",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:321f957a3cdc04944086ce5013d70e86e7aa5b6c6ad8424d6da3890fc0ca4422",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "mysql",
+      "repository": "duckdb/duckdb-mysql",
+      "sourceRevision": "37006e53a58ddc31eeb96ff95c21f3196e27fcf2",
+      "runId": 26304424393,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-mysql/actions/runs/26304424393",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:e67dab11cdf9d433177517d30f7f425889f65b72233614cf78c9a7a62c417195",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:554ef47671c10a5616e6e1a2528f92117718e4046466d26dc30781e22f703cf9",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "postgres",
+      "repository": "duckdb/duckdb-postgres",
+      "sourceRevision": "8f813f9b9c9e52a9074a050a0be60f49160a6baa",
+      "runId": 27213220448,
+      "runRole": "integration only; no distribution run at exact source",
+      "runURL": "https://github.com/duckdb/duckdb-postgres/actions/runs/27213220448",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:460ecb44641d9f0064002f2a0a49e3fe9e2fa1f13f43a00a59788f20bfd5fdd7",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:102f71e6d2e603b1056407410f981c7ec141375e1edd16f2cb61e901e9c6d617",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "quack",
+      "repository": "duckdb/duckdb-quack",
+      "sourceRevision": "40de7badae4193c29d9c0834473fb76acc6c51e6",
+      "runId": 27278111108,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-quack/actions/runs/27278111108",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:1f3a4a1ccaf5388c7b32ec8822c40cd29b9acb3ce69936212ac6fb6e5e22cc5d",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:52612f68c5c7f9a5e0f4316c01b8e81d7e9ed32171473e71cff279e7a353faa7",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "spatial",
+      "repository": "duckdb/duckdb-spatial",
+      "sourceRevision": "28db190f7184bcf61eb01d291e0cba79849bddb6",
+      "runId": 27984410227,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-spatial/actions/runs/27984410227",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:819a0fa94d2e8257371bb4d97f32c47586b42c85e24bab1bcbf8712a88b8ccfa",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:af2547875834496f3112261631cc8d8c96ae67912edab6b4e3d5f4f7545e547a",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "sqlite",
+      "repository": "duckdb/duckdb-sqlite",
+      "sourceRevision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+      "runId": 27213329111,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/duckdb/duckdb-sqlite/actions/runs/27213329111",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        },
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5-variegata",
+          "sha": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "ref": "refs/heads/v1.5-variegata"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:ec474084780c5e596c490822c17f2a6bfd42d1b59c6c0d156ff71629efe6e2ba",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:81135f8c3b4064bc5031c3bc08473a7224851461fa9a2b645ea8f851eba4a621",
+          "lookupHTTP": 404
+        }
+      ]
+    },
+    {
+      "name": "vortex",
+      "repository": "vortex-data/duckdb-vortex",
+      "sourceRevision": "275ac230e1d9afd08926b6989ec2467f92fae6e3",
+      "runId": 27427751591,
+      "runRole": "extension distribution",
+      "runURL": "https://github.com/vortex-data/duckdb-vortex/actions/runs/27427751591",
+      "artifactCount": 0,
+      "logsHTTP": 410,
+      "resolvedWorkflows": [
+        {
+          "path": "duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.3",
+          "sha": "4b3b37b0c9de00da54e1765d65abfea3f94617f4",
+          "ref": "refs/heads/v1.5.3"
+        }
+      ],
+      "attestations": [
+        {
+          "architecture": "amd64",
+          "artifactSHA256": "sha256:10d9edf0a430a2a56a9ee68ccd37a793a828f02c01cb3706d896cf1ea549ec3f",
+          "lookupHTTP": 404
+        },
+        {
+          "architecture": "arm64",
+          "artifactSHA256": "sha256:f2a915fdaf851cf55822c84b2740a05398a4baa7c63b1997b04cb7ad9f8610a3",
+          "lookupHTTP": 404
+        }
+      ]
+    }
+  ],
+  "sqlite": {
+    "sourceEvidence": {
+      "repository": "duckdb/duckdb-sqlite",
+      "revision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+      "files": [
+        {
+          "path": "src/CMakeLists.txt",
+          "gitBlob": "f514eca4c359639a8efd2487251f6fadf39027f3",
+          "sha256": "sha256:d871c3823cbe9531a33d471f08109d0270a23045c0c7323583fe321b300ebf84",
+          "bytes": 334
+        },
+        {
+          "path": "src/sqlite/CMakeLists.txt",
+          "gitBlob": "34aa4705f8ce65bd25e325978909e5efa0b9c37a",
+          "sha256": "sha256:1ffcdfcccfdaa4cca556f02d3cbd4c1003d342d0630b3384a064c7ff24f4e414",
+          "bytes": 287
+        },
+        {
+          "path": "src/sqlite/sqlite3.c",
+          "gitBlob": "c04763e6a395cbf766a84a055ae770015c60d593",
+          "sha256": "sha256:01faf853e402f2962d78bf4a61b5a2f761324e239248d9fc6b586e9b0222662a",
+          "bytes": 8460268
+        },
+        {
+          "path": "src/sqlite/sqlite3.h",
+          "gitBlob": "d7f21648941f0660807bf36ddd184a9a265d3141",
+          "sha256": "sha256:c3af59cb1f888f1ef34b6b2d2e2019dd548018ef072c8aa0aa7e829a28984f58",
+          "bytes": 611797
+        }
+      ]
+    },
+    "binaryEvidence": [
+      {
+        "architecture": "amd64",
+        "artifactSHA256": "sha256:ec474084780c5e596c490822c17f2a6bfd42d1b59c6c0d156ff71629efe6e2ba",
+        "sourceRevision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+        "sqliteVersion": "3.38.1",
+        "sqliteSourceID": "2022-03-12 13:37:29 38c210fdd258658321c85ec9c01a072fda3ada94540e3239d29b34dc547a8cbc",
+        "sourceIDFunctionAddress": "0x340000",
+        "sourceIDFunctionBytes": "488d05e1f93401c30f1f8400",
+        "sourceIDLiteralAddress": "0x168f9e8",
+        "scope": "exact binary embedded identity; full profile not admitted"
+      },
+      {
+        "architecture": "arm64",
+        "artifactSHA256": "sha256:81135f8c3b4064bc5031c3bc08473a7224851461fa9a2b645ea8f851eba4a621",
+        "sourceRevision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+        "sqliteVersion": "3.38.1",
+        "sqliteSourceID": "2022-03-12 13:37:29 38c210fdd258658321c85ec9c01a072fda3ada94540e3239d29b34dc547a8cbc",
+        "sourceIDFunctionAddress": "0xe8900",
+        "sourceIDFunctionBytes": "c094009000800091c0035fd6",
+        "sourceIDLiteralAddress": "0x1380020",
+        "scope": "exact binary embedded identity; full profile not admitted"
+      }
+    ],
+    "diagnosticScan": {
+      "scope": "version matches requiring affected-code review; no admission assertion",
+      "scanner": "grype",
+      "scannerVersion": "0.119.0",
+      "database": {
+        "status": {
+          "schemaVersion": "v6.1.10",
+          "from": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.10_2026-10-09T00:35:49Z_1791527552.tar.zst?checksum=sha256%3A10771a4ded5ec61df357f3bdc3d92807aedf23a717bcd2395c9decfdee20524f",
+          "built": "2026-10-09T06:32:32Z",
+          "path": "/tmp/leapview-native-grype-db/6/vulnerability.db",
+          "valid": true
+        },
+        "providers": {
+          "alma": {
+            "captured": "2026-10-09T00:35:56Z",
+            "input": "xxh64:952d425fe3820ded"
+          },
+          "alpine": {
+            "captured": "2026-10-09T00:35:57Z",
+            "input": "xxh64:4e894e80cc2964c4"
+          },
+          "amazon": {
+            "captured": "2026-10-09T00:35:56Z",
+            "input": "xxh64:1c19f77339018d01"
+          },
+          "arch": {
+            "captured": "2026-10-09T00:35:49Z",
+            "input": "xxh64:cfd18e4cc3b08111"
+          },
+          "bitnami": {
+            "captured": "2026-10-09T00:36:26Z",
+            "input": "xxh64:35dfaf7ad74e1b73"
+          },
+          "chainguard": {
+            "captured": "2026-10-09T00:36:28Z",
+            "input": "xxh64:2cbac6013fe7410b"
+          },
+          "chainguard-libraries": {
+            "captured": "2026-10-09T00:36:03Z",
+            "input": "xxh64:3e743a951e0b26d3"
+          },
+          "debian": {
+            "captured": "2026-10-09T00:36:24Z",
+            "input": "xxh64:e97b626b1a3a0fbb"
+          },
+          "echo": {
+            "captured": "2026-10-09T00:35:59Z",
+            "input": "xxh64:b1990d09cab8d01a"
+          },
+          "eol": {
+            "captured": "2026-10-09T00:36:15Z",
+            "input": "xxh64:a16b77be46615f76"
+          },
+          "epss": {
+            "captured": "2026-10-09T00:36:11Z",
+            "input": "xxh64:c1a9bee4b6ab4bd0"
+          },
+          "fedora": {
+            "captured": "2026-10-09T00:35:58Z",
+            "input": "xxh64:0491bbdfeb4e6d8c"
+          },
+          "github": {
+            "captured": "2026-10-09T00:36:15Z",
+            "input": "xxh64:ef274329ec62de86"
+          },
+          "govulndb": {
+            "captured": "2026-10-09T00:36:16Z",
+            "input": "xxh64:4c7f622cdf8b8cfd"
+          },
+          "hummingbird": {
+            "captured": "2026-10-09T00:37:44Z",
+            "input": "xxh64:7902bfa6088cfb55"
+          },
+          "kev": {
+            "captured": "2026-10-09T00:36:00Z",
+            "input": "xxh64:b0d499c7f5ff1cee"
+          },
+          "mariner": {
+            "captured": "2026-10-09T00:35:54Z",
+            "input": "xxh64:a6f0c5e64d9f0742"
+          },
+          "minimos": {
+            "captured": "2026-10-09T00:36:23Z",
+            "input": "xxh64:b419d8fef38aceb8"
+          },
+          "nvd": {
+            "captured": "2026-10-09T00:36:50Z",
+            "input": "xxh64:2dd10ead6231828e"
+          },
+          "oracle": {
+            "captured": "2026-10-09T00:35:58Z",
+            "input": "xxh64:5b7981df7007b87c"
+          },
+          "photon": {
+            "captured": "2026-10-09T00:36:07Z",
+            "input": "xxh64:66a1ea61e6d15c30"
+          },
+          "rhel": {
+            "captured": "2026-10-09T00:36:53Z",
+            "input": "xxh64:87aa28b1b7ad9de4"
+          },
+          "secureos": {
+            "captured": "2026-10-09T00:36:16Z",
+            "input": "xxh64:025475301a5dda33"
+          },
+          "sles": {
+            "captured": "2026-10-09T00:37:28Z",
+            "input": "xxh64:8782b2d655451147"
+          },
+          "ubuntu": {
+            "captured": "2026-10-09T00:36:50Z",
+            "input": "xxh64:80b63138d201582a"
+          },
+          "wolfi": {
+            "captured": "2026-10-09T00:36:14Z",
+            "input": "xxh64:fe8413de0fe8b6cf"
+          }
+        }
+      },
+      "reportSHA256": "sha256:7d0bc43b7b56b4cc2d87777fe644da5d08c833dd363c5611f33db90e2fdc88c4",
+      "sbomSHA256": "sha256:03fd60316d46ce3c062b074d6c5d57f7448cbc1833c566511e8e870da8c787ab",
+      "matches": [
+        {
+          "id": "CVE-2025-6965",
+          "severity": "High",
+          "fixedVersions": [
+            "3.50.2"
+          ]
+        },
+        {
+          "id": "CVE-2022-35737",
+          "severity": "High",
+          "fixedVersions": [
+            "3.39.2"
+          ]
+        },
+        {
+          "id": "CVE-2023-7104",
+          "severity": "High",
+          "fixedVersions": []
+        },
+        {
+          "id": "CVE-2022-46908",
+          "severity": "High",
+          "fixedVersions": [
+            "3.40.1"
+          ]
+        },
+        {
+          "id": "CVE-2026-11822",
+          "severity": "High",
+          "fixedVersions": [
+            "3.53.2"
+          ]
+        },
+        {
+          "id": "CVE-2025-70873",
+          "severity": "High",
+          "fixedVersions": [
+            "3.51.1"
+          ]
+        },
+        {
+          "id": "CVE-2026-11824",
+          "severity": "High",
+          "fixedVersions": [
+            "3.53.2"
+          ]
+        }
+      ]
+    }
+  },
+  "retainedRawEvidenceSHA256": {
+    "attestation-availability.json": "sha256:ada01f2bbf05115bf88e6ca5e581af69f07916e6ab388378f0e679878afcc744",
+    "availability.json": "sha256:33d1e40ae6d3b808e1e4fe127136abcb7636976aede7f9c394ecb9bd2adf57a3",
+    "avro-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "avro-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "avro-build-receipts.json": "sha256:f77f2ff11b8a481e276d2be3c7a9de874475fa4a8b613d55721479632c230d18",
+    "avro-runs.json": "sha256:1dcdbee606ff6c3f0048cedabdf94212645d28ce246f0578c905d4f7adcd45de",
+    "azure-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "azure-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "azure-build-receipts.json": "sha256:fde256d728d21e25794cde7b4778a1baa0b37deb62812a3e07fdfe47cd566e66",
+    "azure-runs.json": "sha256:0f555297f26ffea9d2864cf5d627caccec11579b6a7538587ca857a73814bfa5",
+    "delta-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "delta-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "delta-build-receipts.json": "sha256:cb5374560f2834304d196e5d0a7b12dd44a7d0f5477770c3330f35572042f219",
+    "delta-runs.json": "sha256:7a2c2b8605d744acb6e6ad3d15cbf5681ca5f68bfab3a29189ac3c353d3044fa",
+    "ducklake-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "ducklake-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "ducklake-build-receipts.json": "sha256:388345cca9c879042dfc698e9111275b96428d189bf2b5759cf690f65c7d862a",
+    "ducklake-runs.json": "sha256:acde34f7e26a13e853a64adb32efc508213235c1271e8fd80fa83ce8de174360",
+    "excel-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "excel-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "excel-build-receipts.json": "sha256:1565c7dad7ac95f4bf368e3a25eb0e9df86f00de01bc359057691b4e72796311",
+    "excel-runs.json": "sha256:d4ad77db08956d5e051d1099605088de4cb02f8c472698ec53dc5999ef7e3b60",
+    "httpfs-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "httpfs-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "httpfs-build-receipts.json": "sha256:0055fba31516f143649e7a7518dcb513eb2b2583485368811890cde6a46b54f2",
+    "httpfs-runs.json": "sha256:3147ab06f8a3b325d5334cf4de9b4eded617010bad57f06be4493276f65e33a4",
+    "iceberg-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "iceberg-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "iceberg-build-receipts.json": "sha256:5d6ca843f813342db9fb6e07b58f4e380e0bc006ac8388f327baabeb42db4923",
+    "iceberg-runs.json": "sha256:c47ed3b4debe45730628b884d1544dcc4b89a658d455a2ed1ab134eb993cbc8a",
+    "inventory.json": "sha256:39d3766cfacd15f948f3db11a4398c3205a3c3eb63680f20f5803d331413e008",
+    "mysql-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "mysql-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "mysql-build-receipts.json": "sha256:da15e34fe8ea836898769fb458d8609f3f51acb042a3931200bad2f3d95074e8",
+    "mysql-runs.json": "sha256:c1114e298db0f88a52ff88a70339648cd1bbe7c218276954ff2ea90334001ffc",
+    "postgres-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "postgres-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "postgres-build-receipts.json": "sha256:a7aa492a93867e979ed3eecb058e5964f0811a2d4c7ce2ea63c111a87b05d8d8",
+    "postgres-runs.json": "sha256:bce3ebdb5c266bd11daf1efa04ada02ad49e63a237e52f81a858277bf0066ad6",
+    "quack-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "quack-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "quack-build-receipts.json": "sha256:be4930c40c45fe75ea6887eb87a1ec84ac6f8fc90d658cb54da0cc3f8ddd6e41",
+    "quack-runs.json": "sha256:933d854a2fe855a029794b82fd64b0b5dcae5a5f7e72a132594f019e51f3cf36",
+    "spatial-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "spatial-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "spatial-build-receipts.json": "sha256:5dae550e37518e106024b6c75f474a804a50f4c0c13cf65e695c77262589ce8d",
+    "spatial-runs.json": "sha256:6705fcd4031bf664bf6e2a422a4eb3516dc8f0bd8f8e5ebf990a9e272387bc32",
+    "sqlite-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "sqlite-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "sqlite-build-receipts.json": "sha256:6b98bc76b315adaad33a564329e723fa4ec5eb5f5155563e91de04415ef8a570",
+    "sqlite-runs.json": "sha256:dca70c095a3bc52d0c22701fe412a8bcead6e436b2d132348698438a65c79774",
+    "vortex-amd64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "vortex-arm64-attestations.json": "sha256:8ecae33333826db91507fbc9512eabf6e8e7c9be3c43f6681ca70bff4c028a6d",
+    "vortex-build-receipts.json": "sha256:d203c2d3ebf991a5b85da7ad42f4ca9003db2f1af12b48608315e649494edbdd",
+    "vortex-runs.json": "sha256:b43983aa0645ea45b044def93a4c2ce0cb0ec700c7f096e844e025c18f7440d8"
+  }
+}
