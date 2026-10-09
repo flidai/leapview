@@ -51,6 +51,14 @@ in
       type = lib.types.str;
       default = "/dev/sda";
     };
+    bootMode = lib.mkOption {
+      type = lib.types.enum [
+        "bios"
+        "uefi"
+      ];
+      default = "bios";
+      description = "Firmware mode verified by the operator before initial disk installation.";
+    };
   };
   config = {
     assertions = [
@@ -120,6 +128,14 @@ in
       "ahci"
       "sd_mod"
     ];
-    boot.loader.grub.enable = true; # Disko supplies the install device from the EF02 partition.
+    boot.loader.grub = {
+      enable = true;
+      # BIOS receives its installation device from Disko's EF02 partition.
+      # UEFI uses the portable ESP path, without altering firmware variables.
+      devices = lib.mkIf (cfg.bootMode == "uefi") [ "nodev" ];
+      efiSupport = cfg.bootMode == "uefi";
+      efiInstallAsRemovable = cfg.bootMode == "uefi";
+    };
+    boot.loader.efi.canTouchEfiVariables = false;
   };
 }
