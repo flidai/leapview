@@ -112,8 +112,7 @@ func (m Metrics) tokenAllowsTypedPairs(snapshot accesssnapshot.AuthorizationSnap
 	if err != nil {
 		return false
 	}
-	ceiling := access.IntersectPermissionPairs(token.Permissions, effective)
-	return permissionPairsAllow(ceiling, required)
+	return permissionPairsAllow(effective, required) && permissionPairsAllow(token.Permissions, required)
 }
 
 func (m Metrics) viewAsPermissionPairs(projectID projectgraph.ResourceID) ([]access.PermissionPair, error) {

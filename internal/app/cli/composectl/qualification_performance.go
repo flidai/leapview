@@ -275,7 +275,7 @@ func compareQualificationPerformance(
 	baseline qualificationPerformanceReport,
 	policy qualificationPerformancePolicy,
 ) []string {
-	var failures []string
+	failures := qualificationPerformanceComparisonIdentity(candidate, baseline, policy)
 	for _, failure := range validateQualificationPerformanceLatencies(candidate, policy) {
 		failures = append(failures, "candidate "+failure)
 	}
