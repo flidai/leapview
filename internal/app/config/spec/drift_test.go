@@ -70,7 +70,7 @@ func TestOperationalEnvironmentReferencesAreCataloged(t *testing.T) {
 				if strings.HasPrefix(name, "LEAPVIEW_TEST_") {
 					continue
 				}
-				if _, ok := known[name]; !ok && !knownDynamicEnvironmentReference(name) {
+				if _, ok := known[name]; !ok && !knownDynamicEnvironmentReference(name) && !knownEnvironmentFamilyReference(name) {
 					t.Errorf("%s references uncataloged environment variable %s", path, name)
 				}
 			}
@@ -80,13 +80,22 @@ func TestOperationalEnvironmentReferencesAreCataloged(t *testing.T) {
 			continue
 		}
 		_ = filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
+			if err == nil && entry.IsDir() && entry.Name() == "__pycache__" {
+				return filepath.SkipDir
+			}
 			if err == nil && !entry.IsDir() && !strings.Contains(path, ".terraform/") && !strings.Contains(path, "/.local/") &&
-				!strings.HasSuffix(path, ".tfstate") && !strings.HasSuffix(path, ".sqlite3") {
+				!strings.HasSuffix(path, ".tfstate") && !strings.HasSuffix(path, ".sqlite3") && !strings.HasSuffix(path, ".pyc") {
 				visit(path)
 			}
 			return err
 		})
 	}
+}
+
+func knownEnvironmentFamilyReference(name string) bool {
+	// The study rejects overrides by this literal family prefix. Individual
+	// threshold names still require explicit catalog entries.
+	return name == "LEAPVIEW_PERF_MAX_"
 }
 
 func knownDynamicEnvironmentReference(name string) bool {

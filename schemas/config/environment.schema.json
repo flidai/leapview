@@ -2361,6 +2361,18 @@
       "x-lifecycle": "development",
       "x-scope": "browser benchmark"
     },
+    "LEAPVIEW_BROWSER_PROFILE_OUTPUT": {
+      "description": "Output directory for route payloads, browser traces, and bounded interaction observations.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "browser performance profile"
+    },
+    "LEAPVIEW_BROWSER_PROFILE_SERVER_RECEIPT": {
+      "description": "Path to the source, binary, and process identity receipt admitting the owned native fixture server.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "browser performance profile"
+    },
     "LEAPVIEW_CLI_CONFIG": {
       "description": "Path to the non-secret CLI target profile document.",
       "type": "string",

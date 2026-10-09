@@ -353,10 +353,22 @@ func TestPostgresNativeRefreshFinalizerRejectsExpiredDeliveryLease(t *testing.T)
 	if _, err := f.delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: pubID, TargetID: f.targetID, GenerationID: f.resultID, ExpectedBaseGenerationID: f.baseID, CandidateID: generation.CandidateID, SnapshotSealID: generation.SnapshotSealID, ExpectedTargetRevision: 2, ActorID: f.job.PrincipalID, RequestDigest: requestDigest}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.delivery.AcquireLease(t.Context(), deploymentpostgres.LeaseInput{LeaseID: leaseID, TargetID: f.targetID, OwnerID: f.job.LeaseOwner, ExpiresAt: time.Now().UTC().Add(20 * time.Millisecond)}); err != nil {
+	if _, err := f.delivery.AcquireLease(t.Context(), deploymentpostgres.LeaseInput{LeaseID: leaseID, TargetID: f.targetID, OwnerID: f.job.LeaseOwner, ExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(40 * time.Millisecond)
+	// Expire the acquired fixture lease using the authority clock. A short TTL
+	// can expire during acquisition and never exercise the finalizer boundary.
+	// Keep acquisition identity immutable; finalization reads the clock after
+	// this expiry update completes.
+	tag, err := f.db.Exec(t.Context(), `UPDATE delivery.delivery_lease
+		SET expires_at = clock_timestamp()
+		WHERE lease_id = $1::uuid AND state = 'active'`, leaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("expired fixture leases = %d, want 1", tag.RowsAffected())
+	}
 	tx, err := f.db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

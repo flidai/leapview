@@ -12,3 +12,14 @@ func TestDynamicEnvironmentPrefixesAreNarrowAndDevelopmentOnly(t *testing.T) {
 		t.Fatal("dynamic environment prefix scope is not fail-closed")
 	}
 }
+
+func TestEnvironmentFamilyReferenceDoesNotAllowUncatalogedSettings(t *testing.T) {
+	if !knownEnvironmentFamilyReference("LEAPVIEW_PERF_MAX_") {
+		t.Fatal("literal threshold family reference must be recognized")
+	}
+	for _, name := range []string{"LEAPVIEW_PERF_MAX_UNKNOWN", "LEAPVIEW_UNKNOWN_"} {
+		if knownEnvironmentFamilyReference(name) || knownDynamicEnvironmentReference(name) {
+			t.Fatalf("uncataloged setting or family %q was accepted", name)
+		}
+	}
+}
