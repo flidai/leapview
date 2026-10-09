@@ -184,6 +184,13 @@ async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute, viewport:
   const context = await browser.newContext({ viewport, ...(route.path !== '/login' && storageState ? { storageState } : {}) })
   const page = await context.newPage()
   const messages = collectBlockingConsoleMessages(page)
+  const failures: string[] = []
+  const recordFailure = (message: string) => {
+    failures.push(message.slice(0, 1000))
+    if (failures.length > 20) failures.shift()
+  }
+  page.on('requestfailed', request => recordFailure(`${request.method()} ${new URL(request.url()).pathname}: ${request.failure()?.errorText ?? 'unknown transport failure'}`))
+  page.on('pageerror', error => recordFailure(error.message))
   const updates: string[] = []
   page.on('request', (request) => {
     if (new URL(request.url()).pathname === '/updates') updates.push(request.url())
@@ -231,6 +238,10 @@ async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute, viewport:
     }
 
     assertNoBlockingConsoleMessages(`${route.label} accessibility scan`, messages)
+  } catch (error) {
+    const label = `${route.label} accessibility scan (${route.path}, ${viewport.width}x${viewport.height})`
+    const diagnostics = [...failures, ...messages.slice(-20)].join('\n')
+    throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}${diagnostics ? `\n${diagnostics}` : ''}`, { cause: error })
   } finally {
     await context.close()
   }
