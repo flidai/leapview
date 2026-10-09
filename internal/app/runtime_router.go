@@ -89,20 +89,21 @@ func withAgentCredential(ctx context.Context, principal accessmodule.Principal, 
 }
 
 type capabilityRoutes struct {
-	accessModule       *accessmodule.Module
-	managedDataModule  *manageddatamodule.Module
-	deploymentModule   *deploymentmodule.Module
-	dashboardModule    *dashboardmodule.Module
-	dashboardAuthoring *dashboardmodule.AuthoringApplication
-	dashboardAssets    dashboardmodule.Assets
-	agentModule        *agentmodule.Module
-	releaseModule      *releasemodule.Module
-	refreshModule      *refreshmodule.Module
-	adminModule        *adminmodule.Module
-	product            *adminmodule.ProductService
-	dashboardTelemetry dashboardmodule.Telemetry
-	projectCatalog     *projectcatalog.Service
-	projectBrowser     *projecthttp.BrowserHandler
+	accessModule           *accessmodule.Module
+	managedDataModule      *manageddatamodule.Module
+	deploymentModule       *deploymentmodule.Module
+	dashboardModule        *dashboardmodule.Module
+	dashboardAuthoring     *dashboardmodule.AuthoringApplication
+	dashboardAssets        dashboardmodule.Assets
+	agentModule            *agentmodule.Module
+	releaseModule          *releasemodule.Module
+	refreshModule          *refreshmodule.Module
+	adminModule            *adminmodule.Module
+	product                *adminmodule.ProductService
+	dashboardTelemetry     dashboardmodule.Telemetry
+	projectCatalog         *projectcatalog.Service
+	projectBrowser         *projecthttp.BrowserHandler
+	firstSourcePreparation *firstSourcePreparationBrowserRoutes
 }
 
 type runtimeServices struct {
@@ -1302,6 +1303,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		principal, ok := routes.accessModule.CurrentPrincipal(r)
 		return principal.ID, ok
 	}
+	routes.firstSourcePreparation = newFirstSourceCredentialPreparationRoutes(credentialAPI, storage.instanceID, runtimeConfig.IdempotencyProjectIDResolver)
 	if routes.projectBrowser != nil && credentialAPI.Service != nil && credentialAPI.Validation != nil && credentialAPI.Activation != nil {
 		routes.projectBrowser.ConnectionCommands.Credentials = credentialmodule.CredentialBrowserBindings()
 		routes.projectBrowser.ConnectionCredentials = connectionCredentialBrowser(credentialAPI, storage.instanceID)

@@ -11,7 +11,7 @@ import (
 
 func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := credentialgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 8; got != want {
+	if got, want := len(contracts), 10; got != want {
 		t.Fatalf("Credential generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range contracts {

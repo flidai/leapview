@@ -27,11 +27,12 @@ const maxCredentialDraftEncodedBodyBytes int64 = 32 << 10
 // credential API. The service owns exact-resource authorization and storage;
 // principal and environment values come only from the composed server.
 type CredentialDraftAPIGenConfig struct {
-	Service          *credential.Service
-	Validation       *credential.ValidationService
-	Activation       credential.ActivationService
-	Environment      string
-	CurrentPrincipal func(*http.Request) (string, bool)
+	Service                *credential.Service
+	Validation             *credential.ValidationService
+	Activation             credential.ActivationService
+	FirstSourcePreparation FirstSourcePreparationCommandService
+	Environment            string
+	CurrentPrincipal       func(*http.Request) (string, bool)
 }
 
 type credentialDraftAPIGenDispatcher struct {

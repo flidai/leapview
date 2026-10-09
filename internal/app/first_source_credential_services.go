@@ -28,6 +28,21 @@ type firstSourceCredentialServiceScope struct {
 }
 
 func (s firstSourceCredentialServiceScope) CurrentProject(ctx context.Context) (projectgraph.ResourceID, error) {
+	if ctx != nil {
+		if runtime, ok := ctx.Value(firstSourceRuntimeScopeKey{}).(firstSourceRuntimeScope); ok {
+			if ctx.Err() != nil || !s.authority.production || runtime.project == nil || runtime.active == nil || !runtime.active.Load() || runtime.target != s.authority.targetID || runtime.environment != s.authority.environment {
+				return "", access.ErrForbidden
+			}
+			project, err := runtime.project(ctx)
+			if err != nil {
+				return "", err
+			}
+			if !runtime.active.Load() || ctx.Err() != nil {
+				return "", access.ErrForbidden
+			}
+			return project, nil
+		}
+	}
 	unpublished, err := s.unpublished(ctx)
 	if err != nil {
 		return "", err

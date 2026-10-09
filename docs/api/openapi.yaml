@@ -56700,6 +56700,367 @@ paths:
         resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
+  /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts/{version}/prepare-first-source:
+    post:
+      operationId: prepareFirstSourceCredential
+      summary: Prepare a validated first-source credential for an exact source plan
+      description: Requires the current browser session and exact connection.manage
+        and connection.use. Retain preparationId for explicit retry after a lost response.
+        Idempotency-Key is forbidden; planIdempotencyKey binds the later normal code_change
+        plan. Bearer calls fail closed.
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: target
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: connection
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FirstSourcePreparationResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                intentDigest: example
+                planRequestDigest: example
+                preparationId: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FirstSourcePreparationRequest'
+            example:
+              expectedTargetRevision: 1
+              planIdempotencyKey: example
+              preparationId: example
+              receiptId: example
+              sourceAttestationDigest: example
+              sourceDigest: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: intentDigest
+                sensitivity: internal
+              - name: preparationId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: FirstSourcePreparationAuditPayload
+            schema_version: 1
+          required: true
+          success_action: credential.first_source.prepared
+        authz_mode: privilege
+        failures:
+          - code: FIRST_SOURCE_PREPARATION_CONFLICT
+            kind: conflict
+            public_detail: First-source preparation conflicts with stored state.
+            status_code: 409
+          - code: INVALID_FIRST_SOURCE_PREPARATION
+            kind: invalid
+            public_detail: First-source preparation request is invalid.
+            status_code: 400
+          - code: FIRST_SOURCE_PREPARATION_NOT_FOUND
+            kind: not_found
+            public_detail: First-source preparation evidence was not found.
+            status_code: 404
+          - code: FIRST_SOURCE_PREPARATION_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: First-source preparation is unavailable.
+            status_code: 503
+          - code: FIRST_SOURCE_PREPARATION_FORBIDDEN
+            kind: unauthorized
+            public_detail: First-source preparation is forbidden.
+            status_code: 403
+        idempotency: forbidden
+        owner: LeapViewAPI.Credential
+        target:
+          parameter: connection
+          type: connection
+        ui:
+          action_id: credential.first-source.prepare
+        privilege: RESOURCE_MANAGE
+      x-authz:
+        action: connection.manage
+        mode: privilege
+        resolver: connection
+        privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/credential-drafts/{version}/validate:
     post:
       operationId: validateCredentialDraft
@@ -57801,6 +58162,362 @@ paths:
           type: connection
         ui:
           action_id: connection.binding.enable
+        privilege: RESOURCE_MANAGE
+      x-authz:
+        action: connection.manage
+        mode: privilege
+        resolver: connection
+        privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: connection
+  /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/first-source-preparations/{preparation}/renew:
+    post:
+      operationId: renewFirstSourceCredentialPreparation
+      summary: Renew proof for an exact uncommitted first-source preparation
+      description: Requires the original actor's current browser session, exact manage/use
+        and a fresh receipt for the same version, binding and configuration. Original
+        source, publisher and plan intent remain immutable. Terminal operations cannot
+        be revived. Idempotency-Key is forbidden; bearer calls fail closed.
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: target
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: connection
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: preparation
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FirstSourcePreparationResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                intentDigest: example
+                planRequestDigest: example
+                preparationId: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FirstSourcePreparationRenewRequest'
+            example:
+              receiptId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: preparationId
+                sensitivity: internal
+              - name: receiptId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: FirstSourcePreparationRenewAuditPayload
+            schema_version: 1
+          required: true
+          success_action: credential.first_source.receipt_renewed
+        authz_mode: privilege
+        failures:
+          - code: FIRST_SOURCE_PREPARATION_CONFLICT
+            kind: conflict
+            public_detail: First-source preparation conflicts with stored state.
+            status_code: 409
+          - code: INVALID_FIRST_SOURCE_PREPARATION
+            kind: invalid
+            public_detail: First-source preparation request is invalid.
+            status_code: 400
+          - code: FIRST_SOURCE_PREPARATION_NOT_FOUND
+            kind: not_found
+            public_detail: First-source preparation evidence was not found.
+            status_code: 404
+          - code: FIRST_SOURCE_PREPARATION_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: First-source preparation is unavailable.
+            status_code: 503
+          - code: FIRST_SOURCE_PREPARATION_FORBIDDEN
+            kind: unauthorized
+            public_detail: First-source preparation is forbidden.
+            status_code: 403
+        idempotency: forbidden
+        owner: LeapViewAPI.Credential
+        target:
+          parameter: connection
+          type: connection
+        ui:
+          action_id: credential.first-source.renew
         privilege: RESOURCE_MANAGE
       x-authz:
         action: connection.manage
@@ -84692,6 +85409,141 @@ components:
       example:
         filter: example
         type: example
+    FirstSourcePreparationAuditPayload:
+      type: object
+      required:
+        - preparationId
+        - intentDigest
+      properties:
+        preparationId:
+          type: string
+          example: example
+        intentDigest:
+          type: string
+          example: example
+      example:
+        intentDigest: example
+        preparationId: example
+    FirstSourcePreparationRenewAuditPayload:
+      type: object
+      required:
+        - preparationId
+        - receiptId
+      properties:
+        preparationId:
+          type: string
+          example: example
+        receiptId:
+          type: string
+          example: example
+      example:
+        preparationId: example
+        receiptId: example
+    FirstSourcePreparationRenewRequest:
+      type: object
+      required:
+        - receiptId
+      properties:
+        receiptId:
+          type: string
+          minLength: 36
+          maxLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          example: example
+      example:
+        receiptId: example
+    FirstSourcePreparationRequest:
+      type: object
+      required:
+        - preparationId
+        - receiptId
+        - sourceDigest
+        - sourceAttestationDigest
+        - planIdempotencyKey
+        - expectedTargetRevision
+      properties:
+        preparationId:
+          type: string
+          minLength: 36
+          maxLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          example: example
+        receiptId:
+          type: string
+          minLength: 36
+          maxLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          example: example
+        sourceDigest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$
+          example: example
+        sourceAttestationDigest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$
+          example: example
+        planIdempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: example
+        expectedTargetRevision:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+      description: Explicit retained source and plan intent for one validated first-source
+        credential. Publisher and source owner are the authenticated actor. This operation
+        currently requires a browser session; bearer requests fail closed. Preparation
+        does not grant publisher permissions or replace independent review.
+      example:
+        expectedTargetRevision: 1
+        planIdempotencyKey: example
+        preparationId: example
+        receiptId: example
+        sourceAttestationDigest: example
+        sourceDigest: example
+    FirstSourcePreparationResponse:
+      type: object
+      required:
+        - preparationId
+        - intentDigest
+        - planRequestDigest
+        - createdAt
+      properties:
+        preparationId:
+          type: string
+          minLength: 36
+          maxLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          example: example
+        intentDigest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$
+          example: example
+        planRequestDigest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$
+          example: example
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      description: Immutable non-secret preparation metadata. This identifies exact
+        plan intent, not an active credential or publication permission.
+      example:
+        createdAt: "2026-01-02T15:04:05Z"
+        intentDigest: example
+        planRequestDigest: example
+        preparationId: example
     GeographicDashboardPresentation:
       type: object
       allOf:

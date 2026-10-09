@@ -22,6 +22,7 @@ import (
 )
 
 type credentialLifecycleConfig struct {
+	FirstSourceBuild                   *firstSourceNativeBuild
 	Services                           *credentialmodule.Services
 	Pool                               *pgxpool.Pool
 	Graph                              *postgresauthority.PostgresAuthorityGraph
@@ -120,7 +121,11 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 	if err = c.CandidateBindings.ConfigureLocalCredentials(source.LocalCredentialPin, c.Analytics); err != nil {
 		return nil, err
 	}
-	if err = lifecycle.configure(source, source, c.TargetID); err != nil {
+	var sourceAuthority credentialmodule.ActivationAuthority = source
+	if c.FirstSourceBuild != nil {
+		sourceAuthority = &firstSourceBuildActivation{ActivationAuthority: source, build: c.FirstSourceBuild}
+	}
+	if err = lifecycle.configure(sourceAuthority, source, c.TargetID); err != nil {
 		return nil, err
 	}
 	return lifecycle, nil

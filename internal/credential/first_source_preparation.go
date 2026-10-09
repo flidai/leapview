@@ -109,21 +109,21 @@ func (i FirstSourcePreparationIntent) PreparationAuditIntent() (access.AuditInte
 	if err != nil {
 		return access.AuditIntent{}, err
 	}
-	return i.auditIntent("credential.first_source.prepared", map[string]string{"preparationId": i.PreparationID, "intentDigest": digest})
+	return i.auditIntent("prepareFirstSourceCredential", "credential.first_source.prepared", map[string]string{"preparationId": i.PreparationID, "intentDigest": digest})
 }
 
 func (i FirstSourcePreparationIntent) RenewalAuditIntent(receiptID string) (access.AuditIntent, error) {
 	if !canonicalPreparationID(receiptID) {
 		return access.AuditIntent{}, ErrInvalid
 	}
-	return i.auditIntent("credential.first_source.receipt_renewed", map[string]string{"preparationId": i.PreparationID, "receiptId": receiptID})
+	return i.auditIntent("renewFirstSourceCredentialPreparation", "credential.first_source.receipt_renewed", map[string]string{"preparationId": i.PreparationID, "receiptId": receiptID})
 }
 
 func (i FirstSourcePreparationIntent) PlanAuditIntent(link FirstSourcePlanLink) (access.AuditIntent, error) {
 	if link.Validate() != nil || link.PreparationID != i.PreparationID || link.TargetID != i.Receipt.Binding.TargetID || link.RequestDigest != i.PlanRequestDigest {
 		return access.AuditIntent{}, ErrInvalid
 	}
-	intent, err := i.auditIntent("credential.first_source.plan_selected", link)
+	intent, err := i.auditIntent("prepareFirstSource", "credential.first_source.plan_selected", link)
 	if err != nil {
 		return intent, err
 	}
@@ -135,7 +135,7 @@ func (i FirstSourcePreparationIntent) PlanAuditIntent(link FirstSourcePlanLink) 
 	return intent.Canonicalize()
 }
 
-func (i FirstSourcePreparationIntent) auditIntent(action string, metadata any) (access.AuditIntent, error) {
+func (i FirstSourcePreparationIntent) auditIntent(operation, action string, metadata any) (access.AuditIntent, error) {
 	if i.Validate() != nil {
 		return access.AuditIntent{}, ErrInvalid
 	}
@@ -150,6 +150,6 @@ func (i FirstSourcePreparationIntent) auditIntent(action string, metadata any) (
 	}
 	eventID := uuid.NewString()
 	return (access.AuditIntent{EventID: eventID, AggregateKey: "credential-first-source-preparation:" + eventID, AggregateSequence: 1, ScopeID: i.Receipt.Binding.TargetID, ActorID: actor, PrincipalID: principal,
-		Source: "credential", Operation: "prepareFirstSource", Action: action, ResourceKind: "connection", ResourceID: i.Receipt.Binding.ResourceID,
+		Source: "credential", Operation: operation, Action: action, ResourceKind: "connection", ResourceID: i.Receipt.Binding.ResourceID,
 		Outcome: "success", MetadataJSON: string(body)}).Canonicalize()
 }
