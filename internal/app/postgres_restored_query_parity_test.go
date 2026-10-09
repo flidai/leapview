@@ -272,8 +272,12 @@ func assertRestoredJourneyQueryParity(t *testing.T, api restoredJourneyAPI, cfg 
 				}
 				denial := decode("outsider agent error", []byte(content.Text))
 				authorization, ok := denial["error"].(map[string]any)
-				if !ok || authorization["code"] != "access_denied" {
-					t.Fatalf("outsider agent returned a non-authorization error: %v", denial)
+				// The semantic handler deliberately hides a model when its
+				// resource-read check denies the principal (semantic_queries.go).
+				// MCP dispatch reaches that handler; the tool projects its 404
+				// as resource_not_found, unlike the public API's outer 403 guard.
+				if !ok || authorization["code"] != "resource_not_found" || authorization["message"] != `model "semantic-model:restored" not found` {
+					t.Fatalf("outsider agent did not hide the governed model: %v", denial)
 				}
 				assertNoRows("outsider agent text", []byte(content.Text))
 			}
