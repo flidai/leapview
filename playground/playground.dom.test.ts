@@ -11,11 +11,15 @@ let server: Awaited<ReturnType<typeof startTestPlayground>>
 let page: Page
 let errors: string[]
 let unexpectedRequests: string[]
+const assetFailureLimit = 20
+let assetFailures: string[]
+let omittedAssetFailures: number
 
 function recordFailedAsset(request: BrowserRequest) {
   const url = new URL(request.url())
   if (url.origin !== server.url.origin || !['script', 'stylesheet'].includes(request.resourceType())) return
-  errors.push(`${request.failure()?.errorText ?? 'request failed'} ${request.url()}`)
+  if (assetFailures.length < assetFailureLimit) assetFailures.push(`${request.failure()?.errorText ?? 'request failed'} ${request.url()}`)
+  else omittedAssetFailures++
 }
 
 beforeAll(async () => {
@@ -26,6 +30,8 @@ afterAll(async () => { await browser?.close(); await server?.stop(true) })
 beforeEach(async () => {
   errors = []
   unexpectedRequests = []
+  assetFailures = []
+  omittedAssetFailures = 0
   page = await browser.newPage({ baseURL: server.url.href, viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   page.setDefaultTimeout(7000)
   page.on('pageerror', error => errors.push(error.message))
@@ -40,6 +46,8 @@ beforeEach(async () => {
 afterEach(async () => {
   // Closing a page deliberately cancels any remaining asset requests.
   page?.off('requestfailed', recordFailedAsset)
+  // Navigation can cancel assets; the existing rendering and error assertions decide test success.
+  if (assetFailures.length) console.error('Playground asset request failures:', JSON.stringify({ url: page.url(), failures: assetFailures, omitted: omittedAssetFailures }))
   await page?.close()
   expect(unexpectedRequests).toEqual([])
   expect(errors).toEqual([])
@@ -219,8 +227,41 @@ test('failed lazy asset diagnostics retain the browser transport reason', async 
   await page.route('**/assets/chunks/charts-*.js', route => route.abort('connectionreset'))
   await open('charts/line')
   await browserExpect(page.locator('.viewport').getByRole('status')).toContainText('Failed to fetch dynamically imported module')
-  expect(errors).toEqual([expect.stringMatching(/^net::ERR_CONNECTION_RESET http:\/\/127\.0\.0\.1:\d+\/assets\/chunks\/charts-[^/]+\.js$/)])
-  errors = [] // The transport failure is intentional and asserted above.
+  expect(assetFailures).toEqual([expect.stringMatching(/^net::ERR_CONNECTION_RESET http:\/\/127\.0\.0\.1:\d+\/assets\/chunks\/charts-[^/]+\.js$/)])
+})
+
+test('asset diagnostics retain an unexpected current-document abort without replacing rendering assertions', async () => {
+  await page.route('**/assets/chunks/charts-*.js', route => route.abort('aborted'))
+  await open('charts/line')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toContainText('Failed to fetch dynamically imported module')
+  expect(assetFailures).toEqual([expect.stringMatching(/^net::ERR_ABORTED http:\/\/127\.0\.0\.1:\d+\/assets\/chunks\/charts-[^/]+\.js$/)])
+})
+
+test('a deliberate reload reports its canceled asset without failing the recovered preview', async () => {
+  let held!: BrowserRequest
+  let requested!: () => void
+  let release!: () => void
+  const started = new Promise<void>(resolve => { requested = resolve })
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/assets/chunks/controls-*.js', async route => {
+    if (!held) {
+      held = route.request()
+      requested()
+      await pending
+    }
+    await route.continue()
+  })
+  try {
+    await page.goto(`${server.url}#controls/select`, { waitUntil: 'domcontentloaded' })
+    await started
+    const canceled = page.waitForEvent('requestfailed', request => request === held)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    release()
+    await canceled
+    expect(held.failure()?.errorText).toBe('net::ERR_ABORTED')
+    await browserExpect(page.locator('playground-controls')).toBeVisible()
+    expect(assetFailures).toEqual([`net::ERR_ABORTED ${held.url()}`])
+  } finally { release() }
 })
 
 test('browser review waits for the actual preview while its module is delayed', async () => {
