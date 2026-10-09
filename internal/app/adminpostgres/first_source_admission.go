@@ -284,7 +284,7 @@ func validateFirstSourceInstallation(ctx context.Context, tx pgx.Tx, repo *acces
 	if err != nil {
 		return err
 	}
-	if principal.AccessDisabled() {
+	if principal.Kind != access.PrincipalKindUser || principal.AccessDisabled() {
 		return credential.ErrForbidden
 	}
 	return nil
