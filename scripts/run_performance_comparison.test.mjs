@@ -21,7 +21,7 @@ function harness(reference = true) {
   let failControl = false
   const referenceDirectory = resolve('/private/candidate-comparison/reference')
   const baselinePath = join(referenceDirectory, 'performance-report.json')
-  const dependencies = { source: () => commit, clean: () => true, exists: () => reference,
+  const dependencies = { source: () => commit, clean: () => true, fingerprint: () => ({ stable: true }), exists: () => reference,
     read: (path) => path === '.quality/performance-reference.json' ? JSON.stringify({ image: baseline }) : Buffer.from('{}'),
     verify: (value, identities) => { assert.equal(value.image, baseline); assert.deepEqual(identities, { candidateCommit: commit, candidateImage: candidate }); return { reference: value, reportSHA256: 'd'.repeat(64) } },
     report: (path) => {
@@ -46,6 +46,8 @@ test('reviewed reference is admitted, then measured serially before the candidat
   assert.deepEqual(h.calls.map((call) => call.args[call.args.indexOf('--image') + 1]), [baseline, candidate])
   assert.equal(h.calls[0].env.QUALIFICATION_PERFORMANCE_BASELINE, undefined)
   assert.equal(h.calls[1].env.QUALIFICATION_PERFORMANCE_BASELINE, h.baselinePath)
+  assert.equal(h.calls[0].env.TMPDIR, resolve('.tmp/qualification/tmp'))
+  assert.equal(h.calls[1].env.TMPDIR, h.calls[0].env.TMPDIR)
   assert.equal(h.retained.at(-1).value.comparison, true)
 })
 
@@ -66,7 +68,7 @@ test('failed reference admission or qualification stops before candidate executi
   failed.failControl()
   assert.throws(() => runProductionPerformanceComparison(options, failed.dependencies), /successful report/)
   assert.equal(failed.calls.length, 1)
-  assert.equal(failed.retained.length, 1)
+  assert.equal(failed.retained.length, 2)
 })
 
 test('candidate report must name the measured baseline and pass actual comparison tolerance', () => {
@@ -101,5 +103,14 @@ test('source mutation during reference measurement cannot qualify a candidate ag
   h.dependencies.clean = () => clean
   h.dependencies.execute = (command, args, env) => { h.calls.push({ command, args, env }); clean = false }
   assert.throws(() => runProductionPerformanceComparison(options, h.dependencies), /clean candidate source/)
+  assert.equal(h.calls.length, 1)
+})
+
+test('ignored generated controller input mutation stops the comparison even when HEAD is unchanged', () => {
+  const h = harness()
+  let inputs = 'original'
+  h.dependencies.fingerprint = () => ({ generatedSHA: inputs })
+  h.dependencies.execute = (command, args, env) => { h.calls.push({ command, args, env }); inputs = 'changed' }
+  assert.throws(() => runProductionPerformanceComparison(options, h.dependencies), /generated\/native\/embed inputs/)
   assert.equal(h.calls.length, 1)
 })

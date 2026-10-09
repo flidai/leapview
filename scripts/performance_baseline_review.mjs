@@ -16,6 +16,7 @@ export function requiresPerformanceReview(paths) {
     /^scripts\/(frontend_bundle|performance_baseline|qualify_performance|run_performance_comparison)/.test(path) ||
     ['Taskfile.yml', 'Dockerfile', 'package.json', 'bun.lock', 'tsconfig.json',
       'scripts/build_assets.ts', 'scripts/build_maplibre_worker.ts', 'scripts/frontend_ci_contract.test.ts',
+      'scripts/go_receipts.mjs', 'scripts/audit_source.mjs',
       'scripts/generate_lucide_icon_catalog.ts', 'scripts/generate_visualization_validator.ts',
       '.github/workflows/ci.yml', '.github/workflows/artifacts.yml', '.github/workflows/release.yml',
       '.github/workflows/installed-candidate.yml', '.github/workflows/merge-validation.yml',

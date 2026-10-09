@@ -270,6 +270,21 @@ jobs:
           if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'warn' }}
           retention-days: 90
 
+      # Comparison review needs the fresh reference measurements, not a path
+      # into an expired runner. Preserve only this explicit bounded JSON set.
+      - name: Retain bounded serial comparison evidence
+        if: always() && (steps.qualification.outcome == 'success' || steps.qualification.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .tmp/qualification/production-image-comparison/reference/performance-report.json
+            .tmp/qualification/production-image-comparison/protocol.json
+            .tmp/qualification/production-image-comparison/build-inputs.json
+            .tmp/qualification/production-image/comparison-mode.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       # This typed report contains only image identity and bounded phase
       # names/results/codes/timings. Never upload the surrounding evidence
       # directory: it can include credentials, database state and raw logs.

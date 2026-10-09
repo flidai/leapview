@@ -4,9 +4,11 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { verifyPerformanceReferenceEvidence } from './qualify_performance_reference.mjs'
+import { fingerprintGoBuildInputs } from './go_receipts.mjs'
 
 const referenceFile = '.quality/performance-reference.json'
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const encoded = (value) => `${JSON.stringify(value, null, 2)}\n`
 const fail = (message) => { throw new Error(message) }
 const imagePattern = /^ghcr\.io\/flidai\/leapview@sha256:[0-9a-f]{64}$/
 const execute = (command, args, env) => execFileSync(command, args, { env, stdio: 'inherit', timeout: 125 * 60 * 1000 })
@@ -33,20 +35,31 @@ export function runProductionPerformanceComparison({ candidateCommit, candidateI
   if (env.QUALIFICATION_PERFORMANCE_BASELINE) fail('ambient baseline paths cannot replace the reviewed reference')
   const source = dependencies.source ?? (() => execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim())
   const clean = dependencies.clean ?? (() => execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim() === '')
+  const fingerprint = dependencies.fingerprint ?? (() => fingerprintGoBuildInputs(process.cwd(), {
+    packages: ['./cmd/leapviewctl'], tags: ['duckdb_arrow'] }))
+  const initialInputs = fingerprint()
   const verifySource = () => {
     if (source() !== candidateCommit || !clean()) fail('controller checkout must match the exact clean candidate source')
+    if (JSON.stringify(fingerprint()) !== JSON.stringify(initialInputs)) fail('selected controller Go/generated/native/embed inputs or settings changed')
   }
   verifySource()
   const exists = dependencies.exists ?? existsSync
   const read = dependencies.read ?? readFileSync
   const report = dependencies.report ?? readReport
   const run = dependencies.execute ?? execute
-  const retain = dependencies.retain ?? ((path, value) => writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode: 0o600 }))
+  const retain = dependencies.retain ?? ((path, value) => {
+    const bytes = encoded(value)
+    if (Buffer.byteLength(bytes) > 20 * 1024 * 1024) fail('bounded comparison evidence exceeds maximum size')
+    writeFileSync(path, bytes, { flag: 'wx', mode: 0o600 })
+  })
   const mkdir = dependencies.mkdir ?? ((path) => mkdirSync(path, { recursive: true, mode: 0o700 }))
   const candidateDirectory = resolve(evidenceDirectory)
   const qualification = (image, directory, baseline) => {
     verifySource()
-    const childEnv = { ...env, LEAPVIEWCTL_ROOT: resolve('deploy/compose') }
+    const temporaryDirectory = resolve('.tmp/qualification/tmp')
+    mkdir(temporaryDirectory)
+    const childEnv = { ...env, LEAPVIEWCTL_ROOT: resolve('deploy/compose'), TMPDIR: temporaryDirectory,
+      GOFLAGS: '', GOENV: 'off', GOWORK: 'off', GOTOOLCHAIN: 'local', CGO_ENABLED: '1' }
     if (baseline) childEnv.QUALIFICATION_PERFORMANCE_BASELINE = baseline
     run('go', ['run', '-tags=duckdb_arrow', './cmd/leapviewctl', 'qualify', 'image', '--image', image,
       '--require-immutable', '--evidence-dir', directory], childEnv)
@@ -63,10 +76,12 @@ export function runProductionPerformanceComparison({ candidateCommit, candidateI
   const root = resolve(candidateDirectory + '-comparison')
   const referenceDirectory = join(root, 'reference')
   mkdir(root)
+  retain(join(root, 'build-inputs.json'), initialInputs)
   retain(join(root, 'protocol.json'), { schemaVersion: 1, kind: 'serial-production-image-comparison',
     validatorCommit: candidateCommit, candidateImage, reference: admitted.reference,
     admittedHistoricalReportSHA256: admitted.reportSHA256,
     fixturePolicySHA256: hash(read('deploy/compose/qualification/performance-policy.json')),
+    buildInputsSHA256: hash(Buffer.from(encoded(initialInputs))),
     order: ['reference', 'candidate'],
     limitation: 'one serial qualification pair; no optimization adoption, variance calibration or user-p95 claim' })
   qualification(reference.image, referenceDirectory)

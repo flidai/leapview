@@ -64,3 +64,8 @@ reference or comparison stops qualification. Without an accepted reference,
 the mode receipt explicitly records `absolute-only-bootstrap` and no comparison.
 This is one serial qualification pair using the maintained tolerance, not a
 three-pair optimization screen, variance calibration or approval of new budgets.
+The fresh reference report, comparison protocol, selected build-input manifest
+and comparison-mode receipt are retained for 90 days in a separate bounded
+comparison artifact. The accepted-reference artifact keeps its original two-file
+format. Private working directories, credentials and logs are not uploaded.
+Both journeys use the maintained owned qualification temporary directory.
