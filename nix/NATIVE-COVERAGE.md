@@ -102,6 +102,14 @@ dependencies. ethnum 1.5.3 replaces 1.5.2 because the locked Rust compiler rejec
 the older conversion-error representation. These are ordinary dependency fixes;
 the remaining locked Linux runtime package versions are retained.
 
+Lance uses the hash-pinned official Rust 1.98.1 compiler/Cargo distributions
+already packaged by the locked Nixpkgs input. The default Nix source-built
+compiler combines Rust 1.98.1 with LLVM 21.1.8 and rejects Lance's ordinary
+AVX512 dot-product intrinsic. The same-version official compiler bundles LLVM
+22.1.8; the retained compiler regression passes with that pair. This changes
+only Lance's build-time compiler adapter and neither disables SIMD nor relaxes
+dependency or admission checks.
+
 The application enables this implementation only with `leapview_static_lance`
 and the external static-library binding mode. A closed registry binds the
 engine revision, Lance revision, platform and exact Cargo-lock SHA256. Packaging

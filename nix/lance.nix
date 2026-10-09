@@ -3,32 +3,41 @@ let
   revision = "350060612087e1138ffa1bbb11a535013558241a";
   lockSHA256 = "9d7e406bb9174769960775d7f75233b01e4a96a9bd9be8de3040be1badc91839";
   registry = builtins.readFile ../internal/extension/builtin.go;
+  # The locked source-built Rust uses LLVM 21, which rejects Rust 1.98's
+  # AVX512 intrinsic declarations. Use the same-version official distribution
+  # and its matching bundled LLVM, already hash-pinned by this Nixpkgs input.
+  rustPlatform = pkgs.makeRustPlatform {
+    inherit (pkgs.rust.packages.prebuilt) rustc cargo;
+  };
   source = pkgs.fetchFromGitHub {
     owner = "lance-format";
     repo = "lance-duckdb";
     rev = revision;
     hash = "sha256-aMZt44sNjyUPeD5QRzVbldHighwfK3AZ0XYcWtZSRoA=";
   };
-  rust = pkgs.rustPlatform.buildRustPackage {
-    pname = "leapview-lance-ffi";
-    version = "${builtins.substring 0 12 revision}-smithy-json-0.62.7";
-    src = source;
-    cargoLock.lockFile = ./lance-Cargo.lock;
-    postPatch = ''
-      cp ${./lance-Cargo.lock} Cargo.lock
-    '';
-    nativeBuildInputs = [ pkgs.protobuf pkgs.cmake pkgs.perl ];
-    PROTOC = "${pkgs.protobuf}/bin/protoc";
-    # Run upstream session/cache and dataset-write FFI tests; the consuming
-    # DuckDB derivation also verifies the actual static extension registration.
-    doCheck = true;
-    cargoTestFlags = [ "--lib" ];
-    installPhase = ''
-      mkdir -p "$out/lib"
-      cp target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/liblance_duckdb_ffi.a "$out/lib/"
-    '';
-    passthru = { inherit revision source; };
-  };
+  rust =
+    assert rustPlatform.rust.rustc.version == "1.98.1";
+    assert rustPlatform.rust.cargo.version == "1.98.1";
+    rustPlatform.buildRustPackage {
+      pname = "leapview-lance-ffi";
+      version = "${builtins.substring 0 12 revision}-smithy-json-0.62.7";
+      src = source;
+      cargoLock.lockFile = ./lance-Cargo.lock;
+      postPatch = ''
+        cp ${./lance-Cargo.lock} Cargo.lock
+      '';
+      nativeBuildInputs = [ pkgs.protobuf pkgs.cmake pkgs.perl ];
+      PROTOC = "${pkgs.protobuf}/bin/protoc";
+      # Run upstream session/cache and dataset-write FFI tests; the consuming
+      # DuckDB derivation also verifies the actual static extension registration.
+      doCheck = true;
+      cargoTestFlags = [ "--lib" ];
+      installPhase = ''
+        mkdir -p "$out/lib"
+        cp target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/liblance_duckdb_ffi.a "$out/lib/"
+      '';
+      passthru = { inherit revision source; };
+    };
 in
 assert builtins.hashFile "sha256" ./lance-Cargo.lock == lockSHA256;
 assert pkgs.lib.hasInfix ''SourceRevision:  "${revision}"'' registry;
