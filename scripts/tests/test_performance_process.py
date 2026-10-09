@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -14,6 +15,32 @@ spec.loader.exec_module(processes)
 
 
 class OwnedProcessCleanupTest(unittest.TestCase):
+    def test_parent_exiting_between_snapshot_and_poll_is_not_a_descendant_leak(self):
+        class Parent:
+            pid = 424242
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout):
+                return 0
+
+        observations = 0
+
+        def snapshot():
+            nonlocal observations
+            observations += 1
+            return {Parent.pid: {'parent': os.getpid(), 'group': Parent.pid,
+                                'start': 'original', 'state': 'S', 'rssKiB': 16}} if observations == 1 else {}
+
+        with patch.object(processes.subprocess, 'Popen', return_value=Parent()), \
+             patch.object(processes, 'process_snapshot', side_effect=snapshot):
+            result = processes.run_owned(['mocked'], stdout=None)
+        self.assertEqual(result['exitCode'], 0)
+        self.assertIsNone(result['terminationReason'])
+        self.assertTrue(result['cleanupComplete'])
+        self.assertGreaterEqual(observations, 2)
+
     def test_timeout_cleans_detached_grandchild_that_escapes_parent_group(self):
         with tempfile.TemporaryDirectory() as directory:
             pidfile = Path(directory) / 'child.json'

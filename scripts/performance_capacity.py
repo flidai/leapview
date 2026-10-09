@@ -141,7 +141,10 @@ def prepare(directory):
         binary = directory / (name + ".test")
         command = ["go", "test", "-mod=readonly", "-tags=duckdb_arrow", "-p", "1", "-c", "-o", str(binary), package]
         with (directory / (name + "-build.log")).open("xb") as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=build_environment(), timeout=600, check=True)
+            execution = run_owned(command, stdout=log, env=build_environment(), timeout=600)
+        write(directory / (name + "-build-execution.json"), execution)
+        if execution["exitCode"] != 0 or execution["terminationReason"]:
+            raise ValueError(f"binary preparation failed: {execution}")
         binaries[name] = {"path": str(binary), "sha256": digest(binary), "package": package, "command": command}
     if identity() != source or build_inputs() != inputs:
         raise ValueError("source or selected generated/native/embed inputs changed during preparation")

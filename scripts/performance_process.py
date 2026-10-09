@@ -53,7 +53,14 @@ def run_owned(command, *, stdout, env=None, timeout=150, peak_rss_limit_kib=4 * 
             reason = 'process_tree_rss_stop'
             break
         if code is not None:
-            if living:
+            # The pre-poll snapshot may still show the immediate parent live.
+            # Re-observe adopted descendants after terminal status is known.
+            terminal = process_snapshot()
+            for pid in descendants(terminal, os.getpid()):
+                owned[pid] = terminal[pid]['start']
+            survivors = {pid for pid, row in terminal.items() if pid != process.pid
+                         and owned.get(pid) == row['start'] and row['state'] != 'Z'}
+            if survivors:
                 reason = 'owned_descendants_survived_parent'
             break
         if time.monotonic() - started >= timeout:
