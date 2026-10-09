@@ -27,6 +27,17 @@ func TestBuiltinRegistryIsClosedAndDescriptorAuthenticated(t *testing.T) {
 	if err := VerifyBuiltinDescriptor(identity, builtin.Bytes(), builtin.Provenance(), "package:compiled-engine"); err != nil {
 		t.Fatal(err)
 	}
+	if len(builtin.SourcePatchSHA256) != 64 {
+		t.Fatal("compiled Lance descriptor does not bind its source patches")
+	}
+	unpatched := builtin
+	unpatched.SourcePatchSHA256 = ""
+	if unpatched.Digest() == builtin.Digest() || unpatched.Provenance() == builtin.Provenance() {
+		t.Fatal("patched and unpatched Lance identities collide")
+	}
+	if VerifyBuiltinDescriptor(identity, unpatched.Bytes(), unpatched.Provenance(), "package:compiled-engine") == nil {
+		t.Fatal("unpatched source descriptor accepted for patched engine")
+	}
 	for _, mutate := range []func(*Identity){
 		func(i *Identity) { i.Builtin = false },
 		func(i *Identity) { i.Name = "httpfs" },

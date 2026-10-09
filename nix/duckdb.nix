@@ -19,7 +19,7 @@ let
     duckdb_extension_load(sqlite_scanner SOURCE_DIR ${sqlite.source})
   '';
 in
-assert pkgs.lib.hasInfix ''EngineRevision:  "${revision}"'' registry;
+assert pkgs.lib.hasInfix ''EngineRevision:"${revision}"'' (builtins.replaceStrings [ " " "\t" ] [ "" "" ] registry);
 assert pkgs.lib.hasInfix ''DuckDBVersion: "v1.5.4"'' registry;
 pkgs.duckdb.overrideAttrs (_: {
   pname = "leapview-duckdb";

@@ -20,6 +20,7 @@ type BuiltinDescriptor struct {
 	SourceArchiveSHA256 string `json:"sourceArchiveSHA256,omitempty"`
 	SQLiteSourceID      string `json:"sqliteSourceID,omitempty"`
 	SQLiteSourceSHA3    string `json:"sqliteSourceSHA3,omitempty"`
+	SourcePatchSHA256   string `json:"sourcePatchSHA256,omitempty"`
 }
 
 func CompiledBuiltin(name, platform string) (BuiltinDescriptor, bool) {
@@ -38,9 +39,10 @@ func CompiledBuiltin(name, platform string) (BuiltinDescriptor, bool) {
 		return BuiltinDescriptor{}, false
 	}
 	return BuiltinDescriptor{Name: "lance", DuckDBVersion: "v1.5.4", Platform: platform,
-		EngineRevision:  "08e34c447bae34eaee3723cac61f2878b6bdf787",
-		SourceRevision:  "350060612087e1138ffa1bbb11a535013558241a",
-		CargoLockSHA256: "9d7e406bb9174769960775d7f75233b01e4a96a9bd9be8de3040be1badc91839"}, true
+		EngineRevision:    "08e34c447bae34eaee3723cac61f2878b6bdf787",
+		SourceRevision:    "350060612087e1138ffa1bbb11a535013558241a",
+		CargoLockSHA256:   "e69a51c14dab6a9b7c412c763fdb6a5e1fe0089fd5199f944a482d4ced2b32ca",
+		SourcePatchSHA256: "f1c3261a7b59a1890af0ae0b457cf0ebf1614508cd039cec6d390df0218d7388"}, true
 }
 
 func (b BuiltinDescriptor) Bytes() []byte {
@@ -57,7 +59,7 @@ func (b BuiltinDescriptor) Provenance() string {
 	if b.Name == "sqlite" {
 		return "compiled:" + b.EngineRevision + ":" + b.SourceRevision + ":" + b.SourceArchiveSHA256 + ":" + b.SQLiteSourceSHA3
 	}
-	return "compiled:" + b.EngineRevision + ":" + b.SourceRevision + ":" + b.CargoLockSHA256
+	return "compiled:" + b.EngineRevision + ":" + b.SourceRevision + ":" + b.CargoLockSHA256 + ":" + b.SourcePatchSHA256
 }
 
 // ValidateBuiltinIdentity requires the closed compile-time registry, rather
