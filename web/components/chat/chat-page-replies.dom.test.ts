@@ -4,6 +4,63 @@ import { windowedTablePreviewEnvelope } from '../dashboard/dashboard-builder-tes
 
 const fixture = chatPageBrowserFixture()
 
+test('a removed windowed table offers Add instead of nonfunctional sort controls', async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  await page.goto(fixture.baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async (e: any, envelope) => {
+   e.retainedDashboardArtifacts = [{id:'removed', type:'table', summary:'Country performance'}]
+   e.retainedDashboardVisuals = {removed:envelope}
+   e.dashboardCopyLinks = {removed:[{id:'card', pageId:'overview'}]}
+   e.dashboardPageId = 'overview'
+   e.dashboardPreview = true
+   e.selectedPreviewVisual = 'removed'
+   e.visitedVisuals = ['removed']
+   await e.updateComplete
+  }, windowedTablePreviewEnvelope())
+  expect(await chat.locator('lv-report-table').count()).toBe(0)
+  expect(await chat.getByText('Add this table back to the dashboard to view, sort, or load more rows.').isVisible()).toBe(true)
+  expect(await chat.getByRole('button',{name:'Add to dashboard',exact:true}).isVisible()).toBe(true)
+  await chat.evaluate(async (e: any) => {
+   e.dashboardCopies = {removed:{id:'card', pageId:'overview'}}
+   await e.updateComplete
+  })
+  await chat.locator('lv-report-table .header-button').first().waitFor()
+  expect(await chat.locator('lv-report-table .header-button').first().isEnabled()).toBe(true)
+  expect(await chat.getByText('Add this table back to the dashboard to view, sort, or load more rows.').count()).toBe(0)
+ } finally { await page.close() }
+})
+
+test('saving a generated visual retains removal until the builder is idle', async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  await page.goto(fixture.baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  const state = await chat.evaluate((e: any) => {
+   e.dashboardRevisionId = 'revision'
+   e.dashboardPageId = 'overview'
+   e.builderUpdating = true
+   e.pendingVisualRemoval = {artifactId: 'generated', revisionId: 'revision', pageId: 'overview'}
+   e.dashboardComponents = [{id: 'card', pageId: 'overview', artifactId: 'generated', savedVisualId: 'saved-1'}]
+   e.handleVisualLibraryState(new CustomEvent('lv-visual-library-state', {detail: {savedIds:['generated'], libraryIds:{generated:'saved-1'}, savingId:'', error:''}}))
+   return {pending:e.pendingVisualRemoval, change:e.pendingDashboardChange}
+  })
+  expect(state.pending?.artifactId).toBe('generated')
+  expect(state.change).toBeNull()
+  const finished = await chat.evaluate((e: any) => {
+   e.builderUpdating = false
+   e.savedBuilderHref = '/dashboards/demo/edit'
+   e.finishPendingVisualRemoval()
+   return {pending:e.pendingVisualRemoval, change:e.pendingDashboardChange}
+  })
+  expect(finished.pending).toBeNull()
+  expect(finished.change).toMatchObject({artifactId:'generated', componentId:'card', remove:true})
+ } finally { await page.close() }
+})
+
 test('dashboard tables forward sorting and paging to the retained builder', async () => {
  const page = await fixture.browser.newPage()
  try {
@@ -225,4 +282,41 @@ test('generated charts can be removed independently and added back after other e
   expect(await chat.evaluate((e:any)=>e.builderFrame.contentWindow.requests.filter((r:any)=>r.type==='lv-remove-dashboard-visual').length)).toBe(3)
   expect(await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).count()).toBe(1)
  } finally {await page.close()}
+})
+
+test('dashboard chart cards stay with their answer and share its copy action', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    await page.locator('lv-chat-composer').waitFor()
+    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+      thread.status = { enabled: true, running: false }
+      thread.conversationId = 'conversation'
+      thread.dashboardPreviewAvailable = true
+      thread.dashboardId = 'finance'
+      thread.pageArtifacts = [{ id: 'revenue', type: 'bar', summary: 'Revenue' }, { id: 'margin', type: 'kpi', summary: 'Margin' }]
+      thread.transcript = [
+        { id: 'other-user', kind: 'user', text: 'Inspect another dashboard' },
+        { id: 'other-preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'other', status: 'complete', argumentsJson: '{"dashboardId":"other"}' },
+        { id: 'other-answer', kind: 'assistant', text: 'The other dashboard is available.' },
+        { id: 'user', kind: 'user', text: 'Build a finance dashboard' },
+        { id: 'edit', kind: 'tool', name: 'edit_dashboard_source', toolCallId: 'edit', status: 'complete', argumentsJson: '{"dashboardId":"finance"}' },
+        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', status: 'complete', argumentsJson: '{"dashboardId":"finance"}' },
+        { id: 'answer', kind: 'assistant', text: 'Your finance dashboard is ready.\n\nIt includes revenue and margin.' },
+        { id: 'later-user', kind: 'user', text: 'Hello' },
+        { id: 'later-answer', kind: 'assistant', text: 'Hello again.' },
+      ]
+      await thread.updateComplete
+    })
+    const reply = page.locator('.agent-turn').filter({ hasText: 'Your finance dashboard is ready.' })
+    expect(await reply.getByRole('button', { name: 'Open Revenue in visuals sidebar' }).count()).toBe(1)
+    expect(await reply.getByRole('button', { name: 'Open Margin in visuals sidebar' }).count()).toBe(1)
+    expect(await reply.getByRole('group', { name: 'Answer actions' }).count()).toBe(1)
+    expect(await reply.getByRole('link', { name: 'Open in Builder' }).count()).toBe(0)
+    await reply.locator('.run-steps summary').click()
+    expect(await reply.getByRole('link', { name: 'Open in Builder' }).count()).toBe(0)
+    expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
+    expect(await page.locator('.agent-turn').filter({ hasText: 'Hello again.' }).locator('.visual-reference').count()).toBe(0)
+    expect(await page.locator('lv-chat-thread').locator('.stack > .page-visuals').count()).toBe(0)
+  } finally { await page.close() }
 })

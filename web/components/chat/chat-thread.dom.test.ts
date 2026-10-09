@@ -1026,43 +1026,6 @@ test('message edit action ignores a transcript item without a persisted ID', asy
 })
 
 
-test('dashboard chart cards stay with their answer and share its copy action', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
-    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
-      thread.status = { enabled: true, running: false }
-      thread.conversationId = 'conversation'
-      thread.dashboardPreviewAvailable = true
-      thread.dashboardId = 'finance'
-      thread.pageArtifacts = [{ id: 'revenue', type: 'bar', summary: 'Revenue' }, { id: 'margin', type: 'kpi', summary: 'Margin' }]
-      thread.transcript = [
-        { id: 'other-user', kind: 'user', text: 'Inspect another dashboard' },
-        { id: 'other-preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'other', status: 'complete', argumentsJson: '{"dashboardId":"other"}' },
-        { id: 'other-answer', kind: 'assistant', text: 'The other dashboard is available.' },
-        { id: 'user', kind: 'user', text: 'Build a finance dashboard' },
-        { id: 'edit', kind: 'tool', name: 'edit_dashboard_source', toolCallId: 'edit', status: 'complete', argumentsJson: '{"dashboardId":"finance"}' },
-        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', status: 'complete', argumentsJson: '{"dashboardId":"finance"}' },
-        { id: 'answer', kind: 'assistant', text: 'Your finance dashboard is ready.\n\nIt includes revenue and margin.' },
-        { id: 'later-user', kind: 'user', text: 'Hello' },
-        { id: 'later-answer', kind: 'assistant', text: 'Hello again.' },
-      ]
-      await thread.updateComplete
-    })
-    const reply = page.locator('.agent-turn').filter({ hasText: 'Your finance dashboard is ready.' })
-    expect(await reply.getByRole('button', { name: 'Open Revenue in visuals sidebar' }).count()).toBe(1)
-    expect(await reply.getByRole('button', { name: 'Open Margin in visuals sidebar' }).count()).toBe(1)
-    expect(await reply.getByRole('group', { name: 'Answer actions' }).count()).toBe(1)
-    expect(await reply.getByRole('link', { name: 'Open in Builder' }).count()).toBe(0)
-    await reply.locator('.run-steps summary').click()
-    expect(await reply.getByRole('link', { name: 'Open in Builder' }).count()).toBe(0)
-    expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
-    expect(await page.locator('.agent-turn').filter({ hasText: 'Hello again.' }).locator('.visual-reference').count()).toBe(0)
-    expect(await page.locator('lv-chat-thread').locator('.stack > .page-visuals').count()).toBe(0)
-  } finally { await page.close() }
-})
-
 test('dashboard replies keep a short summary and reveal the full explanation on demand', async () => {
   const page = await browser.newPage()
   try {

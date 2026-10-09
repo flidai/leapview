@@ -258,6 +258,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.projectedDashboardId = reference.reference.id
     this.references = mergeReferences([reference], this.references.filter(item => item.reference.kind !== reference.reference.kind || item.reference.id !== reference.reference.id))
     if (event.data.type === 'lv-builder-saved') void this.syncDashboardContext(reference.reference.id, event.data.pageId, this.dashboardPageTitle, event.data.modelId ?? '')
+    this.finishPendingVisualRemoval()
   }
 
   private async syncDashboardContext(dashboardId: string, pageId: string, pageTitle: string, modelId: string): Promise<void> {
@@ -289,10 +290,16 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private handleVisualLibraryState = (event: CustomEvent<VisualLibraryState>): void => {
     this.visualLibraryState = event.detail
     this.reconcileDashboardCopies()
-    if (this.pendingVisualRemoval && !event.detail.savingId) {
+    this.finishPendingVisualRemoval()
+  }
+
+  private finishPendingVisualRemoval(): void {
+    if (this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId) return
+    const state = this.visualLibraryState
+    if (this.pendingVisualRemoval && !state.savingId) {
       const pending = this.pendingVisualRemoval
       this.pendingVisualRemoval = null
-      if (!event.detail.error && event.detail.libraryIds?.[pending.artifactId]) {
+      if (!state.error && state.libraryIds?.[pending.artifactId]) {
         if (pending.revisionId === this.dashboardRevisionId && pending.pageId === this.dashboardPageId) this.removeDashboardVisual(pending.artifactId)
         else this.dashboardSaveError = 'The dashboard changed. Please try removing this visual again.'
       }
@@ -888,10 +895,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           ${this.dashboardPreview ? repeat(artifacts, artifact => artifact.id, artifact => {
             const payload = visuals[artifact.id]
             const kind = payload?.spec.kind ?? artifact.type
+            const removedTable = payload?.dataState.kind === 'windowed' && this.retainedDashboardVisuals[artifact.id] && !this.dashboardCopies[artifact.id]
             return html`
               <div class=${`preview-card${kind === 'kpi' ? ' kpi' : ''}${['table', 'matrix', 'pivot'].includes(kind) ? ' wide' : ''}${this.selectedPreviewVisual === artifact.id ? ' selected' : ''}`}
                 ?hidden=${artifact.id !== selected?.id} data-preview-visual=${artifact.id} tabindex="-1" aria-label=${payload?.spec.title || artifact.summary || 'Visual'}>
-                ${payload ? html`<lv-visual-artifact eager type=${artifact.type} artifact-id=${artifact.id} .payload=${payload}></lv-visual-artifact>` : html`<p class="preview-empty" role="status">Loading visual…</p>`}
+                ${removedTable ? html`<p class="preview-empty" role="status">Add this table back to the dashboard to view, sort, or load more rows.</p>` : payload ? html`<lv-visual-artifact eager type=${artifact.type} artifact-id=${artifact.id} .payload=${payload}></lv-visual-artifact>` : html`<p class="preview-empty" role="status">Loading visual…</p>`}
               </div>`
           }) : null}
         </div>

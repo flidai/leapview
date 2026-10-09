@@ -160,7 +160,7 @@ func dashboardVisualForLibrary(source document.DashboardDocument, pageID, compon
 			if !exists {
 				break
 			}
-			filters, err := application.CopyChatVisualFilters(doc.Spec.Filters, visual.Visual)
+			filters, err := placedVisualFilters(doc, page, componentID, visual.Visual)
 			return chatDraftVisual{SemanticModelID: doc.Spec.SemanticModel, Visual: definition, Filters: filters}, err
 		}
 	}

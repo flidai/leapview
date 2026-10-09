@@ -112,3 +112,55 @@ func TestGeneratedVisualCopyKeepsScopedCascadesWithoutDuplicatingReportControls(
 		t.Fatal("source report scope mutated")
 	}
 }
+
+func TestGeneratedVisualCopyKeepsPlacementAndPageFilterScopes(t *testing.T) {
+	for _, scope := range []string{"qualified", "page", "page-override", "other-page"} {
+		t.Run(scope, func(t *testing.T) {
+			var doc document.DashboardDocument
+			if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Dashboard","metadata":{"id":"dashboard:sales","name":"sales"},"spec":{"semanticModel":"sales","visuals":[{"id":"revenue","type":"kpi","title":"Revenue","query":{"type":"aggregate","dimensions":[],"metrics":["net_revenue"]},"presentation":{"type":"kpi"}}],"pages":[{"id":"overview","title":"Overview","components":[{"id":"card","type":"visual","visual":"revenue","placement":{"column":1,"row":1,"columnSpan":3,"rowSpan":2}}]},{"id":"other","title":"Other","components":[]}],"filters":[{"id":"country","label":"Country","dimension":"country","targets":["overview/card"],"control":{"type":"singleSelect"}}]}}`), &doc); err != nil {
+				t.Fatal(err)
+			}
+			parameter := "country_scope"
+			doc.Spec.Filters[0].URLParameter = &parameter
+			if scope != "qualified" {
+				doc.Spec.Filters[0].Targets = nil
+				targets := []string{"card"}
+				bindings := []document.DashboardPageFilterBinding{{ID: "page_country", Filter: "country", Targets: &targets}}
+				if scope == "page-override" {
+					override := "page_country_scope"
+					bindings[0].URLParameter = &override
+				}
+				index := 0
+				if scope == "other-page" {
+					index = 1
+				}
+				doc.Spec.Pages[index].FilterBindings = &bindings
+			}
+			before, _ := json.Marshal(doc)
+			result, err := dashboardVisualForLibrary(doc, "overview", "card")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if scope == "other-page" {
+				want = 0
+			}
+			if len(result.Filters) != want {
+				t.Fatalf("filters=%+v, want %d", result.Filters, want)
+			}
+			if want != 0 {
+				expectedParameter := parameter
+				if scope == "page-override" {
+					expectedParameter = "page_country_scope"
+				}
+				if result.Filters[0].URLParameter == nil || *result.Filters[0].URLParameter != expectedParameter {
+					t.Fatalf("URL parameter=%v, want %q", result.Filters[0].URLParameter, expectedParameter)
+				}
+			}
+			after, _ := json.Marshal(doc)
+			if string(before) != string(after) {
+				t.Fatal("source mutated")
+			}
+		})
+	}
+}
