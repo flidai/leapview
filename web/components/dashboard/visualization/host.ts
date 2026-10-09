@@ -125,6 +125,7 @@ export class VisualizationHost extends LitElement {
   private envelopeAssignmentGeneration = 0
   private pendingEnvelopeValidation?: Promise<void>
   private focusPreview?: VisualizationHost
+  private focusPreviewSource?: VisualizationHost
   private optionsScrollRoots: Array<Document | ShadowRoot> = []
 
   static styles = [visualActionStyles, visualizationHostStyles]
@@ -279,6 +280,7 @@ export class VisualizationHost extends LitElement {
     preview.authoring = this.authoring
     preview.actionsEnabled = this.actionsEnabled
     preview.exploreHref = this.exploreHref
+    preview.focusPreviewSource = this
     preview.envelope = this.envelope
     // Rendering a windowed table can request blocks without user input.
     // Only the live focused renderer may issue commands or resize the tile.
@@ -290,9 +292,23 @@ export class VisualizationHost extends LitElement {
       element: preview,
       dispose: () => {
         preview.remove()
+        preview.focusPreviewSource = undefined
         if (this.focusPreview === preview) this.focusPreview = undefined
       },
     }
+  }
+
+  private async syncFocusPreviewTable(): Promise<void> {
+    const source = this.focusPreviewSource
+    if (!source || !this.isConnected) return
+    await this.updateComplete
+    await this.waitForApply()
+    if (source !== this.focusPreviewSource || !this.isConnected) return
+    const table = this.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    const sourceTable = source.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    if (!table || !sourceTable) return
+    await sourceTable.updateComplete
+    if (source === this.focusPreviewSource && this.isConnected) table.syncFocusPreview(sourceTable)
   }
 
   protected render() {
@@ -409,6 +425,8 @@ export class VisualizationHost extends LitElement {
         this.error = ''
         this.presented = true
         this.announcement = visualizationChangeAnnouncement(previous, envelope)
+        void this.syncFocusPreviewTable()
+        void this.focusPreview?.syncFocusPreviewTable()
       }
     } catch (error) {
       if (generation === this.applyGeneration && envelope === this.envelope) this.error = error instanceof Error ? error.message : String(error)

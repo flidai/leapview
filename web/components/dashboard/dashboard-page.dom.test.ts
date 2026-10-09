@@ -1502,9 +1502,8 @@ test('visualization host renders the shared title and preserves the live source 
       return Boolean(dashboard?.shadowRoot?.querySelector('lv-visual-modal')?.shadowRoot?.querySelector('[role="dialog"]'))
     })
     const focused = await page.locator('lv-dashboard-page').evaluate((dashboard: any) => {
-      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
-      const host = hosts.find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as HTMLElement | undefined
       const modal = (dashboard.shadowRoot as ShadowRoot).querySelector('lv-visual-modal') as HTMLElement
+      const host = modal.querySelector<HTMLElement>('lv-visualization-host[slot="focus-visual"]')
       return {
         dialog: (modal.shadowRoot as ShadowRoot)?.querySelector('[role="dialog"]')?.getAttribute('aria-label'),
         sourceParent: host?.parentElement?.localName,
@@ -1520,8 +1519,7 @@ test('visualization host renders the shared title and preserves the live source 
     })
 
     const focusedStatus = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const sources = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
-      const source = sources.find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as any
+      const source = dashboard.shadowRoot.querySelector('lv-visual-modal > lv-visualization-host[slot="focus-visual"]') as any
       source.envelope = { ...source.envelope, status: { kind: 'partial', message: 'Focused refresh' } }
       await source.updateComplete
       return source.envelope?.status

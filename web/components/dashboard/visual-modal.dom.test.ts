@@ -647,9 +647,13 @@ test('long focused tables stay bounded and preserve a rendered tile, live state,
       envelope.dataRevision++
       envelope.dataState.dataRevision++
       envelope.dataState.blocks.a.rows[0] = ['updated-order']
+      // A window reply must acknowledge the live table's pending request.
+      const liveTable = host.shadowRoot.querySelector('lv-report-table')
+      envelope.dataState.blocks.a.requestSeq = liveTable.expectedBlocks.get('a')?.requestSeq ?? envelope.dataState.blocks.a.requestSeq
       host.envelope = envelope
       await host.ensureMounted()
     })
+    await browserExpect.poll(() => table.locator('.cell-value').first().innerText()).toContain('updated-order')
     await browserExpect.poll(() => preview.locator('lv-report-table .cell-value').first().innerText()).toContain('updated-order')
     await page.setViewportSize({ width: 844, height: 390 })
     await browserExpect.poll(async () => (await shell.boundingBox())?.height ?? 0).toBeLessThan(340)
@@ -664,6 +668,71 @@ test('long focused tables stay bounded and preserve a rendered tile, live state,
       host.shadowRoot.querySelector('lv-report-table') === (window as any).originalTable
     ))).toBe(true)
     await browserExpect.poll(async () => (await page.locator('#second lv-report-table .shell').boundingBox())?.height ?? 0).toBeLessThan(300)
+  } finally {
+    await page.close()
+  }
+}, 20_000)
+
+test('windowed table previews follow the live viewport without requesting their own blocks', async () => {
+  const page = await setupRenderedPage()
+  try {
+    await page.evaluate(() => {
+      const host = document.getElementById('second') as any
+      ;(window as any).windowRequests = []
+      document.addEventListener('lv-visualization-window-request', (event: Event) => {
+        const request = (event as CustomEvent).detail
+        ;(window as any).windowRequests.push(request)
+        const envelope = structuredClone(host.envelope)
+        envelope.dataRevision++
+        envelope.dataState.dataRevision++
+        const firstStart = Math.max(0, request.start - 50)
+        const starts = request.blockID === 'all'
+          ? [firstStart, firstStart + 50, firstStart + 100]
+          : [request.start]
+        for (const [index, start] of starts.entries()) {
+          const id = request.blockID === 'all' ? ['a', 'b', 'c'][index] : request.blockID
+          envelope.dataState.blocks[id] = {
+            id, start, rows: Array.from({ length: Math.min(50, 250 - start) }, (_, row) => [`o${start + row + 1}`]),
+            requestSeq: request.requestSeq, resetVersion: request.resetVersion, sort: envelope.dataState.sort,
+          }
+        }
+        host.envelope = envelope
+      })
+    })
+    await dispatchVisualAction(page, 'second', 'focus')
+    const preview = page.locator('#parent > [data-visual-focus-preview]')
+    await browserExpect.poll(() => preview.locator('.row:not(.skeleton-row)').count()).toBeGreaterThan(0)
+    const live = page.locator('lv-visual-modal #second lv-report-table')
+    await live.locator('.table-scrollport').evaluate(element => { element.scrollTop = 4200 })
+    await browserExpect.poll(() => live.locator('.cell-value').first().innerText()).toBe('o149')
+    await browserExpect.poll(() => preview.locator('.cell-value').first().innerText()).toBe('o149')
+    expect(await preview.locator('.skeleton-row').count()).toBe(0)
+    expect(await preview.locator('.footer').innerText()).not.toContain('loading')
+    const requestCount = await page.evaluate(() => (window as any).windowRequests.length)
+    await preview.locator('lv-report-table').evaluate((table: any) => {
+      table.ensureBlocksForScroll()
+    })
+    expect(await page.evaluate(() => (window as any).windowRequests.length)).toBe(requestCount)
+    expect(await preview.locator('lv-report-table').evaluate((table: any) => table.expectedBlocks.size)).toBe(0)
+    await page.locator('#second').evaluate(async (host: any) => {
+      const envelope = structuredClone(host.envelope)
+      envelope.dataRevision++
+      envelope.dataState.dataRevision++
+      envelope.dataState.resetVersion++
+      envelope.dataState.availableRows = 3
+      envelope.dataState.cardinality.count = 3
+      envelope.dataState.blocks = {
+        a: { id: 'a', start: 0, rows: [['filtered-1'], ['filtered-2'], ['filtered-3']],
+          requestSeq: 0, resetVersion: envelope.dataState.resetVersion, sort: envelope.dataState.sort },
+      }
+      host.envelope = envelope
+      await host.ensureMounted()
+    })
+    await browserExpect.poll(() => preview.locator('.cell-value').first().innerText()).toBe('filtered-1')
+    await browserExpect.poll(() => preview.locator('.row:not(.skeleton-row)').count()).toBe(3)
+    expect(await preview.locator('.skeleton-row').count()).toBe(0)
+    await page.keyboard.press('Escape')
+    expect(await preview.count()).toBe(0)
   } finally {
     await page.close()
   }
