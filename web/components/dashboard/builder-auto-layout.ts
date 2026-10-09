@@ -12,26 +12,42 @@ export function arrangeDashboardVisuals(
   const gap = Math.max(0, grid.gap)
   const pitch = Math.max(1, grid.rowHeight) + gap
   const occupied = [...obstacles, ...visuals.flatMap(visual => visual.placement ? [visual.placement] : [])].map(p => ({ ...p }))
-  const ordered = [...visuals.filter(v => v.type === 'kpi'), ...visuals.filter(v => v.type !== 'kpi')]
-  const charts = ordered.filter(v => !['kpi', 'table', 'matrix', 'pivot', 'map', 'heatmap'].includes(v.type))
+  const metrics = visuals.filter(v => v.type === 'kpi')
+  const charts = visuals.filter(v => !['kpi', 'table', 'matrix', 'pivot', 'map', 'heatmap'].includes(v.type))
+  const ordered = options.compact
+    ? [...metrics, ...charts, ...visuals.filter(v => ['table', 'matrix', 'pivot', 'map', 'heatmap'].includes(v.type))]
+    : [...metrics, ...visuals.filter(v => v.type !== 'kpi')]
   const hero = options.compact ? undefined : charts.length >= 3 && charts.length % 2 === 1 ? charts[0].id : visuals.length === 1 ? charts[0]?.id : undefined
   const kpiCount = ordered.filter(v => v.type === 'kpi').length
   const kpiColumns = options.compact ? 4 : Math.min(4, Math.max(1, kpiCount))
   const kpiWidth = Math.max(1, Math.floor(columns / kpiColumns))
-  const compactChartWidth = Math.max(Math.ceil(columns / 2), kpiCount ? columns - kpiWidth : 0)
+  const metricBands: Placement[] = []
+  let metricBandReserved = false
   const placements = ordered.map(visual => {
     if (visual.placement) {
       const p = visual.placement
       return { componentId: visual.id, placement: { column: p.col, row: p.row, columnSpan: p.colSpan, rowSpan: p.rowSpan } }
     }
+    // Keep short metrics in their own band. Mixing them with tall charts
+    // creates cavities that the next readable chart cannot fit into.
+    if (options.compact && visual.type !== 'kpi' && !metricBandReserved) {
+      for (const p of metricBands) occupied.push({ col: 1, row: p.row, colSpan: columns, rowSpan: p.rowSpan })
+      metricBandReserved = true
+    }
     const dense = ['table', 'matrix', 'pivot'].includes(visual.type)
     const wide = dense || ['map', 'heatmap'].includes(visual.type) || visual.id === hero
-    const width = Math.max(1, wide ? columns : Math.floor(columns / (visual.type === 'kpi' ? kpiColumns : 2)))
+    // Pair charts, using three across for a final odd group so a chart is
+    // not left alone on a row. Dense tables and maps follow on wide rows.
+    const chartIndex = charts.findIndex(v => v.id === visual.id)
+    const chartColumns = options.compact && charts.length >= 3 && charts.length % 2 === 1 && chartIndex >= charts.length - 3 ? 3 : 2
+    const width = Math.max(1, wide ? columns : Math.floor(columns / (visual.type === 'kpi' ? kpiColumns : chartColumns)))
     const height = Math.max(1, Math.floor(((visual.type === 'kpi' ? 128 : dense ? 384 : 320) + gap + pitch / 2) / pitch))
     for (let row = 1; ; row++) {
       for (let col = 1; col + width - 1 <= columns; col++) {
         if (occupied.some(p => col < p.col + p.colSpan && col + width > p.col && row < p.row + p.rowSpan && row + height > p.row)) continue
-        occupied.push({ col, row, colSpan: width, rowSpan: height })
+        const placed = { col, row, colSpan: width, rowSpan: height }
+        occupied.push(placed)
+        if (visual.type === 'kpi') metricBands.push(placed)
         return { componentId: visual.id, placement: { column: col, row, columnSpan: width, rowSpan: height } }
       }
     }
@@ -45,7 +61,7 @@ export function arrangeDashboardVisuals(
     const current = occupied.find(rect => rect.col === p.column && rect.row === p.row && rect.colSpan === p.columnSpan && rect.rowSpan === p.rowSpan)!
     // Visual magic keeps metrics compact and charts readable without stretching
     // an isolated card across the page. Tables and maps retain their wide view.
-    const compactWidth = visual.type === 'kpi' ? kpiWidth : compactChartWidth
+    const compactWidth = visual.type === 'kpi' ? kpiWidth : charts.length === 1 ? Math.ceil(columns / 2) : columns
     let right = options.compact && !['table', 'matrix', 'pivot', 'map', 'heatmap'].includes(visual.type)
       ? Math.min(columns + 1, p.column + compactWidth) : columns + 1
     for (const other of occupied) {

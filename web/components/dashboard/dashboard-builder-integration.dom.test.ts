@@ -341,9 +341,9 @@ for (const embedded of [false, true]) {
         }
       })
       expect(await editor.evaluate((e: any) => e.testCommands[0])).toMatchObject({ action: 'set_placements', fillMissingFields: true, placements: [
-        { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 6, rowSpan: 5 } },
-        { componentId: 'chart-1', placement: { column: 7, row: 1, columnSpan: 6, rowSpan: 5 } },
-        { componentId: 'chart-2', placement: { column: 1, row: 6, columnSpan: 6, rowSpan: 5 } },
+        { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 4, rowSpan: 5 } },
+        { componentId: 'chart-1', placement: { column: 5, row: 1, columnSpan: 4, rowSpan: 5 } },
+        { componentId: 'chart-2', placement: { column: 9, row: 1, columnSpan: 4, rowSpan: 5 } },
       ] })
       expect(await editor.evaluate((e: any) => e.canvasZoom)).toBeNull()
       const result = await editor.evaluate(async (e: any) => {
@@ -378,7 +378,7 @@ for (const embedded of [false, true]) {
       const command = await editor.evaluate((e: any) => e.testCommands[0])
       expect(command).toMatchObject({ action: 'set_placements', placements: [
         { componentId: 'ready-0', placement: { column: 1, row: 1, columnSpan: 3, rowSpan: 2 } },
-        { componentId: 'ready-1', placement: { column: 4, row: 1, columnSpan: 9, rowSpan: 5 } },
+        { componentId: 'ready-1', placement: { column: 1, row: 3, columnSpan: 6, rowSpan: 5 } },
       ] })
       expect(command.fillMissingFields).toBeUndefined()
     } finally { await page.close() }

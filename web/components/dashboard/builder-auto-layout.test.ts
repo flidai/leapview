@@ -69,19 +69,54 @@ test('new KPI cards fill a preserved KPI row without moving or resizing existing
 })
 
 
-test('Visual magic gives a single KPI a compact footprint and fits charts beside it', () => {
+test('Visual magic packs complete chart rows directly below compact KPIs', () => {
  const result = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix'].map(type => ({id:type,type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
  expect(result.map(p=>p.placement)).toEqual([
   {column:1,row:1,columnSpan:3,rowSpan:2},
-  {column:4,row:1,columnSpan:9,rowSpan:5},
-  {column:1,row:6,columnSpan:6,rowSpan:5},
-  {column:7,row:6,columnSpan:6,rowSpan:5},
-  {column:1,row:11,columnSpan:12,rowSpan:6},
+  {column:1,row:3,columnSpan:4,rowSpan:5},
+  {column:5,row:3,columnSpan:4,rowSpan:5},
+  {column:9,row:3,columnSpan:4,rowSpan:5},
+  {column:1,row:8,columnSpan:12,rowSpan:6},
  ])
  const added = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix', 'kpi'].map((type,i) => ({id:String(i),type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
  expect(added.filter(p => ['0','5'].includes(p.componentId)).map(p=>p.placement.columnSpan)).toEqual([3,3])
  for (const a of added) for (const b of added) if (a !== b) {
   const p=a.placement,q=b.placement
   expect(p.column >= q.column+q.columnSpan || q.column >= p.column+p.columnSpan || p.row >= q.row+q.rowSpan || q.row >= p.row+p.rowSpan).toBe(true)
+ }
+})
+
+
+test('compact chart rows have no cavities on odd grids or after another chart is added', () => {
+ for (const columns of [9, 12, 13]) for (const count of [2, 3, 4, 5, 6, 7]) {
+  const result = arrangeDashboardVisuals([
+   { id: 'metric', type: 'kpi' },
+   ...Array.from({length:count}, (_,i) => ({id:String(i),type:['line','pie','bar'][i%3]})),
+  ], [], {columns,rowHeight:48,gap:16}, {compact:true})
+  const metric=result[0].placement
+  const charts=result.slice(1).map(p=>p.placement)
+  expect(Math.min(...charts.map(p=>p.row))).toBe(metric.row+metric.rowSpan)
+  const end=Math.max(...charts.map(p=>p.row+p.rowSpan))
+  for(let row=metric.row+metric.rowSpan; row<end; row++) {
+   for(let col=1; col<=columns; col++) {
+    expect(charts.filter(p=>col>=p.column && col<p.column+p.columnSpan && row>=p.row && row<p.row+p.rowSpan).length).toBe(1)
+   }
+  }
+ }
+})
+
+test('compact fitting retains a manual chart and never covers a canvas filter', () => {
+ const filter={col:1,row:1,colSpan:12,rowSpan:2}
+ const manual={col:7,row:3,colSpan:6,rowSpan:5}
+ const result=arrangeDashboardVisuals([
+  {id:'metric',type:'kpi'},
+  {id:'manual',type:'line',placement:manual},
+  {id:'pie',type:'pie'},
+  {id:'table',type:'matrix'},
+ ], [filter], {columns:12,rowHeight:48,gap:16}, {compact:true})
+ expect(result.find(p=>p.componentId==='manual')!.placement).toEqual({column:7,row:3,columnSpan:6,rowSpan:5})
+ const boxes=result.map(p=>p.placement).concat({column:filter.col,row:filter.row,columnSpan:filter.colSpan,rowSpan:filter.rowSpan})
+ for(const p of boxes) for(const q of boxes) if(p!==q) {
+  expect(p.column>=q.column+q.columnSpan || q.column>=p.column+p.columnSpan || p.row>=q.row+q.rowSpan || q.row>=p.row+p.rowSpan).toBe(true)
  }
 })
