@@ -22,7 +22,7 @@ import (
 )
 
 func TestMaintenanceRuntimeCollectionContinuesAfterIndependentFailure(t *testing.T) {
-	for _, stage := range []string{"upload", "multipart", "blob"} {
+	for _, stage := range []string{"upload", "multipart", "blob", "all"} {
 		t.Run(stage, func(t *testing.T) {
 			ctx := t.Context()
 			cache, leased, idleRoot := maintenanceRuntimeFixture(t)
@@ -38,7 +38,7 @@ func TestMaintenanceRuntimeCollectionContinuesAfterIndependentFailure(t *testing
 				t.Fatal(err)
 			}
 			expireRepo := &maintenanceProgressExpireRepo{}
-			if stage == "upload" {
+			if stage == "upload" || stage == "all" {
 				expireRepo.err = control.ErrInternal
 			}
 			uploads, err := control.New(expireRepo, &unusedMaintenanceBlobStore{}, control.Config{UploadTTL: time.Hour, Transport: unusedMaintenanceTransport{}})
@@ -49,11 +49,14 @@ func TestMaintenanceRuntimeCollectionContinuesAfterIndependentFailure(t *testing
 			if stage == "multipart" {
 				multipartRepo.err = control.ErrInternal
 			}
+			if stage == "all" {
+				multipartRepo.err = manageddata.ErrConflict
+			}
 			multipart, err := s3multipart.New(multipartRepo, &unusedMaintenanceMultipartStore{}, s3multipart.Config{Backend: "s3"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if stage == "blob" {
+			if stage == "blob" || stage == "all" {
 				inventory.err = storage.ErrIntegrity
 			}
 			pass := Maintenance{uploads: uploads, multipart: multipart, uploadTTL: time.Hour, collector: collector, runtime: runtimeCollector}
@@ -62,11 +65,14 @@ func TestMaintenanceRuntimeCollectionContinuesAfterIndependentFailure(t *testing
 			if stage == "blob" {
 				wantErr = storage.ErrIntegrity
 			}
+			if stage == "all" && (!errors.Is(err, control.ErrInternal) || !errors.Is(err, control.ErrConflict) || !errors.Is(err, storage.ErrIntegrity)) {
+				t.Fatalf("independent failures were not joined: %v", err)
+			}
 			if !errors.Is(err, wantErr) {
 				t.Fatalf("maintenance error = %v, want stage failure retained", err)
 			}
 			wantExpired := int64(7)
-			if stage == "upload" {
+			if stage == "upload" || stage == "all" {
 				wantExpired = 0
 			}
 			if result.Expired != wantExpired {
@@ -79,17 +85,22 @@ func TestMaintenanceRuntimeCollectionContinuesAfterIndependentFailure(t *testing
 			if err != nil || string(content) != "leased revision" {
 				t.Fatalf("live leased runtime revision changed: %q, %v", content, err)
 			}
-			if stage != "blob" && inventory.walks != 0 {
-				t.Fatalf("blob collector crossed unresolved upload/recovery gate: walks=%d", inventory.walks)
+			if multipartRepo.calls != 1 {
+				t.Fatalf("multipart stage skipped after %s failure: calls=%d", stage, multipartRepo.calls)
 			}
-			if stage == "blob" && inventory.walks != 1 {
-				t.Fatalf("blob failure fixture not reached: walks=%d", inventory.walks)
+			if inventory.walks != 1 {
+				t.Fatalf("independent blob collector not reached: walks=%d", inventory.walks)
 			}
 		})
 	}
 }
 
 func TestMaintenanceCancellationStopsIndependentCollectors(t *testing.T) {
+	for _, stage := range []string{"upload", "multipart", "blob"} {
+		t.Run(stage, func(t *testing.T) { maintenanceCancellationStopsCollectors(t, stage) })
+	}
+}
+func maintenanceCancellationStopsCollectors(t *testing.T, stage string) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cache, leased, idleRoot := maintenanceRuntimeFixture(t)
@@ -104,12 +115,30 @@ func TestMaintenanceCancellationStopsIndependentCollectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uploads, err := control.New(&maintenanceProgressExpireRepo{cancel: cancel}, &unusedMaintenanceBlobStore{}, control.Config{UploadTTL: time.Hour, Transport: unusedMaintenanceTransport{}})
+	expiry := &maintenanceProgressExpireRepo{}
+	multipartRepo := &maintenanceProgressMultipartRepo{}
+	switch stage {
+	case "upload":
+		expiry.cancel = cancel
+	case "multipart":
+		multipartRepo.cancel = cancel
+	case "blob":
+		inventory.cancel = cancel
+	}
+	multipart, err := s3multipart.New(multipartRepo, &unusedMaintenanceMultipartStore{}, s3multipart.Config{Backend: "s3"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := (Maintenance{uploads: uploads, collector: collector, runtime: runtimeCollector}).ExpireUploads(ctx)
-	if !errors.Is(err, context.Canceled) || result.Expired != 7 || inventory.walks != 0 {
+	uploads, err := control.New(expiry, &unusedMaintenanceBlobStore{}, control.Config{UploadTTL: time.Hour, Transport: unusedMaintenanceTransport{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := (Maintenance{uploads: uploads, multipart: multipart, uploadTTL: time.Hour, collector: collector, runtime: runtimeCollector}).ExpireUploads(ctx)
+	wantWalks := 0
+	if stage == "blob" {
+		wantWalks = 1
+	}
+	if !errors.Is(err, context.Canceled) || result.Expired != 7 || inventory.walks != wantWalks {
 		t.Fatalf("canceled pass = %#v, %v; blob walks=%d", result, err, inventory.walks)
 	}
 	for _, root := range []string{idleRoot, leased.Root()} {
@@ -188,10 +217,16 @@ type unusedMaintenanceMultipartStore struct{ s3multipart.MultipartStore }
 
 type maintenanceProgressMultipartRepo struct {
 	s3multipart.Repository
-	err error
+	err    error
+	cancel context.CancelFunc
+	calls  int
 }
 
 func (r *maintenanceProgressMultipartRepo) ListRecoverableS3MultipartUploads(ctx context.Context, _ time.Time, _ int64) ([]manageddata.S3MultipartUpload, error) {
+	r.calls++
+	if r.cancel != nil {
+		r.cancel()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -209,12 +244,16 @@ func (*maintenanceProgressMultipartRepo) ReleaseS3MultipartDigest(context.Contex
 }
 
 type maintenanceProgressInventory struct {
-	walks int
-	err   error
+	walks  int
+	err    error
+	cancel context.CancelFunc
 }
 
 func (i *maintenanceProgressInventory) WalkBlobs(context.Context, func(storage.BlobMetadata) error) error {
 	i.walks++
+	if i.cancel != nil {
+		i.cancel()
+	}
 	return i.err
 }
 func (*maintenanceProgressInventory) DeleteBlobs(context.Context, []string) error {

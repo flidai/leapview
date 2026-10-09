@@ -224,6 +224,23 @@ ORDER BY sequence DESC;
 SELECT source_type, source_id, source_status, revision_digest, manifest,
        file_count, size_bytes
 FROM (
+    SELECT 'multipart'::text AS source_type,
+           m.multipart_id AS source_id,
+           m.status AS source_status,
+           ''::text AS revision_digest,
+           jsonb_build_object('files', jsonb_build_array(jsonb_build_object(
+             'path', m.logical_path, 'size', m.size_bytes, 'sha256', m.sha256
+           )))::text AS manifest,
+           1::bigint AS file_count,
+           m.size_bytes
+      FROM managed_data.multipart_upload AS m
+     WHERE m.status IN ('creating', 'open', 'completing', 'aborting', 'failed')
+       AND (
+         sqlc.arg(after_source_type)::text < 'multipart'
+         OR (sqlc.arg(after_source_type)::text = 'multipart'
+             AND m.multipart_id > sqlc.arg(after_source_id)::text)
+       )
+    UNION ALL
     SELECT 'revision'::text AS source_type,
            r.revision_id AS source_id,
            r.status AS source_status,
@@ -283,10 +300,10 @@ FROM managed_data.reachability_epoch
 WHERE singleton = true;
 
 -- name: ConfigureStableReachabilitySnapshot :exec
-SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY;
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY;
 
 -- name: LockStableReachabilitySnapshot :exec
-LOCK TABLE managed_data.upload_session, managed_data.revision IN SHARE MODE;
+SELECT managed_data.lock_stable_reachability();
 
 -- name: GetUploadIDByRevision :one
 SELECT upload_id FROM managed_data.upload_session

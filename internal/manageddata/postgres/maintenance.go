@@ -19,11 +19,13 @@ import (
 	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ReachabilitySource is the PostgreSQL maintenance adapter for managed-data
 // object retention.  It deliberately reads only durable rows that are
-// capable of retaining bytes (ready revisions and non-terminal uploads).
+// capable of retaining bytes (ready revisions, non-terminal uploads, and
+// unresolved multipart intents independently of their parent lifecycle).
 // Snapshot walks manifests in bounded pages. The database transaction used by
 // WithStableSnapshot holds table-level share locks, fencing concurrent
 // lifecycle writes for the duration of the callback, and checks the durable
@@ -116,17 +118,21 @@ func (s *ReachabilitySource) WithStableSnapshot(
 		}
 	}()
 
-	// REPEATABLE READ gives one MVCC view and READ ONLY prevents accidental
-	// writes; table SHARE locks additionally block lifecycle writes (which
-	// acquire ROW EXCLUSIVE locks) while the callback performs physical
-	// deletion. The reachability epoch is checked under those locks and the
-	// complete digest set captured by Snapshot is reused, so this boundary does
-	// not rescan every manifest while the lock is held.
+	// The owner helper locks all source tables without waiting, so callers with
+	// a different write order cannot deadlock against a partially held GC fence.
+	// READ COMMITTED makes the separate epoch statement observe every commit
+	// preceding lock acquisition; a SELECT-based helper must not establish a
+	// repeatable-read snapshot before acquiring its internal locks. SHARE locks
+	// then exclude source writes throughout physical deletion, without rescans.
 	queries := manageddb.New(tx)
 	if err := queries.ConfigureStableReachabilitySnapshot(ctx); err != nil {
 		return sourceError(ctx, "configure stable PostgreSQL snapshot", err)
 	}
 	if err := queries.LockStableReachabilitySnapshot(ctx); err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "55P03" {
+			return managedmaintenance.ErrReachabilityChanged
+		}
 		return sourceError(ctx, "lock managed-data reachability", err)
 	}
 	epoch, err := readReachabilityEpoch(ctx, queries)
@@ -280,6 +286,15 @@ func validateDurableManifest(row durableManifest) (manageddata.Manifest, []byte,
 	case "upload":
 		if row.status != string(manageddata.UploadStatusOpen) && row.status != string(manageddata.UploadStatusCommitting) {
 			return manageddata.Manifest{}, nil, integrityError("invalid nonterminal upload status")
+		}
+	case "multipart":
+		switch row.status {
+		case "creating", "open", "completing", "aborting", "failed":
+		default:
+			return manageddata.Manifest{}, nil, integrityError("invalid unresolved multipart status")
+		}
+		if row.fileCount != 1 {
+			return manageddata.Manifest{}, nil, integrityError("invalid multipart file count")
 		}
 	default:
 		return manageddata.Manifest{}, nil, integrityError("invalid durable manifest source")

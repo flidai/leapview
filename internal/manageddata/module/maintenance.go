@@ -43,18 +43,16 @@ func (m Maintenance) ExpireUploads(ctx context.Context) (control.ExpireResult, e
 	if record("expire uploads", err) {
 		return result, errors.Join(failures...)
 	}
-	// Blob reachability does not include completing multipart uploads whose
-	// parent is terminal. Keep expiry/recovery success as a prerequisite for
-	// physical blob collection until that lifecycle is independently fenced.
-	blobsEligible := err == nil
-	if blobsEligible && m.multipart != nil {
+	if m.multipart != nil {
 		_, err = m.multipart.RecoverOrphaned(ctx, time.Now().UTC().Add(-m.uploadTTL), 100)
-		blobsEligible = err == nil
 		if record("recover multipart uploads", err) {
 			return result, errors.Join(failures...)
 		}
 	}
-	if blobsEligible && m.collector != nil {
+	// Durable reachability retains unresolved multipart bytes independently of
+	// their parent upload. Its stable fence makes unrelated physical GC safe
+	// even when expiry or provider recovery fails.
+	if m.collector != nil {
 		_, err = m.collector.Run(ctx)
 		if record("collect blobs", err) {
 			return result, errors.Join(failures...)
