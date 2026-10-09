@@ -69,44 +69,34 @@ test('new KPI cards fill a preserved KPI row without moving or resizing existing
 })
 
 
-test('Visual magic leaves an incomplete compact KPI row at the end', () => {
- const result = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix'].map(type => ({id:type,type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
- expect(result.map(p=>p.placement)).toEqual([
-  {column:1,row:1,columnSpan:4,rowSpan:5},
-  {column:5,row:1,columnSpan:4,rowSpan:5},
-  {column:9,row:1,columnSpan:4,rowSpan:5},
-  {column:1,row:6,columnSpan:12,rowSpan:6},
-  {column:1,row:12,columnSpan:3,rowSpan:2},
+test('Visual magic keeps the KPI above a supporting chart beside a larger trend', () => {
+ const result=arrangeDashboardVisuals(['kpi','pie','bar','line','matrix'].map(type=>({id:type,type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
+ expect(result).toEqual([
+  {componentId:'kpi',placement:{column:1,row:1,columnSpan:4,rowSpan:2}},
+  {componentId:'line',placement:{column:5,row:1,columnSpan:8,rowSpan:7}},
+  {componentId:'pie',placement:{column:1,row:3,columnSpan:4,rowSpan:5}},
+  {componentId:'bar',placement:{column:1,row:8,columnSpan:12,rowSpan:5}},
+  {componentId:'matrix',placement:{column:1,row:13,columnSpan:12,rowSpan:6}},
  ])
- const added = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix', 'kpi'].map((type,i) => ({id:String(i),type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
- expect(added.filter(p => ['0','5'].includes(p.componentId)).map(p=>p.placement.columnSpan)).toEqual([3,3])
- for (const a of added) for (const b of added) if (a !== b) {
-  const p=a.placement,q=b.placement
-  expect(p.column >= q.column+q.columnSpan || q.column >= p.column+p.columnSpan || p.row >= q.row+q.rowSpan || q.row >= p.row+p.rowSpan).toBe(true)
- }
 })
 
-
-test('Visual magic leaves no empty cells before the final partial KPI row', () => {
- for (const columns of [9, 12, 13]) for (const metricCount of [1, 2, 3, 4, 5, 8, 9]) for (const chartCount of [1, 2, 3, 4, 5]) {
-  const visuals = [
-   ...Array.from({length:metricCount}, (_,i) => ({id:'kpi'+i,type:'kpi'})),
-   ...Array.from({length:chartCount}, (_,i) => ({id:'chart'+i,type:['line','pie','bar'][i%3]})),
+test('Visual magic keeps KPIs at the top, readable chart widths, and no internal gaps', () => {
+ for(const columns of [9,12,13]) for(const metricCount of [1,2,3,4,5,8,9]) for(const chartCount of [1,2,3,4,5]) {
+  const visuals=[
+   ...Array.from({length:metricCount},(_,i)=>({id:'kpi'+i,type:'kpi'})),
+   ...Array.from({length:chartCount},(_,i)=>({id:'chart'+i,type:['line','pie','bar'][i%3]})),
    {id:'table',type:'matrix'},
   ]
   const result=arrangeDashboardVisuals(visuals, [], {columns,rowHeight:48,gap:16}, {compact:true})
   const boxes=result.map(p=>p.placement)
-  const partial=metricCount%4
+  expect(result.find(p=>p.componentId==='kpi0')!.placement.row).toBe(1)
+  const trend=result.find(p=>p.componentId==='chart0')!.placement
+  expect(trend.columnSpan).toBeGreaterThanOrEqual(Math.floor(columns/2))
+  if(metricCount%4) expect(trend.columnSpan).toBeGreaterThan(Math.floor(columns/2))
+  expect(trend.rowSpan).toBeGreaterThanOrEqual(5)
   const end=Math.max(...boxes.map(p=>p.row+p.rowSpan))
-  const filledEnd=end-(partial ? 2 : 0)
-  for(let row=1; row<filledEnd; row++) for(let col=1; col<=columns; col++) {
+  for(let row=1;row<end;row++) for(let col=1;col<=columns;col++) {
    expect(boxes.filter(p=>col>=p.column && col<p.column+p.columnSpan && row>=p.row && row<p.row+p.rowSpan).length).toBe(1)
-  }
-  if(partial) {
-   const last=result.slice(-partial)
-   expect(last.every(p=>p.componentId.startsWith('kpi') && p.placement.row===filledEnd)).toBe(true)
-   expect(last.map(p=>p.placement.column)).toEqual(Array.from({length:partial}, (_,i)=>1+i*Math.floor(columns/4)))
-   expect(last.every(p=>p.placement.columnSpan===Math.floor(columns/4))).toBe(true)
   }
  }
 })
@@ -125,4 +115,13 @@ test('compact fitting retains a manual chart and never covers a canvas filter', 
  for(const p of boxes) for(const q of boxes) if(p!==q) {
   expect(p.column>=q.column+q.columnSpan || q.column>=p.column+p.columnSpan || p.row>=q.row+q.rowSpan || q.row>=p.row+p.rowSpan).toBe(true)
  }
+})
+
+test('fitting an already arranged page keeps the same positions and sizes', () => {
+ const visuals=['kpi','pie','bar','line','matrix'].map(type=>({id:type,type}))
+ const grid={columns:12,rowHeight:48,gap:16}
+ const first=arrangeDashboardVisuals(visuals,[],grid,{compact:true})
+ const ordered=[...first].sort((a,b)=>a.placement.row-b.placement.row || a.placement.column-b.placement.column).map(p=>visuals.find(v=>v.id===p.componentId)!)
+ const second=arrangeDashboardVisuals(ordered,[],grid,{compact:true})
+ expect(second).toEqual(first)
 })
