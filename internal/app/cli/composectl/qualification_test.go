@@ -491,9 +491,7 @@ func TestQualificationPerformancePolicyAndEvaluationAreOwnedByGo(t *testing.T) {
 	if failures := validateQualificationPerformancePolicy(policy); len(failures) != 0 {
 		t.Fatalf("valid policy failures = %v", failures)
 	}
-	report := qualificationPerformanceReport{
-		Latency: map[string]qualificationDurationSummary{},
-	}
+	report := completeQualificationLatencyReport()
 	for _, phase := range qualificationLatencyPhases {
 		report.Latency[phase.Field] = qualificationDurationSummary{
 			Samples: 1,
@@ -501,27 +499,35 @@ func TestQualificationPerformancePolicyAndEvaluationAreOwnedByGo(t *testing.T) {
 			P95:     phase.Budget(policy) + 1,
 			Max:     phase.Budget(policy) + 1,
 		}
+		setQualificationRawSamples(t, &report, phase.Field, []float64{phase.Budget(policy) + 1})
 	}
-	report.Reliability.Requests = 100
-	report.Reliability.Errors = 1
-	report.Resources.PeakResidentMemoryBytes =
-		policy.Budgets.PeakResidentMemoryBytes + 1
-	report.Resources.CPUSeconds = policy.Budgets.CPUSecondsMax + 1
+	report.Concurrency = json.RawMessage(`{"readers":1,"waveMs":11}`)
+	report.Resources = completeQualificationResourceReport(policy)
+	report.Reliability.Requests = resourceEvidencePointer(100)
+	report.Reliability.Errors = resourceEvidencePointer(1)
+	report.Resources.PeakResidentMemoryBytes = resourceEvidencePointer(policy.Budgets.PeakResidentMemoryBytes + 1)
+	for index := range report.Resources.Measurements {
+		report.Resources.Measurements[index].ResidentMemoryBytes = report.Resources.PeakResidentMemoryBytes
+	}
+	report.Resources.CPUSeconds = resourceEvidencePointer(policy.Budgets.CPUSecondsMax + 1)
+	report.Resources.Measurements[len(report.Resources.Measurements)-1].CPUSeconds = report.Resources.CPUSeconds
 	report.Resources.TemporaryDiskGrowthBytes =
 		policy.Budgets.TemporaryDiskGrowthBytesMax + 1
-	report.Resources.GoroutinesAfter =
-		policy.Budgets.GoroutineGrowthMax + 1
-	report.Resources.PeakOpenConnections =
-		policy.Budgets.OpenConnectionsMax + 1
+	report.Resources.GoroutinesAfter = resourceEvidencePointer(*report.Resources.GoroutinesBefore + policy.Budgets.GoroutineGrowthMax + 1)
+	report.Resources.Measurements[len(report.Resources.Measurements)-1].Goroutines = report.Resources.GoroutinesAfter
+	report.Resources.PeakOpenConnections = resourceEvidencePointer(policy.Budgets.OpenConnectionsMax + 1)
+	report.Resources.Measurements[0].OpenConnections = report.Resources.PeakOpenConnections
 	failures := evaluateQualificationPerformance(report, policy)
 	if got, want := len(failures), 13; got != want {
 		t.Fatalf("performance failures = %d, want %d: %v", got, want, failures)
 	}
 
-	baseline := comparableQualificationPerformanceReport()
+	baseline := finalizedQualificationPerformanceBaseline(t)
 	baseline.Latency["coldDashboardReadyMs"] = qualificationDurationSummary{Samples: 1, P50: 1000, P95: 1000, Max: 1000}
+	setQualificationRawSamples(t, &baseline, "coldDashboardReadyMs", []float64{1000})
 	candidate := comparableQualificationPerformanceReport()
 	candidate.Latency["coldDashboardReadyMs"] = qualificationDurationSummary{Samples: 1, P50: 1260, P95: 1260, Max: 1260}
+	setQualificationRawSamples(t, &candidate, "coldDashboardReadyMs", []float64{1260})
 	comparison := compareQualificationPerformance(candidate, baseline, policy)
 	if len(comparison) != 1 ||
 		!strings.Contains(comparison[0], "cold dashboard readiness") {
@@ -544,7 +550,7 @@ func TestFinalizeQualificationPerformanceReportWritesFailureEvidence(t *testing.
 			Max:     1,
 		}
 	}
-	report.Reliability.Requests = 1
+	report.Reliability.Requests = resourceEvidencePointer(1)
 	if err := writeQualificationJSON(path, report); err != nil {
 		t.Fatal(err)
 	}

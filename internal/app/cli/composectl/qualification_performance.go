@@ -58,22 +58,13 @@ type qualificationPerformanceReport struct {
 	Policy        qualificationPerformancePolicy          `json:"policy"`
 	Latency       map[string]qualificationDurationSummary `json:"latency"`
 	Reliability   struct {
-		Requests int      `json:"requests"`
-		Errors   int      `json:"errors"`
+		Requests *int     `json:"requests"`
+		Errors   *int     `json:"errors"`
 		Failures []string `json:"failures"`
 	} `json:"reliability"`
-	Resources struct {
-		PeakResidentMemoryBytes  int64   `json:"peakResidentMemoryBytes"`
-		CPUSeconds               float64 `json:"cpuSeconds"`
-		TemporaryDiskBeforeBytes int64   `json:"temporaryDiskBeforeBytes"`
-		TemporaryDiskAfterBytes  int64   `json:"temporaryDiskAfterBytes"`
-		TemporaryDiskGrowthBytes int64   `json:"temporaryDiskGrowthBytes"`
-		GoroutinesBefore         int64   `json:"goroutinesBefore"`
-		GoroutinesAfter          int64   `json:"goroutinesAfter"`
-		PeakOpenConnections      int64   `json:"peakOpenConnections"`
-	} `json:"resources"`
-	Samples     json.RawMessage `json:"samples,omitempty"`
-	Concurrency json.RawMessage `json:"concurrency,omitempty"`
+	Resources   qualificationResourceReport `json:"resources"`
+	Samples     json.RawMessage             `json:"samples,omitempty"`
+	Concurrency json.RawMessage             `json:"concurrency,omitempty"`
 	Environment struct {
 		Runtime     string           `json:"runtime"`
 		LogicalCPUs int64            `json:"logicalCPUs"`
@@ -172,7 +163,8 @@ func evaluateQualificationPerformance(
 	report qualificationPerformanceReport,
 	policy qualificationPerformancePolicy,
 ) []string {
-	failures := validateQualificationPerformanceLatencies(report, policy)
+	failures := validateQualificationPerformanceProtocol(report, policy)
+	failures = append(failures, validateQualificationPerformanceMetricEvidence(report, policy)...)
 	for _, phase := range qualificationLatencyPhases {
 		actual := report.Latency[phase.Field].P95
 		limit := phase.Budget(policy)
@@ -184,9 +176,9 @@ func evaluateQualificationPerformance(
 		}
 	}
 	errorRate := 1.0
-	if report.Reliability.Requests > 0 {
-		errorRate = float64(report.Reliability.Errors) /
-			float64(report.Reliability.Requests)
+	if report.Reliability.Requests != nil && *report.Reliability.Requests > 0 && report.Reliability.Errors != nil {
+		errorRate = float64(*report.Reliability.Errors) /
+			float64(*report.Reliability.Requests)
 	}
 	if errorRate > policy.Budgets.ErrorRateMax {
 		failures = append(failures, fmt.Sprintf(
@@ -195,17 +187,17 @@ func evaluateQualificationPerformance(
 		))
 	}
 	resources := report.Resources
-	if resources.PeakResidentMemoryBytes > policy.Budgets.PeakResidentMemoryBytes {
+	if qualificationResourceValue(resources.PeakResidentMemoryBytes) > policy.Budgets.PeakResidentMemoryBytes {
 		failures = append(failures, fmt.Sprintf(
 			"peak resident memory %d bytes exceeds %d bytes",
-			resources.PeakResidentMemoryBytes,
+			qualificationResourceValue(resources.PeakResidentMemoryBytes),
 			policy.Budgets.PeakResidentMemoryBytes,
 		))
 	}
-	if resources.CPUSeconds > policy.Budgets.CPUSecondsMax {
+	if qualificationResourceValue(resources.CPUSeconds) > policy.Budgets.CPUSecondsMax {
 		failures = append(failures, fmt.Sprintf(
 			"CPU consumption %vs exceeds %vs",
-			resources.CPUSeconds, policy.Budgets.CPUSecondsMax,
+			qualificationResourceValue(resources.CPUSeconds), policy.Budgets.CPUSecondsMax,
 		))
 	}
 	if resources.TemporaryDiskGrowthBytes > policy.Budgets.TemporaryDiskGrowthBytesMax {
@@ -215,16 +207,16 @@ func evaluateQualificationPerformance(
 			policy.Budgets.TemporaryDiskGrowthBytesMax,
 		))
 	}
-	if growth := resources.GoroutinesAfter - resources.GoroutinesBefore; growth > policy.Budgets.GoroutineGrowthMax {
+	if growth := qualificationResourceValue(resources.GoroutinesAfter) - qualificationResourceValue(resources.GoroutinesBefore); growth > policy.Budgets.GoroutineGrowthMax {
 		failures = append(failures, fmt.Sprintf(
 			"steady-state goroutine growth %d exceeds %d",
 			growth, policy.Budgets.GoroutineGrowthMax,
 		))
 	}
-	if resources.PeakOpenConnections > policy.Budgets.OpenConnectionsMax {
+	if qualificationResourceValue(resources.PeakOpenConnections) > policy.Budgets.OpenConnectionsMax {
 		failures = append(failures, fmt.Sprintf(
 			"peak open connections %d exceeds %d",
-			resources.PeakOpenConnections,
+			qualificationResourceValue(resources.PeakOpenConnections),
 			policy.Budgets.OpenConnectionsMax,
 		))
 	}
@@ -232,16 +224,7 @@ func evaluateQualificationPerformance(
 }
 
 func validateQualificationPerformanceLatencies(report qualificationPerformanceReport, policy qualificationPerformancePolicy) []string {
-	samples := policy.Assumptions.Samples
-	expectedSamples := map[string]int{
-		"coldDashboardReadyMs": samples.ColdDashboardLoads,
-		"warmDashboardReadyMs": samples.WarmDashboardLoads,
-		"filterToSettleMs":     samples.FilterInteractions,
-		"tableInteractionMs":   samples.TableInteractions,
-		"governedQueryMs":      samples.GovernedQueries,
-		"refreshMs":            samples.RefreshRuns,
-		"concurrentQueryMs":    samples.ConcurrentReaders,
-	}
+	expectedSamples := qualificationPerformanceSampleCounts(policy)
 	var failures []string
 	for _, phase := range qualificationLatencyPhases {
 		summary, present := report.Latency[phase.Field]
@@ -276,10 +259,11 @@ func compareQualificationPerformance(
 	policy qualificationPerformancePolicy,
 ) []string {
 	failures := qualificationPerformanceComparisonIdentity(candidate, baseline, policy)
-	for _, failure := range validateQualificationPerformanceLatencies(candidate, policy) {
+	failures = append(failures, qualificationPerformanceBaselineFailures(baseline)...)
+	for _, failure := range validateQualificationPerformanceMetricEvidence(candidate, policy) {
 		failures = append(failures, "candidate "+failure)
 	}
-	for _, failure := range validateQualificationPerformanceLatencies(baseline, policy) {
+	for _, failure := range validateQualificationPerformanceMetricEvidence(baseline, policy) {
 		failures = append(failures, "baseline "+failure)
 	}
 	if len(failures) > 0 {
@@ -326,7 +310,6 @@ func finalizeQualificationPerformanceReport(
 	if failures := validateQualificationPerformancePolicy(policy); len(failures) > 0 {
 		return fmt.Errorf("invalid performance policy: %s", strings.Join(failures, "; "))
 	}
-	report.Policy = policy
 	report.Resources.TemporaryDiskBeforeBytes = diskBefore
 	report.Resources.TemporaryDiskAfterBytes = diskAfter
 	report.Resources.TemporaryDiskGrowthBytes = max(0, diskAfter-diskBefore)
@@ -366,10 +349,12 @@ func finalizeQualificationPerformanceReport(
 		))
 	}
 	absoluteFailures := evaluateQualificationPerformance(report, policy)
+	// Validate the worker's protocol before recording controller-owned budgets.
+	report.Policy = policy
 	report.Assertions.Environment = len(environmentFailures) == 0
 	report.Assertions.AbsoluteBudgets = len(absoluteFailures) == 0
 	report.Assertions.ComparisonTolerance = report.Comparison.Baseline != nil && len(comparisonFailures) == 0
-	report.Assertions.ErrorFree = report.Reliability.Errors == 0 &&
+	report.Assertions.ErrorFree = report.Reliability.Errors != nil && *report.Reliability.Errors == 0 &&
 		len(report.Reliability.Failures) == 0
 	report.Failures = append(report.Failures, environmentFailures...)
 	report.Failures = append(report.Failures, absoluteFailures...)
