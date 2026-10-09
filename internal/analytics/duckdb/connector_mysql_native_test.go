@@ -41,10 +41,12 @@ func TestNativeMySQLSourceReadDenialAndRecovery(t *testing.T) {
 		Env:            map[string]string{"MYSQL_ROOT_PASSWORD": "owned-native-mysql-root", "MYSQL_DATABASE": "fixtures", "MYSQL_USER": "fixture_reader", "MYSQL_PASSWORD": password},
 		ExposedPorts:   []string{"3306/tcp"}, WaitingFor: wait.ForListeningPort("3306/tcp").WithStartupTimeout(90 * time.Second),
 	}})
+	if container != nil {
+		testcontainers.CleanupContainer(t, container)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	testcontainers.CleanupContainer(t, container)
 	code, output, err := container.Exec(ctx, []string{"env", "MYSQL_PWD=" + password, "mysql", "--user=fixture_reader", "fixtures", "--execute=CREATE TABLE fixture_rows (id BIGINT, value VARCHAR(20)); INSERT INTO fixture_rows VALUES (1, 'x');"})
 	if err != nil || code != 0 {
 		var diagnostics string
