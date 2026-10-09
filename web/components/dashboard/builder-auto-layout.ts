@@ -1,11 +1,12 @@
 type Placement = { col: number; row: number; colSpan: number; rowSpan: number }
 
-// Match the sizing used when importing an agent visual. Preserve nonvisual
-// components and any supplied visual placements, then fit new charts around them.
+// Default sizing matches imported agent visuals; Visual magic requests compact
+// cards. Preserve nonvisual components and any supplied visual placements.
 export function arrangeDashboardVisuals(
   visuals: Array<{ id: string; type: string; placement?: Placement }>,
   obstacles: Placement[],
   grid: { columns: number; rowHeight: number; gap: number },
+  options: { compact?: boolean } = {},
 ) {
   const columns = Math.max(1, grid.columns)
   const gap = Math.max(0, grid.gap)
@@ -13,8 +14,11 @@ export function arrangeDashboardVisuals(
   const occupied = [...obstacles, ...visuals.flatMap(visual => visual.placement ? [visual.placement] : [])].map(p => ({ ...p }))
   const ordered = [...visuals.filter(v => v.type === 'kpi'), ...visuals.filter(v => v.type !== 'kpi')]
   const charts = ordered.filter(v => !['kpi', 'table', 'matrix', 'pivot', 'map', 'heatmap'].includes(v.type))
-  const hero = charts.length >= 3 && charts.length % 2 === 1 ? charts[0].id : visuals.length === 1 ? charts[0]?.id : undefined
-  const kpiColumns = Math.min(4, Math.max(1, ordered.filter(v => v.type === 'kpi').length))
+  const hero = options.compact ? undefined : charts.length >= 3 && charts.length % 2 === 1 ? charts[0].id : visuals.length === 1 ? charts[0]?.id : undefined
+  const kpiCount = ordered.filter(v => v.type === 'kpi').length
+  const kpiColumns = options.compact ? 4 : Math.min(4, Math.max(1, kpiCount))
+  const kpiWidth = Math.max(1, Math.floor(columns / kpiColumns))
+  const compactChartWidth = Math.max(Math.ceil(columns / 2), kpiCount ? columns - kpiWidth : 0)
   const placements = ordered.map(visual => {
     if (visual.placement) {
       const p = visual.placement
@@ -39,7 +43,11 @@ export function arrangeDashboardVisuals(
     const update = placements.find(p => p.componentId === visual.id)!
     const p = update.placement
     const current = occupied.find(rect => rect.col === p.column && rect.row === p.row && rect.colSpan === p.columnSpan && rect.rowSpan === p.rowSpan)!
-    let right = columns + 1
+    // Visual magic keeps metrics compact and charts readable without stretching
+    // an isolated card across the page. Tables and maps retain their wide view.
+    const compactWidth = visual.type === 'kpi' ? kpiWidth : compactChartWidth
+    let right = options.compact && !['table', 'matrix', 'pivot', 'map', 'heatmap'].includes(visual.type)
+      ? Math.min(columns + 1, p.column + compactWidth) : columns + 1
     for (const other of occupied) {
       if (other === current || other.col < p.column + p.columnSpan || other.row >= p.row + p.rowSpan || other.row + other.rowSpan <= p.row) continue
       right = Math.min(right, other.col)

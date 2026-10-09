@@ -310,7 +310,7 @@ test('chat preview starts with side-by-side tools open and preserves independent
 })
 
 for (const embedded of [false, true]) {
-  test(`Visual magic in the ${embedded ? 'preview' : 'standalone'} builder preserves authored placement and zoom`, async () => {
+  test(`Visual magic in the ${embedded ? 'preview' : 'standalone'} builder repairs missing fields and fits compact charts`, async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     try {
       await page.goto(embedded ? `${baseURL}/embed-host` : baseURL)
@@ -341,11 +341,11 @@ for (const embedded of [false, true]) {
         }
       })
       expect(await editor.evaluate((e: any) => e.testCommands[0])).toMatchObject({ action: 'set_placements', fillMissingFields: true, placements: [
-        { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 12, rowSpan: 5 } },
-        { componentId: 'chart-1', placement: { column: 1, row: 6, columnSpan: 12, rowSpan: 5 } },
-        { componentId: 'chart-2', placement: { column: 1, row: 11, columnSpan: 12, rowSpan: 5 } },
+        { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 6, rowSpan: 5 } },
+        { componentId: 'chart-1', placement: { column: 7, row: 1, columnSpan: 6, rowSpan: 5 } },
+        { componentId: 'chart-2', placement: { column: 1, row: 6, columnSpan: 6, rowSpan: 5 } },
       ] })
-      expect(await editor.evaluate((e: any) => e.canvasZoom)).toBe(1.25)
+      expect(await editor.evaluate((e: any) => e.canvasZoom)).toBeNull()
       const result = await editor.evaluate(async (e: any) => {
         document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: e } }))
         await e.updateComplete
@@ -356,6 +356,34 @@ for (const embedded of [false, true]) {
       expect(await editor.getByRole('status').filter({ hasText: result.message }).isVisible()).toBe(true)
     } finally { await page.close() }
   })
+
+  test(`Visual magic in the ${embedded ? 'preview' : 'standalone'} builder also fits completed charts`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    try {
+      await page.goto(embedded ? `${baseURL}/embed-host` : baseURL)
+      const editor = embedded ? page.frameLocator('iframe').locator('lv-dashboard-builder') : page.locator('lv-dashboard-builder')
+      await editor.locator('.field-results').waitFor()
+      await editor.evaluate(async (element: any) => {
+        const builder = JSON.parse(JSON.stringify(element.builder))
+        const visual = builder.pages[0].visuals[0]
+        const metric = { id: 'value', label: 'Total', kind: 'metric', fieldId: 'orders.total', required: true }
+        builder.pages[0].visuals = ['kpi', 'line'].map((type, i) => ({ ...visual, id: `ready-${i}`, type, previewError: '', slots: type === 'kpi' ? [metric] : [...visual.slots, metric], placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+        mergePatch({ builder })
+        element.testCommands = []
+        element.addEventListener('lv-builder-command', (event: CustomEvent) => element.testCommands.push(event.detail))
+        await element.updateComplete
+      })
+      await editor.getByRole('button', { name: 'Visual magic', exact: true }).click()
+      const command = await editor.evaluate((e: any) => e.testCommands[0])
+      expect(command).toMatchObject({ action: 'set_placements', placements: [
+        { componentId: 'ready-0', placement: { column: 1, row: 1, columnSpan: 3, rowSpan: 2 } },
+        { componentId: 'ready-1', placement: { column: 4, row: 1, columnSpan: 9, rowSpan: 5 } },
+      ] })
+      expect(command.fillMissingFields).toBeUndefined()
+    } finally { await page.close() }
+  })
+
 }
 
 test('new preview visual automatically fits after its add settles and shares one Undo', async () => {

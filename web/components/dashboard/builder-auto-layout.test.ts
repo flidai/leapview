@@ -67,3 +67,21 @@ test('new KPI cards fill a preserved KPI row without moving or resizing existing
  expect(result.map(p=>p.placement)).toEqual([1,5,9].map(column=>({column,row:1,columnSpan:4,rowSpan:2})))
  expect(manual).toEqual([1,5].map(col=>({col,row:1,colSpan:4,rowSpan:2})))
 })
+
+
+test('Visual magic gives a single KPI a compact footprint and fits charts beside it', () => {
+ const result = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix'].map(type => ({id:type,type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
+ expect(result.map(p=>p.placement)).toEqual([
+  {column:1,row:1,columnSpan:3,rowSpan:2},
+  {column:4,row:1,columnSpan:9,rowSpan:5},
+  {column:1,row:6,columnSpan:6,rowSpan:5},
+  {column:7,row:6,columnSpan:6,rowSpan:5},
+  {column:1,row:11,columnSpan:12,rowSpan:6},
+ ])
+ const added = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix', 'kpi'].map((type,i) => ({id:String(i),type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
+ expect(added.filter(p => ['0','5'].includes(p.componentId)).map(p=>p.placement.columnSpan)).toEqual([3,3])
+ for (const a of added) for (const b of added) if (a !== b) {
+  const p=a.placement,q=b.placement
+  expect(p.column >= q.column+q.columnSpan || q.column >= p.column+p.columnSpan || p.row >= q.row+q.rowSpan || q.row >= p.row+p.rowSpan).toBe(true)
+ }
+})

@@ -653,26 +653,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private readonly fixVisuals = (): void => {
-    // Complete missing fields while preserving the currently authored layout.
-    if (this.builderFilterController.pending || this.builderFilterCommandInFlight) {
-      this.chatProjectionKey = ''
-      this.requestUpdate()
-      return
-    }
+    if (this.builderFilterController.pending || this.builderFilterCommandInFlight) return
     const page = this.builder ? this.selectedPage(this.builder) : undefined
-    if (page?.visuals.length && this.builder?.capabilities.canEdit && !this.commandPending) {
-      this.pendingFixVisuals = { pageID: page.id, visualIDs: new Set(page.visuals.filter(visual => this.visualNeedsRepair(visual)).map(visual => visual.id)) }
-      this.fixVisualsMessage = ''
-      if (this.pendingFixVisuals.visualIDs.size === 0) {
-        this.finishFixVisuals()
-        this.chatProjectionKey = ''
-        this.requestUpdate()
-        return
-      }
-    }
-    const preservedIDs = new Set(page?.visuals.map(visual => visual.id))
-    this.applyBalancedLayout(true, true, preservedIDs)
-    // A layout that is already balanced still acknowledges the parent click.
+    if (!page?.visuals.length || !this.builder?.capabilities.canEdit || this.commandPending || this.pendingFixVisuals) return
+    this.pendingFixVisuals = { pageID: page.id, visualIDs: new Set(page.visuals.filter(visual => this.visualNeedsRepair(visual)).map(visual => visual.id)) }
+    this.fixVisualsMessage = ''
+    // Clicking Visual magic explicitly requests a fresh fit of the whole page,
+    // including completed charts and newly added visuals.
+    this.applyBalancedLayout(true, this.pendingFixVisuals.visualIDs.size > 0, new Set(), true)
+    if (!this.commandPending) this.finishFixVisuals()
     this.chatProjectionKey = ''
     this.requestUpdate()
   }
@@ -688,7 +677,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const summary = completed > 0 ? `Completed ${completed} visual${completed === 1 ? '' : 's'}. ` : ''
     this.fixVisualsMessage = remaining.length > 0
       ? `${summary}${remaining.length} visual${remaining.length === 1 ? ' could not be completed automatically' : 's could not be completed automatically'}. Select ${remaining.length === 1 ? 'it' : 'them'} in the Visuals panel.`
-      : completed > 0 ? `${summary}Your layout is unchanged.` : 'Visuals are ready. Your layout is unchanged.'
+      : completed > 0 ? `${summary}Dashboard fitted.` : 'Dashboard fitted. Visuals are ready.'
   }
 
   private isFixedVisualReady(visual: DashboardBuilderVisualSignal): boolean {
@@ -700,12 +689,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return Boolean(visual.previewError?.trim()) || this.visualRequirementMessages(visual).length > 0
   }
 
-  private applyBalancedLayout(recordHistory: boolean, fillMissingFields = false, preservedIDs: ReadonlySet<string> = new Set()): void {
+  private applyBalancedLayout(recordHistory: boolean, fillMissingFields = false, preservedIDs: ReadonlySet<string> = new Set(), compact = false): void {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canEdit || !page || this.commandPending || page.visuals.length === 0) return
     const obstacles = this.pagePlacedComponents(page).filter(component => !page.visuals.some(visual => visual.id === component.id))
-    const placements = arrangeDashboardVisuals([...page.visuals].sort((a, b) => a.placement.row - b.placement.row || a.placement.col - b.placement.col).map(visual => ({ id: visual.id, type: this.visualTypeForRender(visual), placement: preservedIDs.has(visual.id) ? visual.placement : undefined })), obstacles.map(component => component.placement), page.grid)
+    const placements = arrangeDashboardVisuals([...page.visuals].sort((a, b) => a.placement.row - b.placement.row || a.placement.col - b.placement.col).map(visual => ({ id: visual.id, type: this.visualTypeForRender(visual), placement: preservedIDs.has(visual.id) ? visual.placement : undefined })), obstacles.map(component => component.placement), page.grid, { compact })
     if (!fillMissingFields && placements.every(p => this.placementEqual(p, page.visuals.find(visual => visual.id === p.componentId)!.placement))) {
       if (preservedIDs.size === 0) this.fitCanvasToViewport()
       return
@@ -993,7 +982,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
-          <button class="magic-fill" type="button" aria-label="Visual magic" aria-busy=${Boolean(this.pendingFixVisuals)} title="Complete missing chart fields on this page. Your layout stays unchanged." ?disabled=${!builder.capabilities.canEdit || this.commandPending || Boolean(this.pendingFixVisuals) || this.builderFilterController.pending || Boolean(this.builderFilterCommandInFlight) || !this.selectedPage(builder)?.visuals.length} @click=${this.fixVisuals}>${lucideIcon(WandSparkles, { size: 16, strokeWidth: 2 })}<span>${this.pendingFixVisuals ? 'Completing…' : 'Visual magic'}</span></button>
+          <button class="magic-fill" type="button" aria-label="Visual magic" aria-busy=${Boolean(this.pendingFixVisuals)} title="Size and fit visuals on this page, and complete missing chart fields." ?disabled=${!builder.capabilities.canEdit || this.commandPending || Boolean(this.pendingFixVisuals) || this.builderFilterController.pending || Boolean(this.builderFilterCommandInFlight) || !this.selectedPage(builder)?.visuals.length} @click=${this.fixVisuals}>${lucideIcon(WandSparkles, { size: 16, strokeWidth: 2 })}<span>${this.pendingFixVisuals ? 'Completing…' : 'Visual magic'}</span></button>
           <button type="button" class="icon-action" data-builder-action="tools" aria-label=${this.toolsHidden ? 'Show tools' : 'Hide tools'} title=${this.toolsHidden ? 'Show editing panels' : 'Hide editing panels'} aria-expanded=${!this.toolsHidden} aria-controls="builder-tools" @click=${this.toggleTools}>${lucideIcon(this.toolsHidden ? PanelRightOpen : PanelRightClose, { size: 16, strokeWidth: 2 })}<span class="sr-only">${this.toolsHidden ? 'Show tools' : 'Hide tools'}</span></button>
           <details class="dashboard-metadata">
             <summary aria-label="Dashboard settings" title="Dashboard settings">${lucideIcon(Settings2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Dashboard settings</span></summary>
