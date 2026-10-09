@@ -54,7 +54,7 @@ try {
   await table.evaluate((element) => element.scrollIntoView({ block: 'center' }))
   const interactiveCells = table.locator('.row:not(.skeleton-row) button.cell-action')
   await interactiveCells.first().waitFor({ state: 'visible', timeout: 30_000 })
-  const stateActions = table.locator('button.cell-action[aria-label="state: SP"]')
+  const stateActions = table.locator('button.cell-action[aria-label="State: SP"]')
   await stateActions.first().waitFor({ state: 'visible', timeout: 30_000 })
 
   const denialRequestID = `qualification-denial-${Date.now()}`

@@ -400,7 +400,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		!strings.Contains(performance, `getByRole('button', { name: 'Clear State', exact: true })`) || strings.Contains(performance, "All State") {
 		t.Error("browser qualification must exercise deterministic State multi-select values")
 	}
-	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
+	if !strings.Contains(browser, `button.cell-action[aria-label="State: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="State: ${value}"]`) {
 		t.Error("browser qualification must assert the compiled result-frame cell accessibility label")
 	}
 	if !strings.Contains(performance, `button.header-button[data-column-key="order_id"]`) {
