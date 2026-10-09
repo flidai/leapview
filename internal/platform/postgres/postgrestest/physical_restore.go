@@ -37,6 +37,7 @@ func (h *Harness) RestorePhysical(t *testing.T, databases ...*Database) (*Harnes
 	defer cancel()
 	exec := func(args ...string) {
 		t.Helper()
+		// sqlc-exception: analyzer-incompatible. Testcontainers Exec runs a container command with argv, not a PostgreSQL statement.
 		code, output, err := h.container.Exec(ctx, args)
 		if err != nil {
 			t.Fatalf("physical backup command: %v", err)
