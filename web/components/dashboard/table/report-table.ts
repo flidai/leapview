@@ -1460,6 +1460,7 @@ export class ReportTable extends LitElement {
             <div
               class=${`header-cell ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${column.align === 'right' ? 'right' : ''} ${sorted ? 'sorted' : ''}`}
               role="columnheader"
+              aria-sort=${sorted ? this.table?.sort?.direction === 'asc' ? 'ascending' : 'descending' : 'none'}
               style=${this.pinnedCellStyle(header.column)}
             >
               <button

@@ -12,12 +12,19 @@ import (
 func completeQualificationLatencyReport() qualificationPerformanceReport {
 	report := qualificationPerformanceReport{
 		SchemaVersion: 1,
+		Policy:        validQualificationPerformancePolicy(),
 		Latency:       make(map[string]qualificationDurationSummary),
 	}
+	samples := make(map[string][]float64)
 	for _, phase := range qualificationLatencyPhases {
 		report.Latency[phase.Field] = qualificationDurationSummary{Samples: 1, P50: 3, P95: 3, Max: 3}
+		samples[phase.Field] = []float64{3}
 	}
-	report.Reliability.Requests = 1
+	report.Samples, _ = json.Marshal(samples)
+	report.Concurrency = json.RawMessage(`{"readers":1,"waveMs":3}`)
+	report.Reliability.Requests = resourceEvidencePointer(100)
+	report.Reliability.Errors = resourceEvidencePointer(0)
+	report.Resources = completeQualificationResourceReport(validQualificationPerformancePolicy())
 	return report
 }
 
@@ -114,10 +121,12 @@ func TestFinalizeQualificationPerformanceDoesNotClaimUnperformedComparison(t *te
 
 func TestQualificationComparisonDoesNotSkipMeasuredZeroBaseline(t *testing.T) {
 	policy := validQualificationPerformancePolicy()
-	baseline := completeQualificationLatencyReport()
-	candidate := completeQualificationLatencyReport()
+	baseline := finalizedQualificationPerformanceBaseline(t)
+	candidate := comparableQualificationPerformanceReport()
 	baseline.Latency["governedQueryMs"] = qualificationDurationSummary{Samples: 1}
 	candidate.Latency["governedQueryMs"] = qualificationDurationSummary{Samples: 1, P50: 100, P95: 100, Max: 100}
+	setQualificationRawSamples(t, &baseline, "governedQueryMs", []float64{0})
+	setQualificationRawSamples(t, &candidate, "governedQueryMs", []float64{100})
 	if failures := compareQualificationPerformance(candidate, baseline, policy); len(failures) != 1 || !strings.Contains(failures[0], "governed query") {
 		t.Fatalf("regression from a measured zero was skipped: %v", failures)
 	}
@@ -127,8 +136,8 @@ func TestQualificationComparisonRejectsMissingBaselineOrCandidatePhase(t *testin
 	policy := validQualificationPerformancePolicy()
 	for _, which := range []string{"baseline", "candidate"} {
 		t.Run(which, func(t *testing.T) {
-			candidate := completeQualificationLatencyReport()
-			baseline := completeQualificationLatencyReport()
+			candidate := comparableQualificationPerformanceReport()
+			baseline := finalizedQualificationPerformanceBaseline(t)
 			if which == "baseline" {
 				delete(baseline.Latency, "governedQueryMs")
 			} else {

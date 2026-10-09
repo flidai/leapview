@@ -134,18 +134,19 @@ func verifyBundleImage(opts admissionOptions, imageConfig, sbom []byte) error {
 }
 
 type admissionBinding struct {
-	SchemaVersion   int               `json:"schemaVersion"`
-	Repository      string            `json:"repository"`
-	Workflow        string            `json:"workflow"`
-	SourceRevision  string            `json:"sourceRevision"`
-	Image           string            `json:"image"`
-	Platform        string            `json:"platform"`
-	AdmissionDigest string            `json:"admissionDigest"`
-	RunID           string            `json:"runId"`
-	RunAttempt      string            `json:"runAttempt"`
-	Event           string            `json:"event"`
-	Ref             string            `json:"ref"`
-	Files           map[string]string `json:"files"`
+	SchemaVersion    int               `json:"schemaVersion"`
+	Repository       string            `json:"repository"`
+	Workflow         string            `json:"workflow"`
+	SourceRevision   string            `json:"sourceRevision"`
+	ProducerRevision string            `json:"producerRevision,omitempty"`
+	Image            string            `json:"image"`
+	Platform         string            `json:"platform"`
+	AdmissionDigest  string            `json:"admissionDigest"`
+	RunID            string            `json:"runId"`
+	RunAttempt       string            `json:"runAttempt"`
+	Event            string            `json:"event"`
+	Ref              string            `json:"ref"`
+	Files            map[string]string `json:"files"`
 }
 
 func verifyBundleScan(opts admissionOptions, trivy, sbom []byte) error {

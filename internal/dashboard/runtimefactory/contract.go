@@ -20,6 +20,7 @@ type Input struct {
 	SkipInitialRefresh bool
 	SnapshotID         int64
 	Definition         *dashboardruntime.ProjectDefinition
+	ConnectionIDs      map[string]string
 	DependencyEvidence map[string]resultidentity.Evidence
 }
 

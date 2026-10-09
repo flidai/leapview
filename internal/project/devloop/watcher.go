@@ -2,9 +2,11 @@ package devloop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +64,9 @@ func newWatcher(sourceRoot string, service *Service, options watcherOptions) (*W
 	if info, statErr := os.Stat(sourceRoot); statErr == nil && !info.IsDir() {
 		return nil, fmt.Errorf("Project authoring was removed; pass the analytics source root directory %q instead of %q", filepath.Dir(sourceRoot), sourceRoot)
 	}
+	if resolved, resolveErr := filepath.EvalSymlinks(sourceRoot); resolveErr == nil {
+		sourceRoot = resolved
+	}
 	if service == nil || options.debounce <= 0 ||
 		options.newSource == nil || options.resolveSources == nil {
 		return nil, fmt.Errorf("project watcher requires service, debounce, source, and resolver")
@@ -109,6 +114,45 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 	if err := source.Add(watcher.sourceRoot); err != nil {
 		return fmt.Errorf("watch analytics source root: %w", err)
 	}
+	refreshDirectories := func() error {
+		directories, err := projectcompiler.SourceDirectories(watcher.sourceRoot)
+		if err != nil {
+			return err
+		}
+		// Successfully resolved dashboard fragments may live outside the six
+		// authored directories. Retain only their already known parent watches.
+		for path := range tracked {
+			directory := filepath.Dir(path)
+			if path != watcher.sourceRoot {
+				if info, statErr := os.Lstat(directory); statErr == nil && info.IsDir() {
+					directories = append(directories, directory)
+				}
+			}
+		}
+		next := make(map[string]struct{}, len(directories))
+		for _, directory := range directories {
+			next[directory] = struct{}{}
+			if _, exists := watchedDirectories[directory]; exists {
+				continue
+			}
+			if err := source.Add(directory); err != nil {
+				return fmt.Errorf("watch project source directory %q: %w", directory, err)
+			}
+			watchedDirectories[directory] = struct{}{}
+		}
+		for directory := range watchedDirectories {
+			if _, exists := next[directory]; !exists {
+				if err := source.Remove(directory); err != nil && !errors.Is(err, fsnotify.ErrNonExistentWatch) {
+					return fmt.Errorf("remove project source directory watch %q: %w", directory, err)
+				}
+				delete(watchedDirectories, directory)
+			}
+		}
+		return nil
+	}
+	if err := refreshDirectories(); err != nil {
+		return fmt.Errorf("watch analytics source directories: %w", err)
+	}
 	installSources := func(paths []string) error {
 		next := make(map[string]struct{}, len(paths))
 		for _, path := range paths {
@@ -116,7 +160,15 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 			if err != nil {
 				return err
 			}
-			next[filepath.Clean(path)] = struct{}{}
+			path = filepath.Clean(path)
+			relative, relativeErr := filepath.Rel(watcher.sourceRoot, path)
+			if relativeErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("project source %q is outside the analytics source root", path)
+			}
+			next[path] = struct{}{}
+			if path == watcher.sourceRoot {
+				continue
+			}
 			directory := filepath.Dir(path)
 			if _, exists := watchedDirectories[directory]; exists {
 				continue
@@ -136,13 +188,9 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 		}
 		return installSources(paths)
 	}
-	if err := resolveAndInstall(); err != nil {
-		// Keep the manifest repairable even when the initial project is invalid.
-		if addErr := source.Add(watcher.sourceRoot); addErr != nil {
-			return fmt.Errorf("watch analytics source root: %w", addErr)
-		}
-		watchedDirectories[watcher.sourceRoot] = struct{}{}
-	}
+	// Directory watches do not depend on successful compilation. Reconcile
+	// reports invalid resources while these watches keep their repairs visible.
+	_ = resolveAndInstall()
 
 	var timer *time.Timer
 	var timerC <-chan time.Time
@@ -168,6 +216,9 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 	var lastResult Result
 	retryDelay := watcher.retryMin
 	reconcile := func() {
+		if refreshErr := refreshDirectories(); refreshErr != nil {
+			report(Update{Result: lastResult, Err: refreshErr})
+		}
 		result, reconcileErr := watcher.service.Reconcile(ctx)
 		lastResult = result
 		report(Update{Result: result, Err: reconcileErr})
@@ -202,21 +253,54 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 				continue
 			}
 			eventPath = filepath.Clean(eventPath)
+			relative, relativeErr := filepath.Rel(watcher.sourceRoot, eventPath)
+			if relativeErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				continue
+			}
+			_, directoryEvent := watchedDirectories[eventPath]
+			if info, statErr := os.Lstat(eventPath); statErr == nil && info.IsDir() && projectcompiler.IsAuthoredSourcePath(relative) {
+				directoryEvent = true
+			}
+			if directoryEvent {
+				// fsnotify removes watches on deleted/moved directories. Invalidate
+				// the old path even if an editor has already recreated it.
+				if event.operation&(fsnotify.Remove|fsnotify.Rename) != 0 {
+					for directory := range watchedDirectories {
+						if directory == eventPath || strings.HasPrefix(directory, eventPath+string(filepath.Separator)) {
+							if removeErr := source.Remove(directory); removeErr != nil && !errors.Is(removeErr, fsnotify.ErrNonExistentWatch) {
+								report(Update{Result: lastResult, Err: removeErr})
+							}
+							delete(watchedDirectories, directory)
+						}
+					}
+				}
+				if refreshErr := refreshDirectories(); refreshErr != nil {
+					report(Update{Result: lastResult, Err: refreshErr})
+				}
+			}
 			_, relevant := tracked[eventPath]
-			if !relevant {
+			extension := strings.ToLower(filepath.Ext(eventPath))
+			authoredYAML := (extension == ".yaml" || extension == ".yml") && projectcompiler.IsAuthoredSourcePath(relative)
+			legacyManifest := relative == "leapview.yaml" || relative == "leapview.yml"
+			if !relevant && !directoryEvent && !authoredYAML && !legacyManifest {
+				// A dashboard include glob may gain a new fragment in an
+				// already watched directory outside the six resource roots.
+				// Only a successful compiler resolution establishes ownership.
+				if extension != ".yaml" && extension != ".yml" {
+					continue
+				}
 				paths, resolveErr := watcher.resolveSources(watcher.sourceRoot)
 				if resolveErr != nil {
 					continue
 				}
-				next := make(map[string]struct{}, len(paths))
 				for _, path := range paths {
 					absolute, absoluteErr := filepath.Abs(path)
-					if absoluteErr != nil {
-						continue
+					if absoluteErr == nil && filepath.Clean(absolute) == eventPath {
+						relevant = true
+						break
 					}
-					next[filepath.Clean(absolute)] = struct{}{}
 				}
-				if _, relevant = next[eventPath]; !relevant {
+				if !relevant {
 					continue
 				}
 				if installErr := installSources(paths); installErr != nil {
@@ -244,10 +328,14 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 	}
 }
 
-type fileEvent struct{ name string }
+type fileEvent struct {
+	name      string
+	operation fsnotify.Op
+}
 
 type watchSource interface {
 	Add(string) error
+	Remove(string) error
 	Events() <-chan fileEvent
 	Errors() <-chan error
 	Close() error
@@ -277,6 +365,7 @@ func newFSNotifySource() (watchSource, error) {
 }
 
 func (source *fsNotifySource) Add(path string) error    { return source.watcher.Add(path) }
+func (source *fsNotifySource) Remove(path string) error { return source.watcher.Remove(path) }
 func (source *fsNotifySource) Events() <-chan fileEvent { return source.events }
 func (source *fsNotifySource) Errors() <-chan error     { return source.errors }
 func (source *fsNotifySource) Close() error {
@@ -300,7 +389,7 @@ func (source *fsNotifySource) forward() {
 				return
 			}
 			select {
-			case source.events <- fileEvent{name: event.Name}:
+			case source.events <- fileEvent{name: event.Name, operation: event.Op}:
 			case <-source.done:
 				return
 			}

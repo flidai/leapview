@@ -33,7 +33,9 @@ type ConnectionResolver interface {
 // ProjectRequest describes a governed analytical project without exposing
 // DuckDB construction or cache implementation details to consumer capabilities.
 type ProjectRequest struct {
-	Models         map[string]*semanticmodel.Model
+	Models map[string]*semanticmodel.Model
+	// ConnectionIDs maps authored names to exact compiled resource IDs.
+	ConnectionIDs  map[string]string
 	SnapshotID     int64
 	ServingStateID string
 	// TargetID is the canonical configured delivery target that owns this

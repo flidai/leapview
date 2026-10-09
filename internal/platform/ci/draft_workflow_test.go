@@ -66,6 +66,8 @@ func TestAllPRWorkflowsSkipDraftsAndAllowRequestedRuns(t *testing.T) {
 					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all') }}",
 					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'development') }}",
 					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'image') }}",
+					// Fresh destructive disk tests use only exact protected main manual runs.
+					"${{ github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.boot_test }}",
 					// Dependency discovery only runs when explicitly dispatched.
 					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-application' }}",
 					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-site' }}",

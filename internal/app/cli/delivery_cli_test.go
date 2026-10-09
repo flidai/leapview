@@ -108,6 +108,43 @@ func TestDeliveryPlanInvocationsUseFreshOperationKeys(t *testing.T) {
 	}
 }
 
+func TestDeliveryPlanAdapterPropagatesFirstSourcePreparation(t *testing.T) {
+	transport := &deliveryPlanSourceHandoffTransport{}
+	options := projectcli.DeliveryPlanOptions{ProjectID: "project-1", TargetID: "target-1", Environment: "prod", SourceDigest: "sha256:" + strings.Repeat("a", 64), SourceAttestationDigest: "sha256:" + strings.Repeat("b", 64), FirstSourcePreparationID: "0198f2c0-7c7a-7f00-8a11-000000000301", IdempotencyKey: "prepared-plan-key"}
+	_, err := (projectDeliveryPlanOperations{client: fixedTransportClient{transport: transport}}).Create(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.planRequests) != 1 || transport.planRequests[0].FirstSourcePreparationId == nil || *transport.planRequests[0].FirstSourcePreparationId != options.FirstSourcePreparationID {
+		t.Fatalf("first-source preparation was lost: %#v", transport.planRequests)
+	}
+	if len(transport.planKeys) != 1 || transport.planKeys[0] != options.IdempotencyKey {
+		t.Fatalf("operation key was overridden: %#v", transport.planKeys)
+	}
+	for _, scenario := range []string{"malformed", "restatement", "candidate-lookup", "missing-key", "whitespace-key"} {
+		t.Run(scenario, func(t *testing.T) {
+			invalid := options
+			switch scenario {
+			case "malformed":
+				invalid.FirstSourcePreparationID = "version:latest"
+			case "restatement":
+				invalid.Operation = "restatement"
+			case "candidate-lookup":
+				invalid.ResolveCandidatePlan = true
+			case "missing-key":
+				invalid.IdempotencyKey = ""
+			case "whitespace-key":
+				invalid.IdempotencyKey = " prepared-plan-key "
+			}
+			fresh := &deliveryPlanSourceHandoffTransport{}
+			_, err := (projectDeliveryPlanOperations{client: fixedTransportClient{transport: fresh}}).Create(t.Context(), invalid)
+			if err == nil || fresh.createCalls != 0 || fresh.planCalls != 0 || fresh.retainCalls != 0 || fresh.candidateCalls != 0 {
+				t.Fatalf("invalid preparation intent reached remote: err=%v, transport=%#v", err, fresh)
+			}
+		})
+	}
+}
+
 func TestRollbackUsesCurrentTargetRevisionForIdempotency(t *testing.T) {
 	transport := &rollbackRevisionTransport{revision: 2}
 	operations := projectDeliveryRollbackOperations{client: fixedTransportClient{transport: transport}}
@@ -364,6 +401,7 @@ type deliveryPlanSourceHandoffTransport struct {
 	candidateCalls int
 	previewCalls   int
 	planKeys       []string
+	planRequests   []deploymentgen.DeliveryPlanRequest
 }
 
 func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
@@ -381,6 +419,7 @@ func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context,
 		transport.createCalls++
 		transport.planKeys = append(transport.planKeys, request.Headers.Get("Idempotency-Key"))
 		body := request.Body.(deploymentgen.DeliveryPlanRequest)
+		transport.planRequests = append(transport.planRequests, body)
 		response = deploymentgen.DeliveryPlanPreviewResponse{Id: "plan-1", ProjectId: request.PathParams["project"], TargetId: body.TargetId, Environment: "development", SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest, Status: deploymentgen.DeliveryPlanStatusPlanned}
 	case deploymentgen.GenOperationGetDeliveryCandidateStatus:
 		transport.candidateCalls++

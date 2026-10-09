@@ -101,6 +101,37 @@ test('compact KPI cards align their titles regardless of comparison details', as
   } finally { await page.close() }
 })
 
+test('wide compact KPI values and notes fit the contracted minimum height', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    await page.addStyleTag({ content: ':root { --base-size-4:4px; --base-size-8:8px; --base-size-12:12px; --base-size-16:16px; --base-size-32:32px; --text-title-size-small:20px; --text-title-size-medium:24px; --text-display-size:48px; --lv-type-caption:12px/16px sans-serif; --lv-type-body-compact:14px/20px sans-serif; }' })
+    for (const width of [320, 720, 1320]) {
+      const bounds = await page.evaluate(async width => {
+        const host = document.createElement('lv-visualization-host') as any
+        host.style.cssText = `display:block;width:${width}px;height:112px`
+        const envelope = structuredClone((window as any).__lvSourceHosts.orders_kpi.envelope)
+        envelope.spec.presentation.note = 'Across the selected countries'
+        envelope.spec.titleVisible = false
+        host.envelope = envelope
+        document.body.append(host)
+        await host.ensureMounted()
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        const root = host.shadowRoot as ShadowRoot
+        const card = root.querySelector<HTMLElement>('.lv-kpi-card')!
+        const value = root.querySelector<HTMLElement>('.lv-visualization-kpi')!
+        const note = root.querySelector<HTMLElement>('.lv-visualization-note')!
+        const bottom = card.getBoundingClientRect().bottom
+        return { value: value.getBoundingClientRect().bottom, note: note.getBoundingClientRect().bottom, bottom, valueHeight: value.clientHeight, valueContentHeight: value.scrollHeight }
+      }, width)
+      expect(bounds.valueContentHeight).toBeLessThanOrEqual(bounds.valueHeight)
+      expect(bounds.value).toBeLessThanOrEqual(bounds.bottom)
+      expect(bounds.note).toBeLessThanOrEqual(bounds.bottom)
+    }
+  } finally { await page.close() }
+})
+
 test('deferred hosts retain the latest valid envelope and mount once on eligibility', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

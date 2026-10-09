@@ -26,7 +26,7 @@ import (
 
 // Combined generated surface including target-policy and development-profile
 // operations. This count is a contract snapshot, not a feature-coverage claim.
-const expectedAPIGenAggregateOperationCount = 212
+const expectedAPIGenAggregateOperationCount = 222
 
 func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	contracts := accessAPIGenOperationContracts()
@@ -740,8 +740,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 146 {
-		t.Fatalf("UI signal IR contracts = %d, want 146", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 147 {
+		t.Fatalf("UI signal IR contracts = %d, want 147", len(irDoc.Contracts))
 	}
 	// Saved lifecycle roots are additive to the existing UI contract catalog.
 	savedExplorationRoles := map[string]string{
@@ -1093,7 +1093,7 @@ func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
 		"finalizeManagedDataUploadSession",
 		"finalizeRelease",
 	}
-	wantControls := []string{"cancelAgentRun", "cancelRefreshRun", "publishDeliveryCandidate", "rollbackDeliveryGeneration"}
+	wantControls := []string{"cancelAgentRun", "cancelRefreshRun", "publishDeliveryCandidate", "retryCredentialActivation", "rollbackDeliveryGeneration", "startCredentialActivation"}
 	if !slices.Equal(starters, wantStarters) {
 		t.Errorf("async starters = %v, want %v", starters, wantStarters)
 	}

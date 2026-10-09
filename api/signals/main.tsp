@@ -24,6 +24,7 @@ enum RouteKind {
   chat: "chat",
   connections: "connections",
   connectionAsset: "connection_asset",
+  firstSourceCredentials: "first_source_credentials",
   data: "data",
   admin: "admin",
   login: "login",
@@ -447,6 +448,7 @@ enum PopularityLevel {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentSignal {
+ `credentialVersionId`?: string;
  `baseUrl`?: string;
  `apiMode`?: string;
  `configurationRevision`?: int64;
@@ -1365,6 +1367,82 @@ model ConnectionAdministrationCommandSignal {
 model ConnectionAdministrationSignal {
   `command`: ConnectionAdministrationCommandSignal;
   `status`: ConnectionAdministrationStatusSignal;
+  `credentials`?: ConnectionCredentialSignal;
+}
+
+model ConnectionCredentialCommandSignal {
+  `action`: string;
+  `assetId`: string;
+  `logicalConnection`: string;
+  `versionId`: string;
+  `receiptId`: string;
+  `expectedRevision`: int64;
+  `operationId`: string;
+  `username`: string;
+  `password`: string;
+  `beforeVersionId`: string;
+}
+
+model ConnectionCredentialDraftSignal {
+  `versionId`: string;
+  `createdAt`: string;
+}
+
+@apigen.contract(#{ kind: "ui-envelope", tags: #["project", "connections", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "first_source_credentials" })
+model FirstSourceCredentialEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "firstSourceCredentials" })
+  `firstSourceCredentials`: FirstSourceCredentialSignal;
+}
+
+model FirstSourceCredentialCommandSignal {
+  `action`: string;
+  `password`: string;
+  `versionId`: string;
+  `receiptId`: string;
+  `operationId`: string;
+  `sourceDigest`: string;
+  `sourceAttestationDigest`: string;
+  `planIdempotencyKey`: string;
+}
+
+model FirstSourceCredentialSignal {
+  `connectionId`: string;
+  `host`: string;
+  `database`: string;
+  `sourceIdentity`: string;
+  `targetRevision`: int64;
+  `command`: FirstSourceCredentialCommandSignal;
+  `drafts`: ConnectionCredentialDraftSignal[];
+  `receiptExpiresAt`: string;
+  `phase`: string;
+  `message`: string;
+  `error`: string;
+}
+
+model CredentialVersionDependencySignal {
+  `kind`: string;
+  `id`: string;
+}
+model CredentialVersionStatusSignal {
+  `versionId`: string;
+  `state`: string;
+  `retiredAt`: string;
+  `dependencies`: CredentialVersionDependencySignal[];
+  `moreDependencies`: boolean;
+}
+model ConnectionCredentialSignal {
+  `versionStatus`?: CredentialVersionStatusSignal;
+  `command`: ConnectionCredentialCommandSignal;
+  `drafts`: ConnectionCredentialDraftSignal[];
+  `nextBeforeVersionId`: string;
+  `receiptId`: string;
+  `receiptExpiresAt`: string;
+  `bindingRevision`: int64;
+  `operationId`: string;
+  `phase`: string;
+  `runtimeReady`: boolean;
+  `status`: ConnectionAdministrationStatusSignal;
 }
 
 model ConnectionAdministrationStatusSignal {
@@ -1381,6 +1459,7 @@ model ConnectionLifecycleActionSignal {
 }
 
 model ConnectionLifecycleSignal {
+  `credentialsAvailable`?: boolean;
   `actions`: ConnectionLifecycleActionSignal[];
   `assetId`: string;
   `authenticationMode`: string;

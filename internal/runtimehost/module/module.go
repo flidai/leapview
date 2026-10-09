@@ -308,6 +308,16 @@ func (m *Module) Environment() servingstate.Environment {
 	}
 	return m.registry.Environment()
 }
+
+// CurrentServingStateID is a local convergence hint, never proof that the
+// durable target is current or that its installed runtime is usable.
+func (m *Module) CurrentServingStateID() servingstate.ID {
+	if m == nil || m.registry == nil {
+		return ""
+	}
+	return m.registry.CurrentServingStateID()
+}
+
 func (m *Module) Acquire(ctx context.Context) (runtimehost.Lease, error) {
 	lease, err := m.registry.Acquire(ctx)
 	if err != nil {

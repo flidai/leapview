@@ -10,7 +10,6 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
@@ -85,9 +84,6 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 	if err != nil {
 		return semanticmodel.Connection{}, err
 	}
-	if evidence.CredentialVersionID != "" {
-		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
-	}
 	connectionID, err := connectionbinding.ParseConnectionID(strings.TrimSpace(name))
 	if err != nil {
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
@@ -103,8 +99,11 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 		binding.ConnectionID != evidence.ConnectionID ||
 		binding.ConnectorKind != evidence.ConnectorKind || binding.Revision < evidence.Revision ||
 		actual.EndpointConfigHash != evidence.EndpointConfigHash || evidence.Access != logical.Access ||
-		strings.TrimSpace(evidence.ValidatedVersion) == "" {
+		!validActiveCredentialPin(evidence) {
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+	}
+	if evidence.CredentialVersionID != "" {
+		return r.resolveLocal(ctx, binding, evidence, name, logical)
 	}
 	var snapshot connectionbinding.CredentialSnapshot
 	if logical.Access == semanticmodel.ConnectionAccessPublic {
@@ -133,21 +132,7 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 		}
 	}
 	defer snapshot.Destroy()
-	pool, err := r.module.connectionFactory.Prepare(ctx, binding, snapshot)
-	if err != nil || pool == nil {
-		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
-	}
-	// The prepared pool is an activation probe, not shared mutable binding state.
-	// Resolve returns an isolated connection copy before the probe is destroyed.
-	defer pool.Close()
-	if err := pool.HealthCheck(ctx); err != nil {
-		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
-	}
-	target, ok := pool.(analyticsruntime.ConnectionResolver)
-	if !ok {
-		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
-	}
-	return target.Resolve(ctx, name, logical)
+	return resolveActivePool(ctx, r.module.connectionFactory, binding, snapshot, name, logical)
 }
 
 func (r *activeRuntimeConnectionResolver) evidenceFor(

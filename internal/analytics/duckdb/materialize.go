@@ -35,6 +35,7 @@ type SourceRuntime struct {
 	resolver           CredentialResolver
 	connectionResolver analyticsruntime.ConnectionResolver
 	extensionAdmission ExtensionAdmission
+	providerAdmission  ProviderAdmission
 }
 
 // AdmittedExtension is immutable evidence for one exact, already verified
@@ -91,141 +92,6 @@ type PreparedSources struct {
 	closeErr        error
 	reporter        fatalReporter
 	telemetry       refreshTelemetry
-}
-
-func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model) (analyticsmaterialize.PreparedSources, error) {
-	if r == nil || r.db == nil {
-		return nil, fmt.Errorf("source preparer is not initialized")
-	}
-	if model == nil {
-		return nil, fmt.Errorf("semantic model is required")
-	}
-	session, err := r.db.Session(ctx)
-	if err != nil {
-		return nil, err
-	}
-	closeSession := true
-	defer func() {
-		if closeSession {
-			if closer, ok := session.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		}
-	}()
-	resolved, err := r.resolveCredentials(ctx, model)
-	if err != nil {
-		return nil, err
-	}
-	telemetry, _ := r.db.(refreshTelemetry)
-	requiredExtensions := RequiredExtensions(resolved)
-	if len(requiredExtensions) > 0 {
-		if r.extensionAdmission == nil {
-			return nil, fmt.Errorf("source preparation requires extension admission for %s", strings.Join(requiredExtensions, ", "))
-		}
-		for _, extension := range requiredExtensions {
-			admitted, err := r.extensionAdmission.AdmitExtension(ctx, extension)
-			if err != nil {
-				return nil, fmt.Errorf("extension %s was not admitted: %w", extension, err)
-			}
-			if err := validateAdmittedExtension(extension, admitted); err != nil {
-				return nil, err
-			}
-			if _, err := session.ExecContext(ctx, loadExtensionStatement(admitted.Path)); err != nil {
-				return nil, fmt.Errorf("loading admitted extension %s: %w", extension, err)
-			}
-		}
-	}
-	releaseScopes := lockSourceScopes(resolved, telemetry)
-	defer releaseScopes()
-	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]stagedRelation{}, relationQueries: map[string]string{}, telemetry: telemetry}
-	prepared.reporter, _ = r.db.(fatalReporter)
-	for _, sourceName := range sortedKeys(resolved.Sources) {
-		source := resolved.Sources[sourceName]
-		connection := resolved.Connections[source.Connection]
-		if connection.Kind == "managed" {
-			relation, err := SourceRelation(resolved, source)
-			if err != nil {
-				_ = prepared.Close()
-				return nil, safeSourceError(sourceName, err)
-			}
-			columns, err := describeRelationSchema(ctx, session, "("+relation+")")
-			if err != nil {
-				_ = prepared.Close()
-				return nil, safeSourceError(sourceName, err)
-			}
-			source.Schema = semanticmodel.TableSchema{Columns: columns}
-			resolved.Sources[sourceName] = source
-			// Keep the resolved relation on the live prepared session so the
-			// freshness observation seam can query it before Close releases the
-			// target-owned connection.
-			prepared.relations[sourceName] = stagedRelation{value: relation, kind: stagedRelationQuery}
-			prepared.relationQueries[sourceName] = "(" + relation + ")"
-			original := model.Sources[sourceName]
-			original.Schema = source.Schema
-			model.Sources[sourceName] = original
-			continue
-		}
-		sourceModel := refreshSourceModel(resolved, sourceName, source)
-		attached := map[string]struct{}{}
-		if err := prepareRefreshSourceAccess(ctx, session, sourceModel, attached); err != nil {
-			observeSource(telemetry, connection.Kind, "failed")
-			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
-			reportCleanup(r.db, telemetry, cleanupErr)
-			return nil, fmt.Errorf("preparing refresh source %q failed", sourceName)
-		}
-		relation, err := SourceRelation(sourceModel, source)
-		if err != nil {
-			observeSource(telemetry, connection.Kind, "failed")
-			_ = prepared.Close()
-			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
-			reportCleanup(r.db, telemetry, cleanupErr)
-			return nil, safeSourceError(sourceName, err)
-		}
-		table := fmt.Sprintf("leapview_stage_%d_%s", sourceStageSequence.Add(1), sourceName)
-		if err := validateIdentifier(table); err != nil {
-			observeSource(telemetry, connection.Kind, "failed")
-			_ = prepared.Close()
-			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
-			reportCleanup(r.db, telemetry, cleanupErr)
-			return nil, err
-		}
-		if _, err := session.ExecContext(ctx, "CREATE TEMP TABLE "+quoteIdentifier(table)+" AS SELECT * FROM ("+relation+")"); err != nil {
-			observeSource(telemetry, connection.Kind, "failed")
-			_ = prepared.Close()
-			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
-			reportCleanup(r.db, telemetry, cleanupErr)
-			return nil, safeSourceError(sourceName, err)
-		}
-		prepared.tables = append(prepared.tables, table)
-		prepared.relations[sourceName] = stagedRelation{value: quoteIdentifier(table), kind: stagedRelationTable}
-		prepared.relationQueries[sourceName] = quoteIdentifier(table)
-		columns, err := describeRelationSchema(ctx, session, quoteIdentifier(table))
-		if err != nil {
-			observeSource(telemetry, connection.Kind, "failed")
-			_ = prepared.Close()
-			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
-			reportCleanup(r.db, telemetry, cleanupErr)
-			return nil, safeSourceError(sourceName, err)
-		}
-		source.Schema = semanticmodel.TableSchema{Columns: columns}
-		resolved.Sources[sourceName] = source
-		original := model.Sources[sourceName]
-		original.Schema = source.Schema
-		model.Sources[sourceName] = original
-		if err := cleanupSourceAccess(session, sourceModel, attached); err != nil {
-			reportCleanup(r.db, telemetry, err)
-			_ = prepared.Close()
-			return nil, fmt.Errorf("cleaning refresh source %q access failed", sourceName)
-		}
-		reportCleanup(r.db, telemetry, nil)
-		observeSource(telemetry, connection.Kind, "succeeded")
-	}
-	if err := resolved.ValidateDiscoveredSourceSchemas(); err != nil {
-		_ = prepared.Close()
-		return nil, fmt.Errorf("validating staged source schemas: %w", err)
-	}
-	closeSession = false
-	return prepared, nil
 }
 
 func validateAdmittedExtension(requested string, admitted AdmittedExtension) error {
@@ -481,6 +347,7 @@ type ProjectRuntimeConfig struct {
 	CredentialResolver CredentialResolver
 	ConnectionResolver analyticsruntime.ConnectionResolver
 	ExtensionAdmission ExtensionAdmission
+	ProviderAdmission  ProviderAdmission
 	SnapshotID         int64
 	ServingStateID     string
 	ProjectID          projectgraph.ResourceID
@@ -596,6 +463,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 			sources.extensionAdmission = config.ExtensionAdmission
 		}
 	}
+	sources.providerAdmission = config.ProviderAdmission
 	materializationModel, err := physicalProjectModel(config.Models, config.ModelTables)
 	if err != nil {
 		return nil, err

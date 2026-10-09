@@ -42,6 +42,19 @@ on:
       - 'scripts/nix_desktop_qualification.py'
       - 'scripts/tests/test_nix_desktop_qualification.py'
       - 'scripts/nix_desktop_attestation.py'
+      - 'scripts/nix_desktop_lifecycle.py'
+      - 'scripts/nix_desktop_lifecycle_inputs.py'
+      - 'scripts/nix_desktop_preview_inputs.py'
+      - 'scripts/tests/test_nix_desktop_preview_inputs.py'
+      - '.github/workflows/desktop-preview-release.yml'
+      - 'scripts/tests/test_nix_desktop_lifecycle.py'
+      - 'scripts/tests/test_nix_desktop_lifecycle_inputs.py'
+      - 'desktop/scripts/qualify-lifecycle-linux.mjs'
+      - 'desktop/scripts/lifecycle-probe-policy.mjs'
+      - 'desktop/scripts/lifecycle-probe-policy.test.mjs'
+      - 'desktop/scripts/lifecycle-probe-cdp.mjs'
+      - 'desktop/scripts/lifecycle-probe-cdp.test.mjs'
+      - '.github/workflows/nix-desktop-lifecycle.yml'
       - 'scripts/tests/test_nix_desktop_attestation.py'
       - 'scripts/nix_oci_content.py'
       - 'scripts/tests/test_nix_oci_content.py'
@@ -67,6 +80,8 @@ on:
       - 'scripts/nix_compose_controller_evidence.py'
       - 'scripts/tests/test_nix_compose_controller_evidence.py'
       - 'scripts/nix_compose_host_guest.py'
+      - 'scripts/nix_compose_bundled_postgres.py'
+      - 'scripts/tests/test_nix_compose_bundled_postgres.py'
       - 'scripts/tests/test_nix_compose_host_guest.py'
       - 'scripts/tests/test_nix_compose_installer_diagnostics.py'
       - 'scripts/nix_compose_guest_launcher.py'
@@ -461,7 +476,7 @@ jobs:
           required = {
               'Go': lambda name: name.startswith('go-'),
               'Bun': lambda name: name.startswith('bun-'),
-              'sqlc Go wrapper': lambda name: name == 'go1.26.7',
+              'sqlc Go wrapper': lambda name: name == 'go1.26.9',
               'Node.js': lambda name: name.startswith('nodejs-'),
               'go-task': lambda name: name.startswith('go-task-'),
           }

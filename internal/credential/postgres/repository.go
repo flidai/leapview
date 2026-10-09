@@ -42,16 +42,10 @@ type Repository struct {
 
 var _ credential.Repository = (*Repository)(nil)
 
-//go:embed schema.sql
+//go:embed schema.sql request_schema.sql rotation_schema.sql first_source_schema.sql first_source_preparation_schema.sql retirement_schema.sql
 var schemaFS embed.FS
 
-var schemaSQL = func() string {
-	b, err := schemaFS.ReadFile("schema.sql")
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
-}()
+var schemaSQL = credentialSchemaSQL(schemaFS)
 
 // SchemaSQL returns the capability-owned schema used by focused PostgreSQL
 // tests and controlled schema preparation.

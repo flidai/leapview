@@ -45,3 +45,50 @@ test('desktop trust regressions run in the fast contract and trigger Nix validat
     expect(development.on.pull_request.paths).toContain(path)
   }
 })
+
+test('desktop lifecycle isolates execution and uploads only public exact-version evidence', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-desktop-lifecycle.yml', 'utf8'))
+  expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch'])
+  expect(workflow.permissions).toEqual({ contents: 'read', actions: 'read', attestations: 'read' })
+  expect(workflow.concurrency['cancel-in-progress']).toBe(false)
+  const job = workflow.jobs.qualify
+  expect(job.if).toContain("github.repository == 'flidai/leapview'")
+  expect(job.if).toContain("github.ref == 'refs/heads/main'")
+  expect(job['runs-on']).toBe('ubuntu-22.04')
+  expect(job.environment).toBe('leapview-ephemeral-qualification')
+  expect(job.steps[0].with.ref).toBe('${{ github.sha }}')
+  const commands = job.steps.map((step: any) => step.run ?? '').join('\n')
+  expect(commands).toContain('protected/scripts/nix_desktop_lifecycle_inputs.py')
+  expect(commands).toContain('protected/scripts/nix_desktop_lifecycle.py qualify')
+  expect(commands).not.toMatch(/nix build|gh workflow run|--no-sandbox|ignore-certificate-errors/)
+  expect(job.steps.at(-1).with.path).toBe('${{ runner.temp }}/desktop-lifecycle-public/desktop-lifecycle.json')
+  const runtime = readFileSync('scripts/nix_desktop_lifecycle.py', 'utf8')
+  expect(runtime).toContain("'--net', '--fork', '--kill-child=SIGKILL'")
+  expect(runtime).toContain("'env', '-i'")
+  expect(runtime).toContain("'--no-download'")
+  const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
+  expect(tasks['ci:test:frontend:core'].cmds).toContain("python3 -m unittest discover -s scripts/tests -p 'test_nix_desktop_lifecycle*.py'")
+})
+
+test('preview publication reuses signed Nix Linux bytes after exact versioned lifecycle qualification', () => {
+  const workflow = parse(readFileSync('.github/workflows/desktop-preview-release.yml', 'utf8'))
+  for (const field of ['nix_desktop_run_id', 'nix_desktop_run_attempt',
+    'nix_desktop_lifecycle_run_id', 'nix_desktop_lifecycle_run_attempt']) {
+    expect(workflow.on.workflow_dispatch.inputs[field].required).toBe(true)
+  }
+  for (const job of Object.values(workflow.jobs) as any[]) {
+    expect(job.if).toContain("github.ref == 'refs/heads/main'")
+    expect(job.if).toContain("github.repository == 'flidai/leapview'")
+  }
+  const steps = workflow.jobs.packages.steps
+  expect(steps.find((step: any) => step.uses === './.github/actions/desktop-preview-candidate').if)
+    .toBe("matrix.artifact != 'linux-x64'")
+  const stage = steps.find((step: any) => step.run?.includes('nix_desktop_preview_inputs.py stage'))
+  expect(stage.if).toBe("matrix.artifact == 'linux-x64'")
+  expect(stage.run).toContain('--lifecycle-run "$LIFECYCLE_RUN" --lifecycle-attempt "$LIFECYCLE_ATTEMPT"')
+  expect(stage.run).not.toMatch(/nix build|bun run make/)
+  const publish = workflow.jobs.publish.steps.map((step: any) => step.run ?? '').join('\n')
+  expect(publish).toContain('node protected/desktop/scripts/verify-release-evidence.mjs')
+  expect(publish).not.toContain('node "$candidate/out/evidence/verify-release-evidence.mjs"')
+  expect(publish).toContain('--source-digest "$PUBLISHER_SHA" --source-ref refs/heads/main --deny-self-hosted-runners')
+})

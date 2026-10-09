@@ -7,6 +7,11 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
+// A target probe owns an isolated session with one attached connection. Its
+// internal SQL alias is independent of the durable resource ID, which can
+// contain namespace punctuation and is not a semantic or SQL identifier.
+const targetRuntimeConnectionAlias = "target_probe"
+
 func ApplyTargetBinding(
 	logical semanticmodel.Connection,
 	binding connectionbinding.TargetBinding,
@@ -52,7 +57,7 @@ func ApplyTargetBinding(
 	} else {
 		resolved.Auth = nil
 	}
-	validated, err := resolved.Validate(binding.ConnectionID.String())
+	validated, err := resolved.Validate(targetRuntimeConnectionAlias)
 	if err != nil {
 		clear(resolved.Auth)
 		return semanticmodel.Connection{}, connectionbinding.ErrInvalidCredentialBundle

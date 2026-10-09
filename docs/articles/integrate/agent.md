@@ -59,20 +59,33 @@ endpoint, and credential.
 
 ### Deployment prerequisite: credential encryption
 
-Set `LEAPVIEW_AGENT_CREDENTIAL_KEY` to a cryptographically generated 32-byte key,
-encoded as 64 hexadecimal characters, before enabling admin-managed settings.
-Compose initialization generates this value when absent. Existing installations
-must provision it through their deployment secret manager and restart once.
-Back up this encryption key separately from the PostgreSQL database and preserve
-it across deployments. Losing it makes saved provider credentials unrecoverable;
-replacing it is not a supported key-rotation procedure. Do not reuse the CSRF key.
+Administrator-managed agent settings use the shared customer credential store.
+Configure a private `credential-keyring-v1` file through
+`LEAPVIEW_CREDENTIAL_KEYRING_FILE`, bound to the initialized instance identity,
+and declare the customer owner with `admin credentials setup --owner` while the
+application is stopped. Keep an independent encrypted recovery copy of that
+keyring and retain keys needed by supported database backups.
 
-Provider credentials are encrypted in agent-owned PostgreSQL revision storage.
-Saved keys never appear in configuration reads, browser signals, or audit
-payloads. The admin sees only whether a key is configured, and can replace or
-explicitly remove it. Configuration revisions record the administrator identity
-and creation time. Historical encrypted credentials are retained so active work
-and explicit restoration can use their original revision.
+**Test connection** saves an encrypted immutable version and validates that exact
+version against the proposed provider configuration. **Save and activate** drains
+credential-backed work, commits the configuration reference and audit together,
+then installs the committed runtime before admitting new work. A failed response
+can mean activation is pending; reload settings before retrying. Testing the same
+pending change refreshes its validation without replacing its version. **Cancel
+pending change** can abandon an uncommitted change; a committed change must be
+recovered, or replaced through another validated configuration.
+
+Configuration history contains exact version references. Saved keys never appear
+in configuration reads, browser signals, or audit payloads. Historical references
+retain their original destination and credential when a run resumes or an
+administrator tests an earlier configuration.
+
+The old `LEAPVIEW_AGENT_CREDENTIAL_KEY` value is unused. Legacy encrypted agent
+revisions are rejected with explicit setup guidance; they are never silently
+imported, overwritten, or erased. Retain the old deployment and its recovery
+material before moving across this incompatible credential format. Explicitly
+re-enter provider credentials using the new setup; ordinary image rollback is
+not a credential-format migration procedure.
 
 ### Existing deployment-managed configuration
 

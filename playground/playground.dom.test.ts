@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
-import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser, type Page, type Request as BrowserRequest } from '@playwright/test'
 import { chartExamples } from './chart-fixtures'
 import { playgroundResponse } from './server'
 import { startTestPlayground } from './test-server'
@@ -13,6 +13,16 @@ let errors: string[]
 let unexpectedRequests: string[]
 let assetRequests: Map<string, string>
 let consoleErrors: string[]
+const assetFailureLimit = 20
+let assetFailures: string[]
+let omittedAssetFailures: number
+
+function recordFailedAsset(request: BrowserRequest) {
+  const url = new URL(request.url())
+  if (url.origin !== server.url.origin || !['script', 'stylesheet'].includes(request.resourceType())) return
+  if (assetFailures.length < assetFailureLimit) assetFailures.push(`${request.failure()?.errorText ?? 'request failed'} ${request.url()}`)
+  else omittedAssetFailures++
+}
 
 beforeAll(async () => {
   server = await startTestPlayground()
@@ -24,6 +34,8 @@ beforeEach(async () => {
   unexpectedRequests = []
   assetRequests = new Map()
   consoleErrors = []
+  assetFailures = []
+  omittedAssetFailures = 0
   page = await browser.newPage({ baseURL: server.url.href, viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   page.setDefaultTimeout(7000)
   page.on('pageerror', error => errors.push(error.message))
@@ -37,8 +49,13 @@ beforeEach(async () => {
   page.on('requestfailed', request => { assetRequests.set(request.url(), request.failure()?.errorText || 'failed') })
   page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
+  page.on('requestfailed', recordFailedAsset)
 })
 afterEach(async () => {
+  // Closing a page deliberately cancels any remaining asset requests.
+  page?.off('requestfailed', recordFailedAsset)
+  // Navigation can cancel assets; the existing rendering and error assertions decide test success.
+  if (assetFailures.length) console.error('Playground asset request failures:', JSON.stringify({ url: page.url(), failures: assetFailures, omitted: omittedAssetFailures }))
   await page?.close()
   expect(unexpectedRequests).toEqual([])
   expect(errors).toEqual([])
@@ -268,6 +285,47 @@ test('failed initial loading preserves authored YAML from a shared link during e
   await browserExpect(page.locator('html')).toHaveAttribute('data-color-mode', 'dark')
 })
 
+test('failed lazy asset diagnostics retain the browser transport reason', async () => {
+  await page.route('**/assets/chunks/charts-*.js', route => route.abort('connectionreset'))
+  await open('charts/line')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toContainText('Failed to fetch dynamically imported module')
+  expect(assetFailures).toEqual([expect.stringMatching(/^net::ERR_CONNECTION_RESET http:\/\/127\.0\.0\.1:\d+\/assets\/chunks\/charts-[^/]+\.js$/)])
+})
+
+test('asset diagnostics retain an unexpected current-document abort without replacing rendering assertions', async () => {
+  await page.route('**/assets/chunks/charts-*.js', route => route.abort('aborted'))
+  await open('charts/line')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toContainText('Failed to fetch dynamically imported module')
+  expect(assetFailures).toEqual([expect.stringMatching(/^net::ERR_ABORTED http:\/\/127\.0\.0\.1:\d+\/assets\/chunks\/charts-[^/]+\.js$/)])
+})
+
+test('a deliberate reload reports its canceled asset without failing the recovered preview', async () => {
+  let held!: BrowserRequest
+  let requested!: () => void
+  let release!: () => void
+  const started = new Promise<void>(resolve => { requested = resolve })
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/assets/chunks/controls-*.js', async route => {
+    if (!held) {
+      held = route.request()
+      requested()
+      await pending
+    }
+    await route.continue()
+  })
+  try {
+    await page.goto(`${server.url}#controls/select`, { waitUntil: 'domcontentloaded' })
+    await started
+    const canceled = page.waitForEvent('requestfailed', request => request === held)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    release()
+    await canceled
+    expect(held.failure()?.errorText).toBe('net::ERR_ABORTED')
+    await browserExpect(page.locator('playground-controls')).toBeVisible()
+    expect(assetFailures).toEqual([`net::ERR_ABORTED ${held.url()}`])
+  } finally { release() }
+})
+
 test('browser review waits for the actual preview while its module is delayed', async () => {
   const gate = await delayControlsModule()
   const opening = openExample(page, 'controls/select', { theme: 'light' })
@@ -473,6 +531,11 @@ test('table sorting, selection and scroll windows work while expanded', async ()
   await browserExpect(page.getByRole('dialog')).toBeVisible()
   await table.getByRole('button', { name: 'Revenue', exact: true }).click()
   await browserExpect.poll(async () => page.locator('lv-visualization-host').evaluate((element: any) => element.envelope.dataState.sort[0].field.field)).toBe('value')
+  const revenueHeader = table.getByRole('columnheader').filter({ has: page.getByRole('button', { name: 'Revenue', exact: true }) })
+  await browserExpect(revenueHeader).toHaveAttribute('aria-sort', 'descending')
+  await table.getByRole('button', { name: 'Revenue', exact: true }).click()
+  await browserExpect(revenueHeader).toHaveAttribute('aria-sort', 'ascending')
+  await browserExpect(table.locator('[role="columnheader"][aria-sort]:not([aria-sort="none"])')).toHaveCount(1)
   await table.locator('.table-scrollport').evaluate(element => { element.scrollTop = 17000 })
   await browserExpect.poll(async () => table.locator('.row[aria-selected]').count()).toBeGreaterThan(0)
   await browserExpect.poll(async () => page.locator('lv-visualization-host').evaluate((element: any) => Math.max(...Object.values(element.envelope.dataState.blocks).map((block: any) => block.start)))).toBeGreaterThan(400)

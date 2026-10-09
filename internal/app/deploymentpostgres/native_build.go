@@ -84,6 +84,7 @@ type NativeBuildConfig struct {
 	ArtifactRecovery    release.CandidateArtifactRecovery
 	BindingEvidence     deploymentdomain.CandidateConnectionEvidenceResolver
 	Connections         deploymentdomain.CandidateConnectionLeaser
+	PlanConnections     NativePlanConnectionSelector
 	ManagedData         NativeCandidateManagedDataResolver
 	Contract            NativeBuildContractResolver
 	ContractAuthority   *NativeBuildContractAuthority
@@ -129,6 +130,7 @@ type NativeBuildCoordinator struct {
 	artifactRecovery                    release.CandidateArtifactRecovery
 	bindingEvidence                     deploymentdomain.CandidateConnectionEvidenceResolver
 	connections                         deploymentdomain.CandidateConnectionLeaser
+	planConnections                     NativePlanConnectionSelector
 	managedData                         NativeCandidateManagedDataResolver
 	contract                            NativeBuildContractResolver
 	physicalPoolID, compatibilityDigest string
@@ -260,7 +262,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 	}
 	return &NativeBuildCoordinator{
 		repository: config.Repository, targetID: config.TargetID, environment: config.Environment,
-		sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, managedData: config.ManagedData, contract: contract,
+		sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, planConnections: config.PlanConnections, managedData: config.ManagedData, contract: contract,
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
 		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, markerQuarantine: config.MarkerQuarantine, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
@@ -353,6 +355,10 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if reservation.Lease.OperationID != reservation.Operation.OperationID {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: reserved operation lease identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
+	planConnections, err := c.selectPlanConnections(ctx, plan.DeliveryPlan)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 	contract, err := c.contract.Resolve(ctx, NativeBuildContractRequest{PhysicalPoolID: c.physicalPoolID, CompatibilityDigest: c.compatibilityDigest})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -430,7 +436,7 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	bindingRequest := nativeCandidateConnectionRequest(
 		candidateID, normalized.PrincipalID, normalized.TargetID, effective,
 	)
-	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, c.bindingEvidence, bindingRequest)
+	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, planConnections.BindingEvidence, bindingRequest)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
@@ -548,7 +554,7 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
 	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis, MaxRows: c.bounds.MaxRows})
 	physicalContext = analyticsmaterialize.WithSourceCheckEvaluator(physicalContext, sourceCheckEvaluator)
-	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
+	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, planConnections.Connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if releaseErr := releaseManagedData(); releaseErr != nil {
 		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native candidate managed-data roots: %w", releaseErr)))
 	}
@@ -911,7 +917,7 @@ func nativeMaterializationRequest(artifacts release.CandidateArtifactSet, reques
 		tables = append(tables, name)
 	}
 	sort.Strings(tables)
-	return analyticsmaterialization.Request{Models: models, ModelTables: modelTables, Identity: projectgraph.ServingIdentity{ProjectID: request.ProjectID, Environment: request.Environment, GenerationID: generationID}, CandidateID: candidateID, RelationNamespace: namespace, Environment: servingstate.Environment(request.Environment), TargetType: "deployment", TargetID: projectgraph.ResourceID(request.TargetID), SemanticDigest: plan.Execution.BindingDigest, ArtifactDigest: plan.SourceDigest, Tables: tables}
+	return analyticsmaterialization.Request{Models: models, ModelTables: modelTables, ConnectionIDs: refreshDefinition.ConnectionIDs, Identity: projectgraph.ServingIdentity{ProjectID: request.ProjectID, Environment: request.Environment, GenerationID: generationID}, CandidateID: candidateID, RelationNamespace: namespace, Environment: servingstate.Environment(request.Environment), TargetType: "deployment", TargetID: projectgraph.ResourceID(request.TargetID), SemanticDigest: plan.Execution.BindingDigest, ArtifactDigest: plan.SourceDigest, Tables: tables}
 }
 
 func prepareNativeMaterializationRequest(

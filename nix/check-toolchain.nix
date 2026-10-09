@@ -9,7 +9,7 @@ pkgs.runCommand "leapview-development-toolchain-check"
     export GOCACHE="$TMPDIR/go-cache"
     test "$(go env GOVERSION)" = "go${toolchain.goVersion}"
     test "$(bun --version)" = "${toolchain.bunVersion}"
-    GOTOOLCHAIN=go1.26.7 go version | grep -F 'go1.26.7'
+    GOTOOLCHAIN=go1.26.9 go version | grep -F 'go1.26.9'
     node --version
     task --version
     docker --version

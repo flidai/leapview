@@ -2215,7 +2215,7 @@
       "x-scope": "serve"
     },
     "LEAPVIEW_AGENT_CREDENTIAL_KEY": {
-      "description": "64-character hexadecimal key protecting administrator-managed agent credentials. Back up independently of the database.",
+      "description": "Unused legacy agent encryption key. It does not enable administrator-managed settings or decrypt legacy revisions. Configure LEAPVIEW_CREDENTIAL_KEYRING_FILE and explicitly re-enter provider credentials.",
       "type": "string",
       "writeOnly": true,
       "x-lifecycle": "supported",

@@ -329,3 +329,32 @@ test('reasoning choices follow protocol and model when switching providers', asy
     expect((await page.evaluate(() => (window as any).reasoningCommand)).provider.reasoningEffort).toBe('')
   } finally { await page.close() }
 })
+
+test('pending provider cancellation completes without changing the saved revision', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { canWrite: true, configurationAvailable: true, enabled: true, configured: true, model: 'model-a', baseUrl: 'https://provider.example/v1', apiMode: 'responses', configurationRevision: 1, status: 'enabled', revision: '"r1"', systemPrompt: '', tools: [], updatePath: '/admin/agent/config' }
+      await element.updateComplete
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).cancelCommand = event.detail })
+    })
+    const settings = page.locator('lv-agent-provider-settings')
+    await settings.getByRole('button', { name: 'Cancel pending change' }).click()
+    expect((await page.evaluate(() => (window as any).cancelCommand)).action).toBe('abort')
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { ...element.agent, testToken: '', testMessage: 'Pending provider change canceled. The saved configuration is ready.' }
+      await element.updateComplete
+    })
+    await expect(settings.getByRole('button', { name: 'Test connection' }).isEnabled()).resolves.toBe(true)
+    expect(await settings.getByLabel('Model identifier').inputValue()).toBe('model-a')
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 500 } } })))
+    expect(await settings.getByText('Reload settings to check the saved configuration', { exact: false }).isVisible()).toBe(true)
+    expect(await settings.getByText('Your previous state was kept', { exact: false }).count()).toBe(0)
+    await expect(settings.getByRole('button', { name: 'Cancel pending change' }).isEnabled()).resolves.toBe(true)
+  } finally { await page.close() }
+})

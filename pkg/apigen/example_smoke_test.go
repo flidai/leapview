@@ -104,8 +104,9 @@ func TestExample_TypeSpecToGeneratedBuildAndRun(t *testing.T) {
 
 	serverBinary := filepath.Join(exampleRoot, "server")
 	cliBinary := filepath.Join(exampleRoot, "cli")
-	runCommand(t, exampleRoot, "go", "build", "-o", serverBinary, "./cmd/server")
-	runCommand(t, exampleRoot, "go", "build", "-o", cliBinary, "./cmd/cli")
+	// This generated consumer is a temporary directory, not a VCS checkout.
+	runCommand(t, exampleRoot, "go", "build", "-buildvcs=false", "-o", serverBinary, "./cmd/server")
+	runCommand(t, exampleRoot, "go", "build", "-buildvcs=false", "-o", cliBinary, "./cmd/cli")
 
 	serverGenerated := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
 	require.Contains(t, serverGenerated, "APIGen Todo Example")

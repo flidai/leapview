@@ -1642,6 +1642,7 @@ test('arrange visuals saves one balanced layout', async () => {
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { (window as any).arrangeCommand = event.detail }, { once: true })
       await element.updateComplete
     })
+    await page.getByLabel('More dashboard actions', { exact: true }).first().click()
     await page.getByRole('button', { name: 'Arrange visuals', exact: true }).click()
     const command = await page.evaluate(() => (window as any).arrangeCommand)
     expect(command).toMatchObject({ action: 'set_placements', pageId: 'overview', placements: [
@@ -2332,7 +2333,7 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     expect(state.metadataLines).toBe(1)
     expect(state.metadata).toContain('Saved · Unpublished')
     expect(state.metadata).not.toContain('Unsaved')
-    expect(state.topLevelActions).toEqual(['Arrange visuals', 'Hide tools', 'more', 'Undo', 'Redo', 'Switch to dark mode', 'more', 'Publish'])
+    expect(state.topLevelActions).toEqual(['Visual magic', 'Hide tools', 'more', 'Undo', 'Redo', 'Switch to dark mode', 'more', 'Publish'])
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })
