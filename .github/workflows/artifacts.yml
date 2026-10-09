@@ -149,15 +149,15 @@ jobs:
     needs: build-production-image
     if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}
     runs-on: ubuntu-24.04
-    # The release gate now includes the policy-driven performance and repeated
-    # native-refresh phase. Its bounded phase budgets total 115 minutes before
-    # toolchain setup and evidence cleanup, so retain enough outer headroom for
-    # the controller to finish and publish diagnostics on a slow runner.
-    timeout-minutes: 150
+    # Once a reviewed reference exists, run reference and candidate serially
+    # with the same current fixture/controller. Each complete journey retains
+    # its existing phase bounds; allow both journeys and setup/cleanup to end.
+    timeout-minutes: 300
     permissions:
       contents: read
       packages: read
       attestations: read
+      actions: read
     outputs:
       image: ${{ steps.admission.outputs.image }}
       revision: ${{ needs.build-production-image.outputs.revision }}
@@ -228,11 +228,14 @@ jobs:
           IMAGE_VERSION: ${{ needs.build-production-image.outputs.version }}
           IMAGE_REVISION: ${{ needs.build-production-image.outputs.revision }}
           IMAGE_BUILD_TIME: ${{ needs.build-production-image.outputs.build_time }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           immutable_image="${IMAGE_REFERENCE}"
           [[ "${immutable_image}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
-          task image:qualify:production IMAGE="${immutable_image}"
+          task db:generate api:generate ui-signals:generate
+          node scripts/run_performance_comparison.mjs "${IMAGE_REVISION}" "${immutable_image}" \
+            .tmp/qualification/production-image
           test -s .tmp/qualification/production-image/performance-report.json
           identity="$(docker run --rm "${immutable_image}" version --format json)"
           jq -e \

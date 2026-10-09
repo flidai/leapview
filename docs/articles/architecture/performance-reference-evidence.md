@@ -53,3 +53,14 @@ it cannot silently fall back to local files or absolute-only success.
 The artifact attempt must match the latest successful run attempt. A failed
 earlier attempt cannot inherit a successful retry's job result; after a retry,
 the new attempt's retained artifact requires a new reviewed proposal.
+
+Once an accepted reference exists, production-image qualification admits its
+retained bytes, measures the reference image first on the current runner, and
+then measures the candidate with `QUALIFICATION_PERFORMANCE_BASELINE` pointing
+to that fresh reference report. Both images use the same current controller,
+fixture and policy. The historical retained report establishes acceptance and
+image identity; it is not relabeled as a fresh paired measurement. A failed
+reference or comparison stops qualification. Without an accepted reference,
+the mode receipt explicitly records `absolute-only-bootstrap` and no comparison.
+This is one serial qualification pair using the maintained tolerance, not a
+three-pair optimization screen, variance calibration or approval of new budgets.
