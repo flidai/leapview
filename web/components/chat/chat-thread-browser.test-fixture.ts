@@ -1,4 +1,4 @@
-import { afterAll, beforeAll } from 'bun:test'
+import { afterAll, afterEach, beforeAll } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
@@ -106,9 +106,18 @@ export function chatThreadBrowserFixture() {
     fixture.browser = await chromium.launch()
   })
 
+  afterEach(async () => {
+    await Promise.all(fixture.browser?.contexts().map(context => context.close()) ?? [])
+  })
+
   afterAll(async () => {
     await fixture.browser?.close()
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    if (!server) return
+    server.closeAllConnections()
+    await new Promise<void>((resolve, reject) => server.close((error: NodeJS.ErrnoException | undefined) => {
+      if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
+      else resolve()
+    }))
   }, 15_000)
 
   return fixture
