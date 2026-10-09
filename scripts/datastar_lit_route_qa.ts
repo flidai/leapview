@@ -38,6 +38,7 @@ const accessibilityRoutes: AccessibilityRoute[] = [
   { label: 'Connections', path: '/connections', root: 'lv-connections-page', shell: true, qualifyCompactState: true },
   { label: 'Personal profile', path: '/admin/profile', root: 'lv-admin-page', shell: true, qualifyCompactState: true },
   { label: 'Administration', path: '/admin/general', root: 'lv-admin-page', shell: true, qualifyCompactState: true },
+  { label: 'Idle chat history', path: '/chats', root: 'lv-chat-page', shell: true, qualifyCompactState: true },
   { label: 'Login', path: '/login', root: 'lv-login-page', shell: false, qualifyCompactState: true },
 ]
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
@@ -202,6 +203,11 @@ async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute, viewport:
     await page.locator(route.root).evaluate(async (element: any) => {
       if (element.updateComplete) await element.updateComplete
     })
+    if (route.root === 'lv-chat-page') {
+      // The page signal can precede the agent bootstrap. Scan the rendered
+      // history, rather than the transient loading shell, without sending a prompt.
+      await expect(page.locator('lv-chat-list').getByRole('heading', { name: 'Chats', exact: true })).toBeVisible()
+    }
 
     const scan = async (state: string) => {
       const label = `${route.label} / ${state} / ${viewport.width}x${viewport.height}`
