@@ -22,13 +22,14 @@ type sourceCredentialEvidence interface {
 // sourceCredentialConfig contains only process-owned capabilities. No request
 // selects a database, runtime, publication authority or local credential pin.
 type sourceCredentialConfig struct {
-	Pool        *pgxpool.Pool
-	Credentials *credentialmodule.ActivationRepository
-	TargetID    string
-	Environment string
-	Mutations   sourceCredentialMutations
-	Reader      deploymentmodule.NativeDeliveryReader
-	Delivery    *deploymentpostgres.Repository
+	Pool               *pgxpool.Pool
+	Credentials        *credentialmodule.ActivationRepository
+	TargetID           string
+	Environment        string
+	CandidateAdmission deploymentmodule.CandidatePreparationAdmitter
+	Mutations          sourceCredentialMutations
+	Reader             deploymentmodule.NativeDeliveryReader
+	Delivery           *deploymentpostgres.Repository
 	// PublicationRepository installs operation-specific admission while retaining
 	// ordinary publication's audit, events and lineage verification.
 	PublicationRepository  func(string, credentialmodule.ActivationCommitAuthorizer) (*deploymentpostgres.Repository, error)
@@ -43,7 +44,7 @@ type sourceCredentialConfig struct {
 type sourceCredentialActivation struct{ config sourceCredentialConfig }
 
 func newSourceCredentialActivation(config sourceCredentialConfig) (*sourceCredentialActivation, error) {
-	if config.Pool == nil || config.Credentials == nil || config.TargetID == "" || config.Environment == "" || config.Mutations == nil || config.Reader == nil || config.Delivery == nil || config.PublicationRepository == nil || config.BeforeActivationCommit == nil || config.Authorize == nil || config.AuthorizeTx == nil || config.CurrentAuthorityTx == nil || config.Evidence == nil || config.Install == nil || config.Restore == nil {
+	if config.Pool == nil || config.Credentials == nil || config.TargetID == "" || config.Environment == "" || config.CandidateAdmission == nil || config.Mutations == nil || config.Reader == nil || config.Delivery == nil || config.PublicationRepository == nil || config.BeforeActivationCommit == nil || config.Authorize == nil || config.AuthorizeTx == nil || config.CurrentAuthorityTx == nil || config.Evidence == nil || config.Install == nil || config.Restore == nil {
 		return nil, credentialmodule.ErrValidationUnavailable
 	}
 	return &sourceCredentialActivation{config: config}, nil

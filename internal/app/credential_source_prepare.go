@@ -104,14 +104,8 @@ func (a *sourceCredentialActivation) prepareNative(ctx context.Context, actor st
 			return fail(err)
 		}
 	}
-	build, err := a.config.Mutations.BuildPlan(operationCtx, deploymentmodule.NativeDeliveryBuildRequest{ProjectID: plan.ProjectID, TargetID: plan.TargetID, Environment: plan.Environment, PlanID: plan.ID, PrincipalID: actor, IdempotencyKey: "credential-build-" + row.Request.OperationID})
+	build, err := a.buildNative(operationCtx, actor, row.Request.OperationID, plan)
 	if err != nil {
-		return fail(err)
-	}
-	if build.PlanID != plan.ID || build.PlanDigest != plan.PlanDigest || build.CandidateID == uuid.Nil || build.ServingStateID == uuid.Nil || build.SealID == uuid.Nil || build.BaseGenerationID != plan.BaseGenerationID {
-		return fail(credentialmodule.ErrValidationConflict)
-	}
-	if err = a.config.Mutations.CompleteNativeBuildCommand(operationCtx, build); err != nil {
 		return fail(err)
 	}
 	// Completion verifies native build consequences. Re-read the exact immutable
@@ -159,4 +153,35 @@ func (a *sourceCredentialActivation) prepareNative(ctx context.Context, actor st
 		return err
 	})
 	return row.ActivationRecord(), err
+}
+
+// buildNative holds physical candidate admission through build verification
+// and synchronous command completion for both credential UI and API callers.
+func (a *sourceCredentialActivation) buildNative(ctx context.Context, actor, operationID string, plan deploymentmodule.NativeDeliveryPlan) (deploymentmodule.NativeDeliveryBuild, error) {
+	if a.config.CandidateAdmission == nil {
+		return deploymentmodule.NativeDeliveryBuild{}, credentialmodule.ErrValidationUnavailable
+	}
+	lease, err := a.config.CandidateAdmission.AcquireCandidatePreparation(ctx)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	if lease == nil {
+		return deploymentmodule.NativeDeliveryBuild{}, credentialmodule.ErrValidationUnavailable
+	}
+	defer lease.Release()
+	ctx = lease.Context()
+	if ctx == nil {
+		return deploymentmodule.NativeDeliveryBuild{}, credentialmodule.ErrValidationUnavailable
+	}
+	build, err := a.config.Mutations.BuildPlan(ctx, deploymentmodule.NativeDeliveryBuildRequest{ProjectID: plan.ProjectID, TargetID: plan.TargetID, Environment: plan.Environment, PlanID: plan.ID, PrincipalID: actor, IdempotencyKey: "credential-build-" + operationID})
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	if build.PlanID != plan.ID || build.PlanDigest != plan.PlanDigest || build.CandidateID == uuid.Nil || build.ServingStateID == uuid.Nil || build.SealID == uuid.Nil || build.BaseGenerationID != plan.BaseGenerationID {
+		return deploymentmodule.NativeDeliveryBuild{}, credentialmodule.ErrValidationConflict
+	}
+	if err = a.config.Mutations.CompleteNativeBuildCommand(ctx, build); err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	return build, nil
 }

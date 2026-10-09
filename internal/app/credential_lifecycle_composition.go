@@ -27,6 +27,7 @@ type credentialLifecycleConfig struct {
 	Graph                              *postgresauthority.PostgresAuthorityGraph
 	Analytics                          *analyticsmodule.Module
 	CandidateBindings                  *connectionbinding.RuntimeBindingLeaser
+	CandidateAdmission                 deploymentmodule.CandidatePreparationAdmitter
 	Mutations                          sourceCredentialMutations
 	Reader                             deploymentmodule.NativeDeliveryReader
 	RuntimeHost                        *runtimehostmodule.Module
@@ -91,7 +92,7 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 	}
 	source, err := newSourceCredentialActivation(sourceCredentialConfig{
 		Pool: c.Pool, Credentials: c.Services.ActivationRepository(), TargetID: c.TargetID, Environment: c.Environment,
-		Mutations: c.Mutations, Reader: c.Reader, Delivery: c.Graph.DeploymentRepository, Evidence: c.Evidence,
+		CandidateAdmission: c.CandidateAdmission, Mutations: c.Mutations, Reader: c.Reader, Delivery: c.Graph.DeploymentRepository, Evidence: c.Evidence,
 		BeforeActivationCommit: c.BeforeActivationCommit,
 		PublicationRepository: func(operation string, auth credentialmodule.ActivationCommitAuthorizer) (*deploymentpostgres.Repository, error) {
 			return appdeploymentpostgres.NewCredentialPublicationRepository(c.Pool, appdeploymentpostgres.Authorities{Access: c.Graph.AccessAudit, Events: c.Graph.Events, Lineage: lineage}, c.Services.ActivationRepository(), operation, auth)

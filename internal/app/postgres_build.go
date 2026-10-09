@@ -826,6 +826,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	// Legacy delivery projection and candidate-builder paths remain absent.
 	// Publication/activation remain owned by refresh persistence's native
 	// finalizer; the executor stops after the sealed native build evidence.
+	candidateAdmission := candidatePreparationAdmitter(workloadBundle.Controller, workloadmodule.ControlRequest("candidate.prepare"))
 	deploymentConfig := deploymentmodule.Config{
 		Persistence: graph.DeploymentPersistence, Protected: production,
 		InstanceID: instanceID, InstanceEnvironment: string(environment),
@@ -833,7 +834,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		CandidateConnections:        candidateConnections,
 		CandidateRuntime:            runtimeHost,
 		CandidateArtifactRecovery:   release,
-		CandidateAdmission:          candidatePreparationAdmitter(workloadBundle.Controller, workloadmodule.ControlRequest("candidate.prepare")),
+		CandidateAdmission:          candidateAdmission,
 		NativeMetadataSchemaForPool: ducklake.MetadataSchemaForPool,
 		RuntimeVersion:              runtimeVersion,
 		NativeDeliveryMutations:     nativeDelivery,
@@ -914,7 +915,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	}
 	credentialRuntime, err := composeCredentialLifecycle(ctx, credentialLifecycleConfig{
 		Services: credentialServices, Pool: bootstrap.RuntimePool().NativePool(), Graph: graph,
-		Analytics: analytics, CandidateBindings: candidateBindings, Mutations: nativeDelivery, Reader: nativeDeliveryReader,
+		Analytics: analytics, CandidateBindings: candidateBindings, CandidateAdmission: candidateAdmission, Mutations: nativeDelivery, Reader: nativeDeliveryReader,
 		RuntimeHost: runtimeHost, Evidence: activeRuntimeEvidence, TargetID: instanceID, Environment: string(environment),
 		KeyringPath: cfg.CredentialKeyringFile, BeforeActivationCommit: semanticActivation.ValidatePublication,
 		AuthorizeConnection: accessmodule.ConnectionAuthorizerFromSnapshot(instanceID, authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects),
