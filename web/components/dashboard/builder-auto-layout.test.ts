@@ -69,14 +69,14 @@ test('new KPI cards fill a preserved KPI row without moving or resizing existing
 })
 
 
-test('Visual magic packs complete chart rows directly below compact KPIs', () => {
+test('Visual magic leaves an incomplete compact KPI row at the end', () => {
  const result = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix'].map(type => ({id:type,type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
  expect(result.map(p=>p.placement)).toEqual([
-  {column:1,row:1,columnSpan:3,rowSpan:2},
-  {column:1,row:3,columnSpan:4,rowSpan:5},
-  {column:5,row:3,columnSpan:4,rowSpan:5},
-  {column:9,row:3,columnSpan:4,rowSpan:5},
-  {column:1,row:8,columnSpan:12,rowSpan:6},
+  {column:1,row:1,columnSpan:4,rowSpan:5},
+  {column:5,row:1,columnSpan:4,rowSpan:5},
+  {column:9,row:1,columnSpan:4,rowSpan:5},
+  {column:1,row:6,columnSpan:12,rowSpan:6},
+  {column:1,row:12,columnSpan:3,rowSpan:2},
  ])
  const added = arrangeDashboardVisuals(['kpi', 'line', 'pie', 'bar', 'matrix', 'kpi'].map((type,i) => ({id:String(i),type})), [], {columns:12,rowHeight:48,gap:16}, {compact:true})
  expect(added.filter(p => ['0','5'].includes(p.componentId)).map(p=>p.placement.columnSpan)).toEqual([3,3])
@@ -87,20 +87,26 @@ test('Visual magic packs complete chart rows directly below compact KPIs', () =>
 })
 
 
-test('compact chart rows have no cavities on odd grids or after another chart is added', () => {
- for (const columns of [9, 12, 13]) for (const count of [2, 3, 4, 5, 6, 7]) {
-  const result = arrangeDashboardVisuals([
-   { id: 'metric', type: 'kpi' },
-   ...Array.from({length:count}, (_,i) => ({id:String(i),type:['line','pie','bar'][i%3]})),
-  ], [], {columns,rowHeight:48,gap:16}, {compact:true})
-  const metric=result[0].placement
-  const charts=result.slice(1).map(p=>p.placement)
-  expect(Math.min(...charts.map(p=>p.row))).toBe(metric.row+metric.rowSpan)
-  const end=Math.max(...charts.map(p=>p.row+p.rowSpan))
-  for(let row=metric.row+metric.rowSpan; row<end; row++) {
-   for(let col=1; col<=columns; col++) {
-    expect(charts.filter(p=>col>=p.column && col<p.column+p.columnSpan && row>=p.row && row<p.row+p.rowSpan).length).toBe(1)
-   }
+test('Visual magic leaves no empty cells before the final partial KPI row', () => {
+ for (const columns of [9, 12, 13]) for (const metricCount of [1, 2, 3, 4, 5, 8, 9]) for (const chartCount of [1, 2, 3, 4, 5]) {
+  const visuals = [
+   ...Array.from({length:metricCount}, (_,i) => ({id:'kpi'+i,type:'kpi'})),
+   ...Array.from({length:chartCount}, (_,i) => ({id:'chart'+i,type:['line','pie','bar'][i%3]})),
+   {id:'table',type:'matrix'},
+  ]
+  const result=arrangeDashboardVisuals(visuals, [], {columns,rowHeight:48,gap:16}, {compact:true})
+  const boxes=result.map(p=>p.placement)
+  const partial=metricCount%4
+  const end=Math.max(...boxes.map(p=>p.row+p.rowSpan))
+  const filledEnd=end-(partial ? 2 : 0)
+  for(let row=1; row<filledEnd; row++) for(let col=1; col<=columns; col++) {
+   expect(boxes.filter(p=>col>=p.column && col<p.column+p.columnSpan && row>=p.row && row<p.row+p.rowSpan).length).toBe(1)
+  }
+  if(partial) {
+   const last=result.slice(-partial)
+   expect(last.every(p=>p.componentId.startsWith('kpi') && p.placement.row===filledEnd)).toBe(true)
+   expect(last.map(p=>p.placement.column)).toEqual(Array.from({length:partial}, (_,i)=>1+i*Math.floor(columns/4)))
+   expect(last.every(p=>p.placement.columnSpan===Math.floor(columns/4))).toBe(true)
   }
  }
 })

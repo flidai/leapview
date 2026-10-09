@@ -377,8 +377,8 @@ for (const embedded of [false, true]) {
       await editor.getByRole('button', { name: 'Visual magic', exact: true }).click()
       const command = await editor.evaluate((e: any) => e.testCommands[0])
       expect(command).toMatchObject({ action: 'set_placements', placements: [
-        { componentId: 'ready-0', placement: { column: 1, row: 1, columnSpan: 3, rowSpan: 2 } },
-        { componentId: 'ready-1', placement: { column: 1, row: 3, columnSpan: 6, rowSpan: 5 } },
+        { componentId: 'ready-1', placement: { column: 1, row: 1, columnSpan: 12, rowSpan: 5 } },
+        { componentId: 'ready-0', placement: { column: 1, row: 6, columnSpan: 3, rowSpan: 2 } },
       ] })
       expect(command.fillMissingFields).toBeUndefined()
     } finally { await page.close() }
