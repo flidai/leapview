@@ -601,6 +601,11 @@ sections:
             type: explanation
             summary: Verify immutable report artifacts and require independent review before accepting a performance reference.
             source: articles/architecture/performance-reference-evidence.md
+          - slug: architecture/performance-characterization
+            title: Bounded performance characterization
+            summary: Concurrent native reader and maintained browser measurement protocols and their limits.
+            type: explanation
+            source: articles/architecture/performance-characterization.md
           - slug: architecture/dashboard-native-arrow-contract
             title: Dashboard native Arrow response contract
             type: explanation
