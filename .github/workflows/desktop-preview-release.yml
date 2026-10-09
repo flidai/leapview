@@ -9,7 +9,7 @@ on:
         default: main
         type: string
       release_tag:
-        description: Immutable tag such as desktop-v0.1.0-alpha.1
+        description: Immutable tag such as desktop-v0.1.1-alpha.1
         required: true
         type: string
       confirm_unsigned_preview:
@@ -17,9 +17,27 @@ on:
         required: true
         default: false
         type: boolean
+      nix_desktop_run_id:
+        description: Successful protected Nix Desktop producer of these exact Linux bytes
+        required: true
+        type: string
+      nix_desktop_run_attempt:
+        description: Exact successful Nix Desktop producer attempt
+        required: true
+        type: string
+      nix_desktop_lifecycle_run_id:
+        description: Successful protected version-upgrade and offline-rollback qualification
+        required: true
+        type: string
+      nix_desktop_lifecycle_run_attempt:
+        description: Exact successful lifecycle attempt qualifying this candidate
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
+  attestations: read
 
 concurrency:
   group: desktop-preview-${{ inputs.release_tag }}
@@ -27,6 +45,7 @@ concurrency:
 
 jobs:
   identity:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     name: Resolve preview identity
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -89,6 +108,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   packages:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     name: Build preview (${{ matrix.name }})
     needs: identity
     runs-on: ${{ matrix.os }}
@@ -123,12 +143,79 @@ jobs:
           ref: ${{ needs.identity.outputs.source_sha }}
 
       - name: Build, prove, qualify, and upload the exact preview candidate
+        if: matrix.artifact != 'linux-x64'
         uses: ./.github/actions/desktop-preview-candidate
         with:
           artifact-name: leapview-desktop-${{ matrix.artifact }}
           source-sha: ${{ needs.identity.outputs.source_sha }}
 
+      - name: Check out protected retained-artifact tools
+        if: matrix.artifact == 'linux-x64'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+
+      - name: Install pinned Nix for retained Linux evidence
+        if: matrix.artifact == 'linux-x64'
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+            sandbox-fallback = false
+
+      - name: Authenticate original qualified and signed Linux artifacts
+        if: matrix.artifact == 'linux-x64'
+        id: nix_inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN: ${{ inputs.nix_desktop_run_id }}
+          PRODUCER_ATTEMPT: ${{ inputs.nix_desktop_run_attempt }}
+        run: |
+          nix develop --no-update-lock-file ./protected -c python3 protected/scripts/nix_desktop_preview_inputs.py fetch \
+            --run-id "$PRODUCER_RUN" --attempt "$PRODUCER_ATTEMPT" \
+            --directory "$RUNNER_TEMP/nix-desktop-preview-inputs" --github-output "$GITHUB_OUTPUT"
+
+      - name: Read exact original protected signer identity
+        if: matrix.artifact == 'linux-x64'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.nix_inputs.outputs.signerRevision }}
+          path: nix-signer
+          persist-credentials: false
+
+      - name: Stage exact qualified Linux preview after genuine upgrade and rollback
+        if: matrix.artifact == 'linux-x64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN: ${{ inputs.nix_desktop_run_id }}
+          PRODUCER_ATTEMPT: ${{ inputs.nix_desktop_run_attempt }}
+          LIFECYCLE_RUN: ${{ inputs.nix_desktop_lifecycle_run_id }}
+          LIFECYCLE_ATTEMPT: ${{ inputs.nix_desktop_lifecycle_run_attempt }}
+          SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
+        run: |
+          nix develop --no-update-lock-file ./protected -c python3 protected/scripts/nix_desktop_preview_inputs.py stage \
+            --run-id "$PRODUCER_RUN" --attempt "$PRODUCER_ATTEMPT" \
+            --directory "$RUNNER_TEMP/nix-desktop-preview-inputs" \
+            --source-root "$GITHUB_WORKSPACE" --signer-root "$GITHUB_WORKSPACE/nix-signer" \
+            --verifier-root "$GITHUB_WORKSPACE/protected" --expected-source "$SOURCE_SHA" \
+            --lifecycle-run "$LIFECYCLE_RUN" --lifecycle-attempt "$LIFECYCLE_ATTEMPT" \
+            --output "$RUNNER_TEMP/nix-desktop-preview-candidate"
+
+      - name: Retain exact qualified Linux preview bytes and source evidence
+        if: matrix.artifact == 'linux-x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: leapview-desktop-linux-x64
+          retention-days: 7
+          if-no-files-found: error
+          path: ${{ runner.temp }}/nix-desktop-preview-candidate/
+
   publish:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     name: Publish unsigned GitHub prerelease
     needs: [identity, packages]
     runs-on: ubuntu-24.04
@@ -136,6 +223,7 @@ jobs:
     environment: desktop-preview
     permissions:
       contents: write
+      actions: read
       attestations: write
       artifact-metadata: write
       id-token: write
@@ -145,6 +233,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.identity.outputs.source_sha }}
+
+      - name: Check out protected publication verification tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
 
       - name: Download every native candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -168,7 +263,8 @@ jobs:
               update_arguments+=(--update-artifact "$(find "$candidate/out/make" -type f -name '*.nupkg' -print -quit)")
               update_arguments+=(--update-artifact "$(find "$candidate/out/make" -type f -name 'RELEASES' -print -quit)")
             fi
-            node "$candidate/out/evidence/verify-release-evidence.mjs" \
+            cmp "$candidate/release-policy.json" desktop/release-policy.json
+            node protected/desktop/scripts/verify-release-evidence.mjs \
               --artifact "$artifact" \
               --checksums "$candidate/out/evidence/checksums.txt" \
               --manifest "$manifest" \
@@ -200,6 +296,10 @@ jobs:
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
           VERSION: ${{ needs.identity.outputs.version }}
+          NIX_PRODUCER_RUN: ${{ inputs.nix_desktop_run_id }}
+          NIX_PRODUCER_ATTEMPT: ${{ inputs.nix_desktop_run_attempt }}
+          LIFECYCLE_RUN: ${{ inputs.nix_desktop_lifecycle_run_id }}
+          LIFECYCLE_ATTEMPT: ${{ inputs.nix_desktop_lifecycle_run_attempt }}
         run: |
           release_tag="$RELEASE_TAG"
           source_sha="$SOURCE_SHA"
@@ -216,6 +316,9 @@ jobs:
             '- The preview does not contact the production updater. Install a future signed release manually.' \
             '' \
             "Source commit: $source_sha" \
+            "Publication verifier commit: $GITHUB_SHA" \
+            "Linux bytes: protected Nix producer $NIX_PRODUCER_RUN attempt $NIX_PRODUCER_ATTEMPT (no rebuild)." \
+            "Versioned upgrade and offline rollback: protected lifecycle $LIFECYCLE_RUN attempt $LIFECYCLE_ATTEMPT." \
             "Preview version: $VERSION" > "$notes"
           gh release create "$release_tag" \
             --target "$source_sha" \
@@ -229,7 +332,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
-          SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
+          PUBLISHER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
@@ -257,7 +360,7 @@ jobs:
             gh attestation verify "$evidence" \
               --repo "$GITHUB_REPOSITORY" \
               --signer-workflow flidai/leapview/.github/workflows/desktop-preview-release.yml \
-              --source-digest "$SOURCE_SHA" >/dev/null
+              --source-digest "$PUBLISHER_SHA" --source-ref refs/heads/main --deny-self-hosted-runners >/dev/null
           done
 
       - name: Publish verified prerelease

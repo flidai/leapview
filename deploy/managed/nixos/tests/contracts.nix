@@ -47,7 +47,26 @@ let
     (hosts.example-app.extendModules {
       modules = [ ({ lib, ... }: { leapview.operatorCIDRs = lib.mkForce [ "2001:db8::42/128" ]; }) ];
     }).config;
+  uefiApp =
+    (hosts.example-app.extendModules {
+      modules = [ { leapview.bootMode = "uefi"; } ];
+    }).config;
+  uefiDatabase =
+    (hosts.example-database.extendModules {
+      modules = [ { leapview.bootMode = "uefi"; } ];
+    }).config;
   checks = [
+    (app.leapview.bootMode == "bios")
+    (app.disko.devices.disk.system.content.partitions.boot.type == "EF02")
+    (!app.boot.loader.grub.efiSupport)
+    (uefiApp.disko.devices.disk.system.content.partitions.boot.type == "EF00")
+    (uefiApp.fileSystems."/boot".fsType == "vfat")
+    (uefiApp.boot.loader.grub.devices == [ "nodev" ])
+    uefiApp.boot.loader.grub.efiSupport
+    uefiApp.boot.loader.grub.efiInstallAsRemovable
+    (!uefiApp.boot.loader.efi.canTouchEfiVariables)
+    uefiDatabase.boot.loader.grub.efiSupport
+    (uefiDatabase.fileSystems."/boot".fsType == "vfat")
     (!(builtins.all (item: item.assertion) noOperator.assertions))
     rejectedOperatorCIDRs
     (builtins.all (item: item.assertion) validIPv6Operator.assertions)

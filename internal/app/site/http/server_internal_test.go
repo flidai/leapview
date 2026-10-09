@@ -101,7 +101,7 @@ func TestDesktopDownloadPageWithdrawsUnavailablePreview(t *testing.T) {
 		`"applicationId": "dev.leapview.desktop"`,
 		`"name": "preview"`,
 		`"updateOrigin": ""`,
-		`"version": "0.1.0-alpha.1"`,
+		`"version": "0.1.1-alpha.1"`,
 		`"signingStatus": "unsigned"`,
 	} {
 		if !strings.Contains(manifest, want) {
