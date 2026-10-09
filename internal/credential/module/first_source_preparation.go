@@ -26,13 +26,6 @@ type FirstSourcePreparationReader interface {
 	StoredPlanLinkTx(context.Context, pgx.Tx, string, string) (FirstSourceStoredPlanLink, error)
 }
 
-func NewFirstSourcePreparationReader(pool *pgxpool.Pool, audit AuditRecorder) (FirstSourcePreparationReader, error) {
-	if pool == nil || audit == nil {
-		return nil, credential.ErrUnavailable
-	}
-	return credentialpostgres.NewFirstSourcePreparations(pool, credentialAuditAdapter{record: audit})
-}
-
 // Mutations remain transaction-bound and require an explicit live authorizer.
 // The read methods retain the active/historical distinction of the read port.
 type FirstSourcePreparationMutations interface {
