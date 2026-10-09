@@ -15721,6 +15721,232 @@
                       }
                     ],
                     "properties": {
+                      "cellContent": {
+                        "additionalProperties": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "allOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "type": "object"
+                                }
+                              ],
+                              "properties": {
+                                "altField": {
+                                  "type": "string"
+                                },
+                                "display": {
+                                  "enum": [
+                                    "inline",
+                                    "tooltip"
+                                  ],
+                                  "type": "string"
+                                },
+                                "height": {
+                                  "maximum": 512,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "kind": {
+                                  "enum": [
+                                    "image"
+                                  ],
+                                  "type": "string"
+                                },
+                                "width": {
+                                  "maximum": 512,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "display",
+                                "kind"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "allOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "type": "object"
+                                }
+                              ],
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "link"
+                                  ],
+                                  "type": "string"
+                                },
+                                "labelField": {
+                                  "type": "string"
+                                },
+                                "newTab": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "object"
+                      },
+                      "hierarchy": {
+                        "oneOf": [
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "description": "Tree rows are expanded locally over the complete governed result frame.",
+                                "properties": {
+                                  "defaultExpandedDepth": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "mode"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "fields": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "enum": [
+                                  "levels"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fields",
+                              "mode"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "description": "Tree rows are expanded locally over the complete governed result frame.",
+                                "properties": {
+                                  "defaultExpandedDepth": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "mode"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "idField": {
+                                "type": "string"
+                              },
+                              "labelField": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "enum": [
+                                  "parent_child"
+                                ],
+                                "type": "string"
+                              },
+                              "parentField": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "idField",
+                              "labelField",
+                              "mode",
+                              "parentField"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "description": "Tree rows are expanded locally over the complete governed result frame.",
+                                "properties": {
+                                  "defaultExpandedDepth": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "mode"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "childrenField": {
+                                "type": "string"
+                              },
+                              "idField": {
+                                "type": "string"
+                              },
+                              "labelField": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "enum": [
+                                  "nested"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "childrenField",
+                              "labelField",
+                              "mode"
+                            ],
+                            "type": "object"
+                          }
+                        ]
+                      },
                       "rowHeight": {
                         "type": "integer"
                       },
