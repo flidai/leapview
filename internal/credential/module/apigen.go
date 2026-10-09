@@ -29,6 +29,7 @@ const maxCredentialDraftEncodedBodyBytes int64 = 32 << 10
 type CredentialDraftAPIGenConfig struct {
 	Service          *credential.Service
 	Validation       *credential.ValidationService
+	Activation       credential.ActivationService
 	Environment      string
 	CurrentPrincipal func(*http.Request) (string, bool)
 }

@@ -34,6 +34,16 @@ func (s *Service) ConversationNeedsGeneratedTitle(ctx context.Context, scope Sco
 
 // GenerateConversationTitle is best-effort metadata: failures never block the chat turn.
 func (s *Service) GenerateConversationTitle(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	ctx, release, err := s.acquireProvider(ctx, true)
+	if err != nil {
+		return Conversation{}, err
+	}
+	defer release()
+	if s.configuration != nil {
+		if err := s.configuration.Refresh(ctx); err != nil {
+			return Conversation{}, err
+		}
+	}
 	runtime := s.runtimeSnapshot()
 	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
 		return Conversation{}, ErrDisabled

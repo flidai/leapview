@@ -64,6 +64,9 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 	if resolver.projectID != "project:managed" || resolver.pins["connection:sample"] != "sha256:revision" {
 		t.Fatalf("resolved project/pins = %q, %#v", resolver.projectID, resolver.pins)
 	}
+	if request.ConnectionIDs["sample"] != "connection:sample" {
+		t.Fatalf("native materialization lost compiled connection IDs: %#v", request.ConnectionIDs)
+	}
 	if gotLifetime != lifetime {
 		t.Fatal("managed-data lifetime was not propagated")
 	}

@@ -517,11 +517,14 @@ in **Admin → Agent**. Ordinary chatbot users cannot change these settings.
 Legacy provider environment values remain in use until an admin saves the first
 configuration; subsequent image deployments do not override the saved selection.
 
-The operator provisions `LEAPVIEW_AGENT_CREDENTIAL_KEY` once in the private
-`/opt/leapview/leapview.env`. It must be 64 hexadecimal characters representing
-32 random bytes. Preserve it across releases and back it up separately from the
-database: saved provider credentials are encrypted with this key. The Compose
-rollout preserves the environment file byte-for-byte and does not rotate keys.
+The operator provisions the shared customer credential keyring as a private
+read-only runtime file and sets `LEAPVIEW_CREDENTIAL_KEYRING_FILE` to its container
+path. Declare the customer owner through offline `admin credentials setup --owner`
+after instance initialization. Preserve an independent encrypted keyring recovery
+copy and every key required by supported database backups. The legacy
+`LEAPVIEW_AGENT_CREDENTIAL_KEY` value is unused; old encrypted agent revisions
+require explicit recovery/setup, never automatic import. Follow the
+[credential lifecycle runbook](../credentials.md) before this format transition.
 
 Introducing admin configuration adds a database migration. Use the explicit `upgrade` action above for supported control-schema changes;
 the phased `host upgrade` command alone does not provide the native recovery

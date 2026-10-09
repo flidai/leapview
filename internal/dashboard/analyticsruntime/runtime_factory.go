@@ -23,7 +23,7 @@ func NewRuntimeBuilder(config RuntimeFactoryConfig) dashboardruntimefactory.Buil
 		}
 		return dashboardruntime.NewFromGeneration(ctx, input.Directory, NewFactory(Options{
 			Projects: config.Projects, ResultLimits: dataquery.ResultLimits{MaxRows: config.MaxRows, MaxBytes: config.MaxBytes},
-			SnapshotID: input.SnapshotID, ServingStateID: input.Identity.GenerationID, ProjectID: input.Identity.ProjectID,
+			ConnectionIDs: input.ConnectionIDs, SnapshotID: input.SnapshotID, ServingStateID: input.Identity.GenerationID, ProjectID: input.Identity.ProjectID,
 			Environment: input.Identity.Environment, SemanticModelDigest: input.SemanticModelDigest,
 			ArtifactDigest: input.ArtifactDigest, SourceDataDigest: input.SourceDataDigest,
 			TargetID: input.TargetID, SnapshotSealID: input.SnapshotSealID,

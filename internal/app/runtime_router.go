@@ -244,6 +244,8 @@ type persistenceInputs struct {
 }
 
 type workflowInputs struct {
+	agentCredentials               agentmodule.ConfigurationCredentials
+	agentProviderAdmission         agentmodule.ProviderAdmission
 	managedDataResolver            runtimehostmodule.ManagedDataResolver
 	refreshPipelineClock           refreshmodule.Clock
 	refreshTargetRevision          func(context.Context, projectgraph.ServingIdentity) (int64, error)
@@ -355,6 +357,8 @@ type capabilityAssemblyInputs struct {
 }
 
 type workflowAssemblyInputs struct {
+	AgentCredentials               agentmodule.ConfigurationCredentials
+	AgentProviderAdmission         agentmodule.ProviderAdmission
 	AgentSettings                  agentmodule.Settings
 	AgentConfigFile                string
 	ManagedDataResolver            runtimehostmodule.ManagedDataResolver
@@ -801,6 +805,8 @@ func buildApplicationSurfaces(
 	moduleWorkflow.agent = capabilities.Agent
 	moduleWorkflow.agentConfig = workflow.AgentConfig
 	moduleWorkflow.agentConfigFile = workflow.AgentConfigFile
+	moduleWorkflow.agentCredentials = workflow.AgentCredentials
+	moduleWorkflow.agentProviderAdmission = workflow.AgentProviderAdmission
 	platform.auth = workflow.Auth
 	routes.accessModule = capabilities.AccessModule
 	moduleWorkflow.reloader = workflow.Reloader
@@ -1052,7 +1058,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
-					projectID, err := runtime.resolveProjectID(ctx)
+					resolve := runtime.resolveProjectID
+					if _, admitted := developmentProfileBootstrapAuthority(ctx, runtimeConfig.Production); admitted {
+						resolve = runtime.developmentProjectIDResolver
+					}
+					projectID, err := resolve(ctx)
 					if err != nil {
 						return err
 					}
@@ -1077,6 +1087,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 						action = access.ActionConnectionRead
 					default:
 						return analyticsmodule.ErrConnectionBindingUnauthorized
+					}
+					if marker, admitted := developmentProfileBootstrapAuthority(ctx, runtimeConfig.Production); admitted && developmentProfileBootstrapBindingMatches(marker, principalID, permission, binding, storage.instanceID, runtimeConfig.DefaultEnvironment) {
+						credential, found := accessmodule.APICredentialFromContext(ctx)
+						if found && developmentProfileBootstrapCredentialAllows(credential, principalID, permission, binding, storage.instanceID) {
+							return nil
+						}
 					}
 					resource, err := access.NewResourceRef(binding.ConnectionID, projectgraph.KindConnection)
 					if err != nil {
@@ -1285,6 +1301,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	credentialAPI.CurrentPrincipal = func(r *http.Request) (string, bool) {
 		principal, ok := routes.accessModule.CurrentPrincipal(r)
 		return principal.ID, ok
+	}
+	if routes.projectBrowser != nil && credentialAPI.Service != nil && credentialAPI.Validation != nil && credentialAPI.Activation != nil {
+		routes.projectBrowser.ConnectionCommands.Credentials = credentialmodule.CredentialBrowserBindings()
+		routes.projectBrowser.ConnectionCredentials = connectionCredentialBrowser(credentialAPI, storage.instanceID)
+		routes.projectBrowser.ConnectionCredentialError = credentialmodule.CredentialBrowserError
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
@@ -1568,8 +1589,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		agentConfig := agentmodule.Config{
 			Persistence: persistence.agentPersistence, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
-			ModelConfigFile: moduleWorkflow.agentConfigFile,
-			Service:         moduleWorkflow.agent, Jobs: platform.asyncJobs,
+			ModelConfigFile:          moduleWorkflow.agentConfigFile,
+			ConfigurationCredentials: moduleWorkflow.agentCredentials,
+			ProviderAdmission:        moduleWorkflow.agentProviderAdmission,
+			Service:                  moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
 			BuildVersion:       platform.buildIdentity.Version,

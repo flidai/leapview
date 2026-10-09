@@ -65,6 +65,18 @@ type Module struct {
 }
 
 type Service = agent.Service
+type ConfigurationCredentials = agent.ConfigurationCredentials
+type ConfigurationRevision = agent.ConfigurationRevision
+type ConfigurationCandidate = agent.ConfigurationCandidate
+type ConfigurationInput = agent.ConfigurationInput
+type ProviderConfig = agent.Config
+type ConfigurationStore = agent.ConfigurationStore
+type ProviderAdmission = agent.ProviderAdmission
+
+var ErrConfigurationNotFound = agent.ErrConfigurationNotFound
+var ErrConfigurationConflict = agent.ErrConfigurationConflict
+var TestProviderConnection = agentopenai.TestConnection
+
 type AdminAgentResponse = agentapi.AdminAgentResponse
 type APIGenOperation = agenttools.APIGenOperation
 type APIGenOperationContract = agenttools.OperationContract
@@ -89,15 +101,17 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 type Config struct {
 	// Persistence is the capability-owned storage selection. Production
 	// callers must provide a PostgreSQL persistence.
-	Persistence      *Persistence
-	Production       bool
-	Model            ModelConfig
-	ModelConfigFile  string
-	ReloadInterval   time.Duration
-	Service          *agent.Service
-	Jobs             JobStore
-	RunWorkloadClass string
-	ProjectID        projectgraph.ResourceID
+	Persistence              *Persistence
+	Production               bool
+	Model                    ModelConfig
+	ModelConfigFile          string
+	ConfigurationCredentials agent.ConfigurationCredentials
+	ProviderAdmission        agent.ProviderAdmission
+	ReloadInterval           time.Duration
+	Service                  *agent.Service
+	Jobs                     JobStore
+	RunWorkloadClass         string
+	ProjectID                projectgraph.ResourceID
 	// ResolveProjectID returns the exact project bound to the active serving
 	// lease. It is required for fresh installations where ProjectID is empty at
 	// process startup, and is evaluated for each project-dependent operation.
@@ -211,34 +225,50 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		})
 	}
 	if service != nil {
+		service.ConfigureProviderAdmission(config.ProviderAdmission)
 		if config.RecordAudit == nil {
 			return nil, fmt.Errorf("agent command audit recorder is required")
 		}
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
 		})
+		durableConfiguration := false
 		if config.Persistence != nil {
 			store, ok := config.Persistence.Repository.(agent.ConfigurationStore)
 			if !ok {
 				return nil, fmt.Errorf("agent configuration persistence is unavailable")
 			}
-			if config.Model.CredentialKey != "" {
-				manager, err := agent.NewConfigurationManager(store, service, config.Model.CredentialKey, agentopenai.TestConnection)
+			// Older installation tooling may retain an unused legacy key in
+			// deployment configuration. It cannot enable this manager or read
+			// historical ciphertext; only the shared customer keyring can.
+			if config.ConfigurationCredentials != nil {
+				// Admission remains closed until runtime reconciliation. Check
+				// durable ownership without decrypting or installing a model:
+				// an obsolete deployment file must not block recovery of a
+				// customer-owned (including retained legacy) configuration.
+				_, readErr := store.CurrentConfiguration(ctx)
+				if readErr != nil && !errors.Is(readErr, agent.ErrConfigurationNotFound) {
+					return nil, readErr
+				}
+				durableConfiguration = readErr == nil
+				manager, err := agent.NewConfigurationManager(store, service, config.ConfigurationCredentials)
 				if err != nil {
 					return nil, err
 				}
 				service.SetConfigurationManager(manager)
-				if err := manager.Refresh(ctx); err != nil {
-					return nil, err
+				if config.ProviderAdmission == nil {
+					if err := manager.Refresh(ctx); err != nil {
+						return nil, err
+					}
 				}
 			} else if _, err := store.CurrentConfiguration(ctx); !errors.Is(err, agent.ErrConfigurationNotFound) {
 				if err != nil {
 					return nil, err
 				}
-				return nil, fmt.Errorf("administrator-managed agent credentials require LEAPVIEW_AGENT_CREDENTIAL_KEY")
+				return nil, fmt.Errorf("administrator-managed agent credentials require shared customer credential setup")
 			}
 		}
-		if config.ModelConfigFile != "" && !service.AdminManaged() {
+		if config.ModelConfigFile != "" && !durableConfiguration && !service.AdminManaged() {
 			reloader, reloadErr := configreload.NewFileReloader(config.ModelConfigFile, service, config.Logger, config.ReloadInterval)
 			if reloadErr != nil {
 				return nil, reloadErr
