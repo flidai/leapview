@@ -15,10 +15,11 @@ import (
 )
 
 type credentialLifecycle struct {
-	services    *credentialmodule.Services
-	gate        *credentialmodule.ProviderAdmission
-	agent       *credentialagent.AgentCredentials
-	coordinator *credentialmodule.ActivationCoordinator
+	services         *credentialmodule.Services
+	gate             *credentialmodule.ProviderAdmission
+	agent            *credentialagent.AgentCredentials
+	coordinator      *credentialmodule.ActivationCoordinator
+	firstPublication *firstSourcePublication
 }
 
 func newCredentialLifecycle(ctx context.Context, services *credentialmodule.Services, config credentialagent.AgentCredentialConfig, analytics *analyticsmodule.Module) (*credentialLifecycle, error) {

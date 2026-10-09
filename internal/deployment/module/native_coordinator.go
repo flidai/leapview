@@ -41,6 +41,7 @@ type nativeCoordinator struct {
 	auditReader            nativeDeliveryAuditReader
 	operationReader        nativeOperationLookupReader
 	beforeActivationCommit deploymentpostgres.ActivationPreCommitHook
+	activationExecution    NativeActivationExecution
 }
 
 type nativeDeliveryEventReader interface {
@@ -59,6 +60,7 @@ type nativeCoordinatorCapabilities struct {
 	workflow               NativeDeliveryWorkflowRecorder
 	operations             NativeOperationAuthority
 	beforeActivationCommit ActivationPreCommitHook
+	activationExecution    NativeActivationExecution
 }
 
 var _ NativeDeliveryPublicationPort = (*nativeCoordinator)(nil)
@@ -78,6 +80,7 @@ func newNativeCoordinator(repository *deploymentpostgres.Repository, targetID, i
 	coordinator.eventReader, _ = capabilities.events.(nativeDeliveryEventReader)
 	coordinator.auditReader, _ = capabilities.audit.(nativeDeliveryAuditReader)
 	coordinator.operationReader, _ = capabilities.operations.(nativeOperationLookupReader)
+	coordinator.activationExecution = capabilities.activationExecution
 	return coordinator, nil
 }
 
@@ -702,7 +705,7 @@ func (c *nativeCoordinator) ActivateApprovedPublication(ctx context.Context, pub
 	if publication.TargetID != c.targetID || publication.ActorID != expectedPublicationActorID || target.Environment != c.instanceEnv {
 		return apiadapter.Deployment{}, deployment.ErrNotFound
 	}
-	return c.Activate(ctx, apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: target.ProjectID, DeploymentID: publicationID}, Actor: publication.ActorID, IdempotencyKey: idempotencyKey})
+	return c.executeCoordinatedActivation(ctx, apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: target.ProjectID, DeploymentID: publicationID}, Actor: publication.ActorID, IdempotencyKey: idempotencyKey})
 }
 
 func (c *nativeCoordinator) CancelRequest(ctx context.Context, request apiadapter.CancelRequest) (apiadapter.Deployment, error) {

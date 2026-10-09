@@ -116,6 +116,9 @@ func (f *sourceCredentialHTTPJourney) bootstrapProject(t *testing.T) string {
 	// intent. This fixture does not qualify operator grant provisioning: manage
 	// is deliberately nondelegable through the ordinary grant API. The intent
 	// must still pass native graph compilation/publication before granting access.
+	if f.production {
+		return token
+	}
 	_, err = f.graph.Access.UpsertAuthorizationGrant(ctx, access.AuthorizationGrantInput{
 		Scope: access.AuthorizationPolicyScope{TargetID: f.instance, ProjectID: sourceJourneyProject, Environment: f.config.Environment},
 		Grant: access.AuthorizationGrant{ID: "source-credential-operator", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: owner},

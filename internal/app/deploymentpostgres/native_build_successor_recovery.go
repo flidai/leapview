@@ -249,6 +249,10 @@ func (c *NativeBuildCoordinator) appendNativeBuildSuccessor(ctx context.Context,
 }
 
 func (c *NativeBuildCoordinator) completeRecoveredNativeBuildSuccessor(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest, requestDigest string, reservation NativeBuildOperationReservationResult, plan nativeBuildPlan, contract NativeBuildContract, artifacts release.CandidateArtifactSet, prepared NativeBuildRecoveryPreparationResult, binding deploymentnative.BuildArtifactBinding, physical NativePhysicalBuildEvidence, leaf deploymentmodule.NativeOperationSuccessor) (deploymentmodule.NativeDeliveryBuild, error) {
+	planConnections, err := c.selectPlanConnections(ctx, plan.DeliveryPlan)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 	sources, models, err := nativeQualificationInputs(artifacts, physical.SourceObservations)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -258,7 +262,7 @@ func (c *NativeBuildCoordinator) completeRecoveredNativeBuildSuccessor(ctx conte
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	bindingRequest := nativeCandidateConnectionRequest(prepared.CandidateID, request.PrincipalID, request.TargetID, artifacts)
-	bindingEvidence, bindingDigest, err := resolveNativeCandidateBindingEvidence(ctx, c.bindingEvidence, bindingRequest)
+	bindingEvidence, bindingDigest, err := resolveNativeCandidateBindingEvidence(ctx, planConnections.BindingEvidence, bindingRequest)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}

@@ -69,6 +69,9 @@ sql:
       - "internal/credential/postgres/schema.sql"
       - "internal/credential/postgres/request_schema.sql"
       - "internal/credential/postgres/rotation_schema.sql"
+      - "internal/credential/postgres/first_source_schema.sql"
+      - "internal/credential/postgres/first_source_preparation_schema.sql"
+      - "internal/credential/postgres/retirement_schema.sql"
     gen:
       go:
         package: "db"

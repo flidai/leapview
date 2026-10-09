@@ -27,7 +27,7 @@ func TestCredentialBridgeUsesNonReplayableCommandsAndClearsSecretSignals(t *test
 			t.Fatalf("missing UI command %s", binding.OperationID())
 		}
 	}
-	if strings.Count(markup, "nonReplayableHeaders") != 5 || strings.Count(markup, "retryMaxCount: 0") != 5 ||
+	if strings.Count(markup, "nonReplayableHeaders") != len(bindings) || strings.Count(markup, "retryMaxCount: 0") != len(bindings) ||
 		!strings.Contains(markup, "finally {") || !strings.Contains(markup, "$connectionAdmin.credentials.command.password =") ||
 		!strings.Contains(markup, "evt.detail.password =") {
 		t.Fatalf("credential bridge permits replay or retains secret signals: %s", markup)
