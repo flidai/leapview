@@ -1,0 +1,179 @@
+name: Release / Protected Nix output admission
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Exact output kind (application additionally requires complete native evidence)
+        required: true
+        type: choice
+        default: site-image
+        options:
+          - site-image
+          - application-image
+      candidate_run_id:
+        description: Exact successful protected Nix candidate run for the selected kind
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact successful candidate attempt (never infer latest)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-output-admission-${{ inputs.kind }}-${{ inputs.candidate_run_id }}-${{ inputs.candidate_run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    environment: leapview-ephemeral-qualification
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out the exact protected admission implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+      - name: Authenticate original qualified bytes and every retained phase
+        id: original
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN: ${{ inputs.candidate_run_id }}
+          ORIGINAL_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          KIND: ${{ inputs.kind }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          python3 protected/scripts/nix_release_inputs.py fetch --kind "$KIND" \
+            --run-id "$ORIGINAL_RUN" --attempt "$ORIGINAL_ATTEMPT" --architecture "$ARCH" \
+            --directory "$RUNNER_TEMP/nix-original"
+          python3 protected/scripts/nix_release_inputs.py source --kind "$KIND" \
+            --run-id "$ORIGINAL_RUN" --attempt "$ORIGINAL_ATTEMPT" --architecture "$ARCH" \
+            --directory "$RUNNER_TEMP/nix-original" --github-output "$GITHUB_OUTPUT"
+      - name: Check out original source only as read-only identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.original.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Install the protected locked scanner toolchain
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build only current protected verification executables
+        working-directory: protected
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/oci-admission" ./internal/app/tools/ociadmission
+      - name: Log in for read-only registry and signed evidence verification
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Collect actual embedded native graph and fresh diagnostic findings
+        if: inputs.kind == 'application-image'
+        working-directory: protected
+        env:
+          SOURCE_REVISION: ${{ steps.original.outputs.source_revision }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_native_inventory.py collect "$RUNNER_TEMP/nix-native" \
+            --artifact "$RUNNER_TEMP/nix-original/qualified/image.tar" --kind application-image \
+            --platform "linux/$ARCH" --source-revision "$SOURCE_REVISION" \
+            --output "$RUNNER_TEMP/nix-native/collection.json"
+      - name: Issue canonical admission only after fresh exact-artifact gates
+        working-directory: protected
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN: ${{ inputs.candidate_run_id }}
+          ORIGINAL_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          KIND: ${{ inputs.kind }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          native_arguments=()
+          if [ "$KIND" = application-image ]; then
+            native_arguments=(--native-directory "$RUNNER_TEMP/nix-native")
+          fi
+          nix develop --no-update-lock-file .#runtime-security -c \
+            "$RUNNER_TEMP/oci-admission" admit-nix --kind "$KIND" \
+            --run-id "$ORIGINAL_RUN" --attempt "$ORIGINAL_ATTEMPT" --architecture "$ARCH" \
+            --directory "$RUNNER_TEMP/nix-original" --source-root ../source \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --release-id "nix-${KIND}-${ORIGINAL_RUN}-${ORIGINAL_ATTEMPT}" \
+            --evidence-output "$RUNNER_TEMP/nix-admission-raw" \
+            --output "$RUNNER_TEMP/nix-admission" "${native_arguments[@]}"
+      - name: Retain the canonical receipt and every bound raw report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-admission-${{ inputs.kind }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/nix-admission/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain actual raw findings when admission is refused
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-admission-diagnostic-${{ inputs.kind }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/nix-admission-raw/
+            ${{ runner.temp }}/nix-native/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  verify-platform-pair:
+    needs: admit
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the protected pair verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download only this run and attempt's canonical platform bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: nix-admission-${{ inputs.kind }}-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: pair
+      - name: Set up current protected Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify matching release identity and every raw report before successful handoff
+        env:
+          KIND: ${{ inputs.kind }}
+        run: |
+          go run ./internal/app/tools/ociadmission verify-nix-pair --directory pair --kind "$KIND" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --producer-revision "$GITHUB_SHA"

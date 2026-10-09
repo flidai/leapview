@@ -83,7 +83,7 @@ jobs:
           cd source
           test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
           nix build --no-update-lock-file .#leapviewctl-linux-amd64 --out-link result-cli-amd64 -L
-          nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli -L
+          nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli-arm64 -L
           mkdir -p ../candidate/amd64 ../candidate/arm64
           for arch in amd64 arm64; do
             cp --dereference result-cli-$arch/leapviewctl-linux-$arch.tar.gz ../candidate/$arch/
