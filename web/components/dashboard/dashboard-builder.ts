@@ -23,6 +23,7 @@ import { applyCanonicalGridAttributes, builderGridOccupiedRows, refreshBuilderGr
 import { createBuilderGridDragHelper, styleBuilderGridPlaceholder } from './builder-grid-drag-preview'
 import { DashboardBuilderAgentMutationTracker } from './dashboard-builder-agent-refresh'
 import type {
+  ChatSignal,
   DashboardBuilderDiagnosticSignal,
   DashboardBuilderFieldSignal,
   DashboardBuilderFilterComponentSignal,
@@ -67,6 +68,7 @@ import '../app/dashboard-icon-picker'
 import '../chat/chat-drawer'
 import { agentIcon } from '../chat/agent-icon'
 import './visual-modal'
+import './dashboard-generation'
 
 type BuilderVisualType = string
 type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
@@ -180,7 +182,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @property({ attribute: 'export-yaml-href' }) exportYAMLHref = ''
 
   @state() private savedVisualsOpen = false
-  @state() private savedVisualLibraryLoaded = false
+  @state() private savedVisualsAvailable = false
   @state() private importingSavedVisual = false
   private readonly importFrameName = `builder-visual-import-${crypto.randomUUID()}`
   private importTimer = 0
@@ -905,6 +907,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return this.signal<DashboardFilterValidationResult>('builderFilterValidation', { accepted: true, message: '', currentRevision: this.builderFilterState.revision, clientMutationID: '' })
   }
 
+  private renderGeneration(loading = false) {
+    const agent = this.signal<Partial<ChatSignal>>('agent', {})
+    return html`<lv-dashboard-generation style="width:100%;text-align:left" .loading=${loading} .transcript=${agent.transcript ?? []} .runId=${agent.status?.runId ?? ''}></lv-dashboard-generation>`
+  }
+
   render() {
     const builder = this.builder
     if (!builder) {
@@ -914,7 +921,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           <div><strong>Dashboard builder could not load</strong><span>${status.error}</span></div>
         </section>`
       }
-      return html`<section class="state" aria-live="polite"><div><strong>Loading dashboard builder…</strong><span>Preparing the draft dashboard.</span></div></section>`
+      return this.renderGeneration(true)
     }
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
@@ -1382,6 +1389,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (event.origin !== window.location.origin) return
     const fromParent = this.embeddedInChat && event.source === window.parent
     if (!fromParent && event.source !== this.savedVisualFrame?.contentWindow) return
+    if (!fromParent && event.data?.type === 'lv-saved-visual-library') {
+      this.savedVisualsAvailable = Boolean(event.data.library?.visuals?.length)
+      if (!this.savedVisualsAvailable) this.savedVisualsOpen = false
+      return
+    }
     if (fromParent && event.data?.type === 'lv-builder-visual-window') {
       const page = this.builder ? this.selectedPage(this.builder) : undefined
       const request = event.data.request
@@ -1478,14 +1490,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             ${this.renderPaneToggle('data', 'Data pane', 'builder-data-tabs')}
           </div>
         </div>
-        <div id="builder-data-tabs" class="saved-library-tabs" ?hidden=${collapsed}>
+        <div id="builder-data-tabs" class="saved-library-tabs" ?hidden=${collapsed || !this.savedVisualsAvailable}>
+          ${this.savedVisualsAvailable ? html`
           <button type="button" aria-pressed=${!this.savedVisualsOpen} @click=${() => { this.savedVisualsOpen = false }}>Fields</button>
-          <button type="button" aria-pressed=${this.savedVisualsOpen} @click=${() => { this.savedVisualLibraryLoaded = true; this.savedVisualsOpen = true }}>Saved visuals</button>
+          <button type="button" aria-pressed=${this.savedVisualsOpen} @click=${() => { this.savedVisualsOpen = true }}>Saved visuals</button>
+          ` : nothing}
         </div>
         ${this.renderFieldBrowser(builder, visual)}
-        ${this.savedVisualLibraryLoaded ? html`
-          <iframe id="builder-saved-visuals" class="saved-visuals-frame" title="Saved visuals" ?hidden=${collapsed || !this.savedVisualsOpen} src=${`/visuals/saved?model=${encodeURIComponent(builder.semanticModel.id)}`}></iframe>
-        ` : nothing}
+        <iframe id="builder-saved-visuals" class="saved-visuals-frame" title="Saved visuals" ?hidden=${collapsed || !this.savedVisualsOpen} src=${`/visuals/saved?model=${encodeURIComponent(builder.semanticModel.id)}`}></iframe>
       </aside>
     `
   }
@@ -1818,6 +1830,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderCanvas(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined) {
     if (!page) {
+      if (this.signal<Partial<ChatSignal>>('agent', {}).status?.running) return html`<section class="canvas-pane" aria-label="Dashboard canvas">${this.renderGeneration()}</section>`
       return html`<section class="canvas-pane" aria-label="Dashboard canvas"><div class="state"><div><strong>No pages yet</strong><span>Create a page to start designing this dashboard.</span>${builder.capabilities.canAddPage ? html`<div><button @click=${this.addPage} aria-label="Add page">Add page</button></div>` : nothing}</div></div></section>`
     }
     const width = Math.max(12, page.grid.columns || 12)
@@ -1836,7 +1849,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             ${keyed(canvasKey, html`<div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} data-grid-guides=${this.draggedFieldID || pageFormatting ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
               ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
               ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0 && (page.headers?.length ?? 0) === 0 && (page.placeholders?.length ?? 0) === 0
-                ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
+                ? this.signal<{ status?: { running?: boolean } }>('agent', {}).status?.running
+                  ? html`<div class="visual-empty">${this.renderGeneration()}</div>`
+                  : html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
                 : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page, previews))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}${repeat(page.headers ?? [], (header) => header.id, (header) => this.renderHeader(header))}${repeat(page.placeholders ?? [], (placeholder) => placeholder.id, (placeholder) => this.renderPlaceholder(placeholder))}`}
             </div>`)}
           </div>

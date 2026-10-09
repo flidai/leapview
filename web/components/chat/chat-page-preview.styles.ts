@@ -18,7 +18,8 @@ export const chatPagePreviewStyles = css`
     .preview-open .thread-stack { --lv-chat-stack-width: 100%; }
     .preview-panel {
       grid-area: visuals; display: grid; grid-template-rows: auto minmax(0, 1fr);
-      min-width: 0; min-height: 0; overflow: hidden; border-left: var(--lv-border-default);
+      min-width: 0; min-height: 0; overflow: hidden; margin: 8px 16px 16px 8px;
+      border: var(--lv-border-default); border-radius: var(--lv-radius-large, 10px);
       background: var(--lv-bg-panel);
     }
     .preview-scroll { overflow: auto; min-height: 0; padding: 16px; overscroll-behavior: contain; }
@@ -35,7 +36,9 @@ export const chatPagePreviewStyles = css`
       --lv-chat-stack-gap: 24px;
     }
     .builder-open .body { border-left: var(--lv-border-default); }
-    .preview-heading { flex-wrap: wrap; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: var(--lv-border-default); }
+    .preview-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: var(--lv-border-default); }
+    .preview-heading h2 { flex: 1 1 160px; }
+    .preview-actions { margin-left: auto; }
     .preview-heading h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font: var(--lv-type-section-title); }
     .preview-empty { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .preview-grid { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -66,7 +69,8 @@ export const chatPagePreviewStyles = css`
     @media (max-width: 900px) {
       .chat-layout.preview-open { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 42%) minmax(0, 1fr); grid-template-areas: 'chat' 'visuals'; }
       .chat-layout.builder-open { grid-template-rows: minmax(0, 1fr) minmax(220px, 38%); grid-template-areas: 'builder' 'chat'; }
-      .preview-panel, .builder-open .body { border-left: 0; border-top: var(--lv-border-default); }
+      .preview-panel { margin: 8px 12px 12px; }
+      .builder-open .body { border-left: 0; border-top: var(--lv-border-default); }
       .preview-scroll { padding: 12px; }
       .titlebar-start { flex-wrap: wrap; gap: 8px; }
       .preview-heading { padding: 10px 12px; }
@@ -82,7 +86,7 @@ export const chatPagePreviewStyles = css`
     .chat-pane-heading { display: flex; min-width: 0; align-items: center; gap: 6px; white-space: nowrap; font: var(--lv-type-body-compact); }
     .chat-page-name { overflow: hidden; text-overflow: ellipsis; }
     .chat-pane-heading svg { flex-shrink: 0; }
-    .dashboard-destination { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: var(--lv-border-default); font: var(--lv-type-body-compact); }
+    .dashboard-destination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: var(--lv-border-default); font: var(--lv-type-body-compact); }
     .dashboard-destination select { min-width: 0; max-width: 240px; padding: 5px 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); }
     .chat-pane-heading svg { width: 16px; height: 16px; }
     .titlebar-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }

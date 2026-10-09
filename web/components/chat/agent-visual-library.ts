@@ -4,7 +4,7 @@ import type { ChatArtifactSignal, ChatSignal, SavedVisualLibrarySignal } from '.
 import type { DashboardChatComponent } from './dashboard-preview-contract'
 import { submitVisualForm, type SavedVisualLibraryMessage } from './visual-library-bridge'
 
-export type VisualLibraryState = { savedIds: string[]; libraryIds?: Record<string, string>; dashboardArtifacts?: ChatArtifactSignal[]; savingId: string; error: string }
+export type VisualLibraryState = { savedIds: string[]; totalSaved?: number; libraryIds?: Record<string, string>; dashboardArtifacts?: ChatArtifactSignal[]; savingId: string; error: string }
 export type DashboardVisualSource = { dashboardId: string; revisionId: string; pageId: string; components: DashboardChatComponent[]; artifacts: ChatArtifactSignal[] }
 
 // Native forms keep saving inside the authenticated, CSRF-protected page flow.
@@ -38,10 +38,9 @@ class AgentVisualLibrary extends LitElement {
   }
 
   render() {
-    // Closed, empty chat drawers do not need another document and update
-    // stream. Start loading once there is an artifact that can be saved,
-    // and retain the frame afterward so pending saves keep their target.
-    this.libraryRequested ||= Boolean(this.agent?.transcript?.some(item => item.artifact) || this.dashboardSource?.dashboardId)
+    // Discover the account library even in conversations with no artifacts.
+    // Retain the frame afterward so pending saves keep their target.
+    this.libraryRequested ||= Boolean(this.agent?.activeConversationId || this.agent?.transcript?.some(item => item.artifact) || this.dashboardSource?.dashboardId)
     if (!this.libraryRequested) return null
     return html`<iframe name=${this.frameName} title="Saved visual library" src="/visuals/saved" @load=${this.loaded}></iframe>`
   }
@@ -74,7 +73,7 @@ class AgentVisualLibrary extends LitElement {
     const savedIds = [...new Set(this.artifacts.filter(item => this.library?.visuals.some(visual => visual.sourceKey === this.sourceKey(item.id))).map(item => item.id))]
     const libraryIds = Object.fromEntries(savedIds.map(id => [id, this.library!.visuals.find(visual => visual.sourceKey === this.sourceKey(id))!.id]))
     this.dispatchEvent(new CustomEvent<VisualLibraryState>('lv-visual-library-state', {
-      bubbles: true, composed: true, detail: { savedIds, libraryIds, dashboardArtifacts: this.dashboardArtifacts, savingId: this.pending?.artifactId ?? '', error },
+      bubbles: true, composed: true, detail: { savedIds, totalSaved: this.library?.visuals.length ?? 0, libraryIds, dashboardArtifacts: this.dashboardArtifacts, savingId: this.pending?.artifactId ?? '', error },
     }))
   }
 

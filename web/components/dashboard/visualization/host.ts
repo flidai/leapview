@@ -37,6 +37,18 @@ function loadEnvelopeValidator(): Promise<GeneratedEnvelopeValidator> {
   })
 }
 
+class VisualPreparationTimeout extends Error {
+  constructor() { super('Loading this visual took too long. Try again.') }
+}
+
+function prepareVisual<T>(operation: () => Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout>
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new VisualPreparationTimeout()), 30_000)
+  })
+  return Promise.race([Promise.resolve().then(operation), deadline]).finally(() => clearTimeout(timeout))
+}
+
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
   private resizeSuspendedValue = false
@@ -48,12 +60,19 @@ export class VisualizationHost extends LitElement {
     // identities (and may legitimately revert); data revisions order one spec.
     // Eager hosts retain their existing validation/error boundary.
     if (this.deferMount && !this.authoring) {
-      if (value && !validateEnvelopeBoundary(value)) return
+      if (value && !validateEnvelopeBoundary(value)) {
+        this.rejectInitialEnvelope()
+        return
+      }
       if (value && !generatedEnvelopeValidator) {
         this.queueEnvelopeValidation(value)
         return
       }
-      if (value && (!generatedEnvelopeValidator!(value) || this.isStaleEnvelope(value))) return
+      if (value && !generatedEnvelopeValidator!(value)) {
+        this.rejectInitialEnvelope()
+        return
+      }
+      if (value && this.isStaleEnvelope(value)) return
     }
     this.envelopeAssignmentGeneration++
     this.assignEnvelope(value)
@@ -63,7 +82,14 @@ export class VisualizationHost extends LitElement {
     const previous = this.envelopeValue
     if (Object.is(previous, value)) return
     this.envelopeValue = value
+    if (!previous && value) this.error = ''
     this.requestUpdate('envelope', previous)
+  }
+
+  private rejectInitialEnvelope(): void {
+    // Retain a previously valid visual, but do not leave an initial malformed
+    // result spinning forever when there is no accepted envelope to render.
+    if (!this.envelopeValue) this.error = 'invalid visualization envelope'
   }
 
   private isStaleEnvelope(value: VisualizationEnvelope): boolean {
@@ -77,9 +103,10 @@ export class VisualizationHost extends LitElement {
     // last valid envelope available to the shell and actions.
     const pending = (this.pendingEnvelopeValidation ?? Promise.resolve()).then(async () => {
       if (generation !== this.envelopeAssignmentGeneration) return
-      const validate = await loadEnvelopeValidator()
+      const validate = await prepareVisual(loadEnvelopeValidator)
       if (generation !== this.envelopeAssignmentGeneration) return
-      if (validate(value) && !this.isStaleEnvelope(value)) this.assignEnvelope(value)
+      if (!validate(value)) this.rejectInitialEnvelope()
+      else if (!this.isStaleEnvelope(value)) this.assignEnvelope(value)
     }).catch((error: unknown) => {
       if (generation === this.envelopeAssignmentGeneration) this.error = error instanceof Error ? error.message : String(error)
     })
@@ -110,6 +137,7 @@ export class VisualizationHost extends LitElement {
   @state() private optionsOpen = false
   private controller?: VisualizationController
   private resizeObserver?: ResizeObserver
+  private rendererHasSize = false
   private applyGeneration = 0
   private connectionGeneration = 0
   private presentedRendererID = ''
@@ -118,6 +146,7 @@ export class VisualizationHost extends LitElement {
   private mountObserver?: IntersectionObserver
   private mountRequested = false
   private pendingApply?: Promise<void>
+  private pendingApplyEnvelope?: VisualizationEnvelope
   private applyQueued = false
   private mountEpoch = 0
   private envelopeAssignmentGeneration = 0
@@ -193,7 +222,14 @@ export class VisualizationHost extends LitElement {
     try {
       this.resizeObserver = new ResizeObserver(([entry]) => {
         if (!entry) return
-        this.controller?.resize(entry.contentRect.width, entry.contentRect.height, window.devicePixelRatio || 1)
+        const { width, height } = entry.contentRect
+        const hasSize = width > 0 && height > 0
+        const becameVisible = hasSize && !this.rendererHasSize
+        this.rendererHasSize = hasSize
+        this.controller?.resize(width, height, window.devicePixelRatio || 1)
+        // A selected chart may be hidden while its adapter is preparing. If
+        // readiness failed at zero size, remount when it has usable layout.
+        if (becameVisible && this.error) this.scheduleApply()
       })
       this.resizeObserver.observe(this.rendererContainer)
     } catch {
@@ -231,6 +267,7 @@ export class VisualizationHost extends LitElement {
       this.disconnectContextListeners()
       this.applyGeneration++
       this.pendingApply = undefined
+      this.pendingApplyEnvelope = undefined
       this.applyQueued = false
       this.controller?.dispose()
       this.controller = undefined
@@ -300,7 +337,7 @@ export class VisualizationHost extends LitElement {
       </div>
       <div id="visualization-fallback" class="fallback">${this.accessibleFallback()}</div>
       ${this.announcement ? html`<div class="announcement" role="status" aria-live="polite">${this.announcement}</div>` : null}
-      ${error ? html`<div class="error" role="alert">${error}</div>` : null}
+      ${error ? html`<div class="error" role="alert"><div><p>${error}</p>${this.error && this.envelope ? html`<button class="icon-action retry-action" type="button" data-visualization-retry ?disabled=${this.applying} @click=${this.retry}>Try again</button>` : null}</div></div>` : null}
     </div>`
   }
 
@@ -324,18 +361,29 @@ export class VisualizationHost extends LitElement {
     void this.ensureMounted().catch(() => {})
   }
 
-  private scheduleApply(): void {
-    if (!this.mountRequested || !this.envelope || !this.controller) return
+  private retry = (): void => {
+    this.error = ''
+    this.requestMount()
+  }
+
+  private scheduleApply(force = false): void {
+    if (!this.mountRequested || !this.envelope) return
     if (this.pendingApply) {
-      this.applyQueued = true
+      // firstUpdated and updated can request the same initial work. Queue
+      // only a replacement envelope or an explicit renderer-context change.
+      if (force || this.pendingApplyEnvelope !== this.envelope) this.applyQueued = true
       return
     }
+    this.ensureController()
+    if (!this.controller) return
+    this.pendingApplyEnvelope = this.envelope
     const pending = this.applyEnvelope()
     this.pendingApply = pending
     void pending.then(
       () => {
         if (this.pendingApply !== pending) return
         this.pendingApply = undefined
+        this.pendingApplyEnvelope = undefined
         if (this.applyQueued) {
           this.applyQueued = false
           this.scheduleApply()
@@ -344,6 +392,7 @@ export class VisualizationHost extends LitElement {
       () => {
         if (this.pendingApply !== pending) return
         this.pendingApply = undefined
+        this.pendingApplyEnvelope = undefined
         if (this.applyQueued) {
           this.applyQueued = false
           this.scheduleApply()
@@ -371,15 +420,27 @@ export class VisualizationHost extends LitElement {
     const generation = ++this.applyGeneration
     this.applying = true
     try {
-      if (!generatedEnvelopeValidator) await loadEnvelopeValidator()
-      if (generation !== this.applyGeneration || controller !== this.controller) return
-      await controller.apply(envelope, this.rendererContext())
+      await prepareVisual(async () => {
+        if (!generatedEnvelopeValidator) await loadEnvelopeValidator()
+        if (generation !== this.applyGeneration || controller !== this.controller) return
+        await controller.apply(envelope, this.rendererContext())
+      })
       if (generation === this.applyGeneration && envelope === this.envelope) {
         this.error = ''
-        this.presented = true
+        this.presented = controller.envelope !== undefined
         this.announcement = visualizationChangeAnnouncement(previous, envelope)
       }
     } catch (error) {
+      if (error instanceof VisualPreparationTimeout && generation === this.applyGeneration && controller === this.controller) {
+        // The original work can still settle later. Dispose its generation so
+        // retrying creates an independent controller and cannot reuse its queue.
+        controller.dispose()
+        this.controller = undefined
+        this.resizeObserver?.disconnect()
+        this.resizeObserver = undefined
+        this.rendererHasSize = false
+        this.presented = false
+      }
       if (generation === this.applyGeneration && envelope === this.envelope) this.error = error instanceof Error ? error.message : String(error)
     } finally {
       if (generation === this.applyGeneration && envelope === this.envelope) this.applying = false
@@ -564,7 +625,7 @@ export class VisualizationHost extends LitElement {
     this.reducedMotionMedia = undefined
   }
 
-  private readonly handleRendererContextChange = (): void => { this.scheduleApply() }
+  private readonly handleRendererContextChange = (): void => { this.scheduleApply(true) }
 
   private rendererContext(): RendererContext {
     const target = this.rendererContainer

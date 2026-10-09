@@ -916,3 +916,39 @@ test('message edit action ignores a transcript item without a persisted ID', asy
     expect(await page.evaluate(() => (window as any).reuseCount)).toBe(0)
   } finally { await page.close() }
 })
+
+
+test('dashboard generation replaces generic activity with a specific live status', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+      thread.status = { enabled: true, running: true }
+      thread.dashboardGenerating = true
+      await thread.updateComplete
+    })
+    expect(await page.getByRole('status', { name: 'Building your dashboard', exact: true }).count()).toBe(1)
+    expect(await page.getByRole('status', { name: 'Working', exact: true }).count()).toBe(0)
+  } finally { await page.close() }
+})
+
+test('dashboard assembly pauses when stopped and respects reduced motion', async () => {
+  const page = await fixture.browser.newPage({ reducedMotion: 'reduce' })
+  try {
+    await page.goto(fixture.baseURL)
+    await page.evaluate(async () => {
+      await customElements.whenDefined('lv-dashboard-generation')
+      const stage = document.createElement('lv-dashboard-generation') as any
+      document.body.append(stage)
+      await stage.updateComplete
+    })
+    const stage = page.locator('lv-dashboard-generation')
+    expect(await stage.getByRole('heading', { name: 'Building your dashboard', exact: true }).count()).toBe(1)
+    expect(await stage.locator('.canvas').getAttribute('aria-hidden')).toBe('true')
+    expect(await stage.evaluate((element: any) => getComputedStyle(element.shadowRoot.querySelector('.line')).animationName)).toBe('none')
+    await stage.evaluate(async (element: any) => { element.running = false; await element.updateComplete })
+    expect(await stage.getByRole('heading', { name: 'Dashboard generation paused', exact: true }).count()).toBe(1)
+    expect(await stage.locator('section').getAttribute('aria-busy')).toBe('false')
+    expect(await stage.locator('.steps').count()).toBe(0)
+  } finally { await page.close() }
+})

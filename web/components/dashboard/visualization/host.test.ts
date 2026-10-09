@@ -12,6 +12,21 @@ test('categorical palette preserves the established Primer token order', () => {
   expect(defaultRendererContext.colors.data).toEqual(primerCategoricalPalette.map(({ fallback }) => fallback))
 })
 
+test('renderer loading retries after a transient failure instead of caching its rejection', async () => {
+  let attempts = 0
+  const adapter = { mount: () => ({ update() {}, resize() {}, snapshot: async () => new Blob(), dispose() {} }) }
+  const registry = new RendererRegistry()
+  registry.register({
+    id: 'test', version: '1', schemaVersion: currentVisualizationSchemaVersion, kinds: ['kpi'],
+    capabilities: { snapshot: true, windowed: false, interactive: false },
+    load: async () => { if (++attempts === 1) throw new Error('temporary load failure'); return adapter },
+  })
+  const registration = registry.resolve(envelope(1))
+  await expect(registry.load(registration)).rejects.toThrow('temporary load failure')
+  expect(await registry.load(registration)).toBe(adapter)
+  expect(attempts).toBe(2)
+})
+
 function envelope(dataRevision: number, specRevision = 'sha256:spec', rendererID = 'test'): VisualizationEnvelope {
   return {
     schemaVersion: currentVisualizationSchemaVersion,

@@ -26,7 +26,8 @@ export class ChatVisualPanel extends LitElement {
       min-height: 0;
       height: 100%;
       container-type: inline-size;
-      border-left: var(--lv-border-muted);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-large, 10px);
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
@@ -86,14 +87,16 @@ export class ChatVisualPanel extends LitElement {
     .close svg { width: var(--base-size-16); height: var(--base-size-16); }
 
     .content { min-height: 0; overflow: auto; padding: var(--base-size-16); }
-    lv-visual-artifact { display: block; height: min(36rem, 68vh); min-height: min(18rem, 48vh); }
+    lv-visual-artifact { display: block; height: min(32rem, 60vh); min-height: min(18rem, 48vh); }
+    lv-visual-artifact[type='kpi'] { height: 180px; min-height: 0; }
+    lv-visual-artifact[type='table'], lv-visual-artifact[type='matrix'], lv-visual-artifact[type='pivot'] { height: auto; min-height: 0; }
     .feedback { margin: var(--base-size-12) 0 0; font: var(--lv-type-secondary); }
     .feedback.error { color: var(--lv-fg-danger); }
 
-    @container (max-width: 42rem) {
+    @container (max-width: 30rem) {
       .header { flex-wrap: wrap; }
       h2 { flex-basis: 100%; }
-      .actions { width: 100%; justify-content: flex-end; }
+      .actions { width: 100%; justify-content: flex-start; }
     }
   `
 
@@ -111,7 +114,7 @@ export class ChatVisualPanel extends LitElement {
           </div>
         </div>
         <div class="content">
-          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()}></lv-visual-artifact>
+          <lv-visual-artifact eager type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()}></lv-visual-artifact>
           ${this.saveError ? html`<p class="feedback error" role="alert">${this.saveError}</p>` : nothing}
           ${this.saved ? html`<p class="feedback" role="status">Saved to Data Explorer.</p>` : nothing}
         </div>
