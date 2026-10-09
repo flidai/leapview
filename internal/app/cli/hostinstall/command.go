@@ -71,6 +71,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	install.Flags().StringVar(&sourceImage, "source-image", sourceImage, "immutable image from which the deployment payload was extracted")
 	host.AddCommand(install)
 	addRecoveryAdmissionCommand(ctx, host)
+	addRecoveryFenceCommand(ctx, host)
 	addUpgradeCommand(ctx, host, options)
 	addMaintenanceCommands(ctx, host, options)
 	host.AddCommand(managedmaintenance.Command(ctx))

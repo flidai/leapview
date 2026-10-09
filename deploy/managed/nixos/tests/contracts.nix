@@ -74,6 +74,10 @@ let
     (app.virtualisation.oci-containers.containers == { })
     (db.services.postgresql.package.psqlSchema == "18")
     (builtins.elem "network-online.target" db.systemd.services.postgresql.after)
+    (
+      db.systemd.services.postgresql.unitConfig.ConditionPathExists
+      == "!/var/lib/leapview-recovery/postgresql-fence.json"
+    )
     (db.services.postgresql.settings.listen_addresses == "127.0.0.1,10.42.0.20")
     db.services.postgresql.settings.ssl
     (db.services.postgresql.settings.archive_mode == "on")

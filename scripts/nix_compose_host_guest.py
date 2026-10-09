@@ -1174,21 +1174,26 @@ def _postgres_readiness_wait_command(container_name: str, docker_env: str) -> st
     probe = "sh -ec " + shlex.quote(_postgres_readiness_command(container_name))
     return (
         "set -eu; i=0; while [ \"$i\" -lt 60 ]; do i=$((i+1)); "
-        "if env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(container_name) +
-        " 2>/dev/null | grep -qx running; then if readiness=$(" + probe +
+        "if state=$(env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(container_name) +
+        " 2>/dev/null) && [ \"$state\" = running ]; then if readiness=$(" + probe +
         " 2>/dev/null); then printf '%s\\n' \"$readiness\"; exit 0; fi; fi; sleep 2; done; exit 1"
     )
 
 
-def _serving_credential_boundary_command(root: str = "/opt/leapview") -> str:
-    # The current generation owns immutable payload templates. The installer
-    # writes the private mutable serving environment in the installation root.
-    return (
-        "set -eu; file=" + shlex.quote(root + "/leapview.env") + "; test -s \"$file\"; "
-        "if grep -Eq '^(LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL|LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL)=' \"$file\" 2>/dev/null; then exit 1; "
-        "else status=$?; test \"$status\" -eq 1; fi; "
-        "printf '{\"controlMigratorURLAbsentFromServingEnvironment\":true,\"duckLakeMigratorURLAbsentFromServingEnvironment\":true}\\n'"
-    )
+def _serving_credential_boundary_command(environment_path: str = "/opt/leapview/leapview.env") -> str:
+    # The installer writes mutable serving settings at the host root. Emit
+    # absence evidence only after a successful read and inspection; a missing
+    # checker must fail rather than act like a negative grep match inside `if`.
+    script = "\n".join((
+        "import json, sys",
+        "from pathlib import Path",
+        "data = Path(sys.argv[1]).read_bytes()",
+        "forbidden = {b'LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL', b'LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL'}",
+        "if not data or any(line.partition(b'=')[0].strip() in forbidden for line in data.splitlines()):",
+        "    raise SystemExit('serving environment is empty or contains operation-only database credentials')",
+        "print(json.dumps({'controlMigratorURLAbsentFromServingEnvironment': True, 'duckLakeMigratorURLAbsentFromServingEnvironment': True}))",
+    ))
+    return "python3 -c " + shlex.quote(script) + " " + shlex.quote(environment_path)
 
 
 def _compose_command(project_dir: str, docker_env: str) -> str:
