@@ -34,13 +34,6 @@ export class DesktopAuthenticationCoordinator {
     profile: Profile,
     profileSession: Session,
   ): Promise<void> {
-    const fetcher = (input: string, init: RequestInit) =>
-      profileSession.fetch(input, init);
-    if (await prepareDesktopSession(profile, fetcher, profileSession)) {
-      this.report({ kind: "authentication", phase: "session-valid" });
-      return;
-    }
-    this.report({ kind: "authentication", phase: "required" });
     const existing = this.transactions.get(profile.id);
     if (existing !== undefined) {
       await existing.promise;
@@ -52,28 +45,51 @@ export class DesktopAuthenticationCoordinator {
       );
     }
     const controller = new AbortController();
-    const promise = authenticateDesktopProfile(
-      profile,
-      fetcher,
-      async (authorizationURL) => {
-        const parsed = new URL(authorizationURL);
-        if (
-          parsed.origin !== profile.canonicalOrigin ||
-          parsed.pathname !== "/auth/desktop/authorize" ||
-          parsed.hash !== ""
-        ) {
-          throw new Error("LeapView produced an unsafe authorization URL.");
-        }
-        await this.openAuthorization(parsed.toString());
-      },
-      { signal: controller.signal },
-    );
-    this.report({ kind: "authentication", phase: "started" });
+    // Register ownership before starting the session check. Removal and
+    // shutdown must cancel preparation as well as the browser callback.
+    const promise = Promise.resolve().then(async () => {
+      controller.signal.throwIfAborted();
+      const fetcher = (input: string, init: RequestInit) => {
+        controller.signal.throwIfAborted();
+        return profileSession.fetch(input, {
+          ...init,
+          signal: init.signal
+            ? AbortSignal.any([controller.signal, init.signal])
+            : controller.signal,
+        });
+      };
+      const available = await prepareDesktopSession(profile, fetcher, profileSession);
+      controller.signal.throwIfAborted();
+      if (available) {
+        this.report({ kind: "authentication", phase: "session-valid" });
+        return;
+      }
+      this.report({ kind: "authentication", phase: "required" });
+      const authentication = authenticateDesktopProfile(
+        profile,
+        fetcher,
+        async (authorizationURL) => {
+          controller.signal.throwIfAborted();
+          const parsed = new URL(authorizationURL);
+          if (
+            parsed.origin !== profile.canonicalOrigin ||
+            parsed.pathname !== "/auth/desktop/authorize" ||
+            parsed.hash !== ""
+          ) {
+            throw new Error("LeapView produced an unsafe authorization URL.");
+          }
+          await this.openAuthorization(parsed.toString());
+        },
+        { signal: controller.signal },
+      );
+      this.report({ kind: "authentication", phase: "started" });
+      await authentication;
+      this.report({ kind: "authentication", phase: "completed" });
+    });
     const transaction = { controller, promise };
     this.transactions.set(profile.id, transaction);
     try {
       await promise;
-      this.report({ kind: "authentication", phase: "completed" });
     } catch (error) {
       this.report({ kind: "authentication", phase: "failed" });
       throw error;
