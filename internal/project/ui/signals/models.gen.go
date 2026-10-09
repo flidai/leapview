@@ -110,6 +110,8 @@ type AssetVersionDrawerSignal struct {
 type CatalogDashboardSignal struct {
 	AppearanceColor string           `json:"appearanceColor" yaml:"appearanceColor"`
 	AppearanceIcon  string           `json:"appearanceIcon" yaml:"appearanceIcon"`
+	CanEdit         *bool            `json:"canEdit,omitempty" yaml:"canEdit,omitempty"`
+	CanDelete       *bool            `json:"canDelete,omitempty" yaml:"canDelete,omitempty"`
 	CatalogScope    string           `json:"catalogScope" yaml:"catalogScope"`
 	Description     *string          `json:"description,omitempty" yaml:"description,omitempty"`
 	DashboardID     string           `json:"dashboardId" yaml:"dashboardId"`

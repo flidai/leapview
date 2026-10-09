@@ -1959,6 +1959,7 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 			ID: item.StableID, DashboardID: item.ID.String(), Title: item.Title, Description: item.Description,
 			SemanticModel: item.SemanticModel.String(), Href: href, Owner: owner, Status: status,
 			CatalogScope: scope, UpdatedAt: updatedAt, PageCount: item.PageCount, Tags: append([]string(nil), item.Tags...),
+			CanEdit: item.CanEdit, CanDelete: item.CanDelete,
 			Appearance: appearanceByID[item.ID.String()],
 			Popularity: projectsignals.PopularityLevel(popularity[item.ID.String()]),
 		})

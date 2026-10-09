@@ -705,6 +705,63 @@ test('record table renders configured empty state', async () => {
   }
 })
 
+test('record table column selector dismisses outside and on Escape within a shadow root', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 620 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    await page.locator('lv-record-table').evaluate(async (element: any) => {
+      const host = document.createElement('div')
+      const root = host.attachShadow({ mode: 'open' })
+      const outside = document.createElement('button')
+      outside.textContent = 'Outside columns'
+      document.body.append(host)
+      root.append(element, outside)
+      element.table = {
+        columns: [{ id: 'name', header: 'Name' }, { id: 'runtime', header: 'Runtime' }],
+        rows: [{ name: 'Query', runtime: 'sales' }],
+        columnSelector: { enabled: true },
+      }
+      await element.updateComplete
+    })
+    const table = page.locator('lv-record-table')
+    const trigger = table.locator('.record-table-column-selector summary')
+    const isOpen = () => table.locator('details').evaluate((element: HTMLDetailsElement) => element.open)
+    expect(await trigger.getAttribute('aria-label')).toBe('Columns')
+
+    await trigger.click()
+    expect(await isOpen()).toBe(true)
+    await table.getByRole('checkbox', { name: 'Runtime' }).uncheck()
+    await table.evaluate((element: any) => element.updateComplete)
+    expect(await isOpen()).toBe(true)
+    await page.getByRole('button', { name: 'Outside columns' }).click()
+    expect(await isOpen()).toBe(false)
+
+    await trigger.click()
+    expect(await isOpen()).toBe(true)
+    await trigger.click()
+    expect(await isOpen()).toBe(false)
+
+    await trigger.focus()
+    await page.keyboard.press('Enter')
+    expect(await isOpen()).toBe(true)
+    await table.getByRole('checkbox', { name: 'Runtime' }).focus()
+    await page.keyboard.press('Escape')
+    expect(await isOpen()).toBe(false)
+    expect(await trigger.evaluate((element) => element.getRootNode() instanceof ShadowRoot && (element.getRootNode() as ShadowRoot).activeElement === element)).toBe(true)
+
+    await trigger.click()
+    await page.getByRole('button', { name: 'Outside columns' }).evaluate((element) => (element as HTMLElement).click())
+    expect(await isOpen()).toBe(false)
+
+    await trigger.click()
+    await page.mouse.click(10, 500)
+    expect(await isOpen()).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('record table column selector hides, restores, and persists columns', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 620 } })
   try {

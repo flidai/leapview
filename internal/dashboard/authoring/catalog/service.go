@@ -81,6 +81,8 @@ type Dashboard struct {
 	Revision        *RevisionEvidence         `json:"revision,omitempty"`
 	Publication     *PublicationEvidence      `json:"publication,omitempty"`
 	SourcePath      string                    `json:"sourcePath,omitempty"`
+	CanEdit         bool                      `json:"canEdit"`
+	CanDelete       bool                      `json:"canDelete"`
 }
 
 // ListResult is deterministic and contains counts after authorization
@@ -440,6 +442,8 @@ func instanceItemBase(projectID graph.ResourceID, lifecycle authoring.DashboardL
 		Visibility: lifecycle.Visibility, Owner: lifecycle.OwnerPrincipalID,
 		StableID: stableID(SourceInstance, projectID, lifecycle.ID.String()),
 		Revision: &RevisionEvidence{ID: revisionToken.RevisionID.String(), Number: revisionToken.Number, ContentHash: revisionToken.ContentHash},
+		// Authorization below narrows this lifecycle eligibility for the actor.
+		CanDelete: lifecycle.Status == authoring.LifecycleStatusDraft && lifecycle.Visibility == authoring.VisibilityPrivate && lifecycle.Published == nil,
 	}
 	if lifecycle.Draft != nil {
 		item.DraftID = lifecycle.Draft.ID
@@ -514,23 +518,48 @@ func (s *Service) authorizeCandidates(ctx context.Context, actorID string, inclu
 					action = authoring.AuthorizationActionEdit
 				}
 			}
-			err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
+			request := authoringservice.AuthorizationRequest{
 				ActorID: actorID, ProjectID: item.ProjectID, DashboardID: authoring.DashboardID(item.ID),
 				OwnerPrincipalID: item.Owner, SemanticModel: item.SemanticModel,
-				Target: target, Visibility: item.Visibility,
-				Action: action,
-			})
+				Target: target, Visibility: item.Visibility, Action: action,
+			}
+			allowed, err := s.authorizeAction(ctx, request)
 			if err != nil {
-				if errors.Is(err, access.ErrForbidden) {
-					continue
-				}
 				return nil, err
+			}
+			if !allowed {
+				continue
+			}
+			if item.Source == SourceInstance {
+				item.CanEdit = action == authoring.AuthorizationActionEdit
+				if !item.CanEdit {
+					request.Action = authoring.AuthorizationActionEdit
+					item.CanEdit, err = s.authorizeAction(ctx, request)
+					if err != nil {
+						return nil, err
+					}
+				}
+				if item.CanDelete {
+					request.Action = authoring.AuthorizationActionDelete
+					item.CanDelete, err = s.authorizeAction(ctx, request)
+					if err != nil {
+						return nil, err
+					}
+				}
 			}
 			item.Tags = append([]string(nil), item.Tags...)
 			visible = append(visible, item)
 		}
 	}
 	return visible, nil
+}
+
+func (s *Service) authorizeAction(ctx context.Context, request authoringservice.AuthorizationRequest) (bool, error) {
+	err := s.authorizer.Authorize(ctx, request)
+	if errors.Is(err, access.ErrForbidden) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func validateDashboards(items []Dashboard) error {

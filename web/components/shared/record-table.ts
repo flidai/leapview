@@ -144,6 +144,24 @@ class RecordTable extends LitElement {
   private columnVisibilityFingerprint = ''
   private fallbackRowIDs = new WeakMap<RecordRow, string>()
 
+  private columnSelectorEvents: AbortController | null = null
+
+  connectedCallback(): void {
+    super.connectedCallback()
+    this.columnSelectorEvents = new AbortController()
+    const options = { capture: true, signal: this.columnSelectorEvents.signal }
+    this.ownerDocument.addEventListener('pointerdown', this.handleColumnSelectorOutsideClick, options)
+    this.ownerDocument.addEventListener('click', this.handleColumnSelectorOutsideClick, options)
+    this.ownerDocument.addEventListener('keydown', this.handleColumnSelectorKeyDown, options)
+  }
+
+  disconnectedCallback(): void {
+    this.columnSelectorEvents?.abort()
+    this.columnSelectorEvents = null
+    this.closeColumnSelector()
+    super.disconnectedCallback()
+  }
+
   createRenderRoot(): HTMLElement {
     return this
   }
@@ -316,6 +334,27 @@ class RecordTable extends LitElement {
 
   private handleColumnSelectorToggle = (event: Event): void => {
     this.columnSelectorOpen = (event.currentTarget as HTMLDetailsElement).open
+  }
+
+  private handleColumnSelectorOutsideClick = (event: Event): void => {
+    const selector = this.querySelector<HTMLDetailsElement>('.record-table-column-selector')
+    // The table can live inside a page's shadow root, where event.target is
+    // retargeted to the page host even for clicks on the column checkboxes.
+    if (selector?.open && !event.composedPath().includes(selector)) this.closeColumnSelector()
+  }
+
+  private handleColumnSelectorKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.querySelector<HTMLDetailsElement>('.record-table-column-selector')?.open) return
+    event.preventDefault()
+    event.stopPropagation()
+    this.closeColumnSelector()
+    this.querySelector<HTMLElement>('.record-table-column-selector summary')?.focus()
+  }
+
+  private closeColumnSelector(): void {
+    const selector = this.querySelector<HTMLDetailsElement>('.record-table-column-selector')
+    if (selector) selector.open = false
+    this.columnSelectorOpen = false
   }
 
   private tanstackTable(table: NormalizedRecordTable) {

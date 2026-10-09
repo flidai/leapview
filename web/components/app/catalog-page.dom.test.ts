@@ -596,6 +596,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
         dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
           ...dashboard,
           catalogScope: index === 0 ? 'mine' : dashboard.catalogScope,
+          canEdit: index === 0,
           href: index === 0 ? '/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone' : dashboard.href,
         })),
       } })
@@ -657,7 +658,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
   }
 })
 
-test('owned private draft can be deleted after confirmation with a UUIDv7 key', async () => {
+test('authorized owned private draft can be deleted after confirmation with a UUIDv7 key', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -677,6 +678,8 @@ test('owned private draft can be deleted after confirmation with a UUIDv7 key', 
           ...dashboard,
           catalogScope: index === 0 ? 'mine' : dashboard.catalogScope,
           status: index === 0 ? 'private_draft' : dashboard.status,
+          canEdit: index === 0,
+          canDelete: index === 0,
         })),
       } })
       await element.updateComplete
@@ -698,6 +701,58 @@ test('owned private draft can be deleted after confirmation with a UUIDv7 key', 
     await page.close()
   }
 })
+
+const dashboardPermissionCases = [
+  { name: 'owner editor', catalogScope: 'mine', status: 'private_draft', canEdit: true, canDelete: false, edit: true, delete: false },
+  { name: 'owner admin', catalogScope: 'mine', status: 'private_draft', canEdit: true, canDelete: true, edit: true, delete: true },
+  { name: 'admin of another owner dashboard', catalogScope: 'shared', status: 'private_draft', canEdit: true, canDelete: true, edit: true, delete: true },
+  { name: 'managed dashboard with inconsistent permissions', catalogScope: 'managed', status: 'private_draft', canEdit: true, canDelete: true, edit: false, delete: false },
+  { name: 'published dashboard', catalogScope: 'mine', status: 'published', canEdit: true, canDelete: true, edit: true, delete: false },
+  { name: 'dashboard with unpublished changes', catalogScope: 'mine', status: 'unpublished_changes', canEdit: true, canDelete: true, edit: true, delete: false },
+  { name: 'owner with missing permissions', catalogScope: 'mine', status: 'private_draft', edit: false, delete: false },
+] as const
+
+for (const permissionCase of dashboardPermissionCases) {
+  test(`catalog uses server permissions for ${permissionCase.name}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+      const actions = await page.locator('lv-catalog-page').evaluate(async (element: any, fixture) => {
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+        const dashboard = { ...element.page.dashboards[0], ...fixture }
+        mergePatch({ page: { ...element.page, dashboards: [dashboard] } })
+        await element.updateComplete
+        const root = element.shadowRoot as ShadowRoot
+        const list = root.querySelector('lv-entity-list') as CatalogListElement
+        await list.updateComplete
+        ;(list.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
+        await element.updateComplete
+        const menu = root.querySelector('[role="menu"]') as HTMLElement
+        const editHref = menu.querySelector('a[role="menuitem"]')?.getAttribute('href') ?? null
+        const canDelete = Boolean(menu.querySelector('.catalog-action-form[action$="/delete"]'))
+        ;(menu.querySelector('[data-action="details"]') as HTMLButtonElement).click()
+        await element.updateComplete
+        const detailsAction = root.querySelector('.catalog-details-action') as HTMLElement
+        return {
+          editHref,
+          canDelete,
+          detailsLabel: detailsAction.textContent?.trim(),
+          detailsHref: detailsAction.getAttribute('href'),
+        }
+      }, permissionCase)
+      const copyLabel = permissionCase.catalogScope === 'managed' ? 'Make an editable copy' : 'Make a copy'
+      expect(actions).toEqual({
+        editHref: permissionCase.edit ? '/dashboards/executive-sales/edit' : null,
+        canDelete: permissionCase.delete,
+        detailsLabel: permissionCase.edit ? 'Edit dashboard' : copyLabel,
+        detailsHref: permissionCase.edit ? '/dashboards/executive-sales/edit' : null,
+      })
+    } finally {
+      await page.close()
+    }
+  })
+}
 
 test('managed dashboard menu offers an editable copy without edit or archive actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })

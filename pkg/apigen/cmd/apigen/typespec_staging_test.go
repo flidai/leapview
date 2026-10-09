@@ -95,3 +95,60 @@ func TestStageTypeSpecProject_ExcludesWorkspaceNestedInsideSource(t *testing.T) 
 	require.NoError(t, err)
 	require.NoDirExists(t, filepath.Join(stagedDir, excludedRel))
 }
+
+func TestCopyTypeSpecProject_ExcludesWorkspaceArtifacts(t *testing.T) {
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), "project")
+	sources := map[string]string{
+		"internal/contracts/typespec/main.tsp": "import \"../../../api/shared.tsp\";",
+		"api/shared.tsp":                       "namespace Shared;",
+		"internal/contracts/decorators.js":     "export function $example() {}",
+		"internal/contracts/decorators.d.ts":   "export declare function $example(): void;",
+		"tspconfig.yaml":                       "emit: []",
+		"package.json":                         "{}",
+		".schemas/shared.tsp":                  "namespace HiddenSources;",
+		".tmp-schema/main.tsp":                 "namespace TemporaryNamedSources;",
+	}
+	for path, content := range sources {
+		target := filepath.Join(src, filepath.FromSlash(path))
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+		require.NoError(t, os.WriteFile(target, []byte(content), 0o600))
+	}
+	excluded := []string{".git", ".tmp", ".cache", ".worktrees", ".artifacts", "node_modules", "internal/node_modules", "internal/.tmp"}
+	for _, path := range excluded {
+		target := filepath.Join(src, filepath.FromSlash(path), "live.db")
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+		require.NoError(t, os.WriteFile(target, []byte("unrelated mutable runtime state"), 0o600))
+	}
+
+	require.NoError(t, copyTypeSpecProject(src, dst, t.TempDir()))
+	for path, content := range sources {
+		staged, err := os.ReadFile(filepath.Join(dst, filepath.FromSlash(path)))
+		require.NoError(t, err)
+		require.Equal(t, content, string(staged))
+	}
+	for _, path := range excluded {
+		require.NoDirExists(t, filepath.Join(dst, filepath.FromSlash(path)))
+	}
+}
+
+func TestCopyTypeSpecProject_ExcludesWorkspaceSymlinks(t *testing.T) {
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), "project")
+	for _, name := range []string{".git", ".tmp", ".cache", ".worktrees", ".artifacts", "node_modules"} {
+		require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(src, name)))
+	}
+	require.NoError(t, copyTypeSpecProject(src, dst, t.TempDir()))
+	entries, err := os.ReadDir(dst)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestCopyTypeSpecProject_PreservesExplicitSourceRoot(t *testing.T) {
+	src := filepath.Join(t.TempDir(), ".tmp")
+	dst := filepath.Join(t.TempDir(), "project")
+	require.NoError(t, os.MkdirAll(src, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "main.tsp"), []byte("namespace Test;"), 0o600))
+	require.NoError(t, copyTypeSpecProject(src, dst, t.TempDir()))
+	require.FileExists(t, filepath.Join(dst, "main.tsp"))
+}

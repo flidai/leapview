@@ -105,6 +105,13 @@ HTTP targets require `typespec_dir`, `ir_out`, and `openapi_out`. Contract targe
 
 Direct flags support the same split with `-kind http` or `-kind contracts`.
 
+TypeSpec compilation stages the source tree, preserving sibling imports and local
+JavaScript/configuration files. Staging excludes `.git`, `.tmp`, `.cache`,
+`.worktrees`, `.artifacts`, and `node_modules` entries below `typespec_dir` so local
+runtime state and workspace caches do not enter the compilation. The explicitly
+selected source root is always retained. Compiler packages are linked from the
+managed toolchain.
+
 ### Typed command contracts
 
 Use `@apigen.command` on a mutating operation when its stable operation ID is

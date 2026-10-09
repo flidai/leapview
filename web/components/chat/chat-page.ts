@@ -81,12 +81,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private warmedRenderers = new Set<string>()
   private savedSignature = ''
   private pendingSaveSignature = ''
-  private saveRequestID = ''
   private saveTimer = 0
   private wasAgentRunning = false
   private arrangeCreatedDashboard = false
   private sidebarScroll = 0
   private chatScroll: { top: number; autoScroll: boolean } | null = null
+  private pendingBuilderLayout: { conversationId: string; pathname: string } | null = null
+  private cancelBuilderNavigation: (() => void) | null = null
+  private builderConversationId: string | null = null
 
   private get chatThread(): (HTMLElement & {
     updateComplete: Promise<boolean>
@@ -96,16 +98,84 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     return this.shadowRoot?.querySelector('lv-chat-thread') ?? null
   }
 
-  private enterBuilder(): void {
-		this.closeVisual(false)
+  private cancelBuilderTransition(): void {
+    this.pendingBuilderLayout = null
+    this.cancelBuilderNavigation?.()
+  }
+
+  private previewDashboard = async (): Promise<void> => {
+    if (!this.savedBuilderHref || this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId) return
+    this.dashboardSaveError = ''
+    await this.enterBuilder()
+  }
+
+  private async enterBuilder(navigate?: (frame: HTMLIFrameElement) => void): Promise<void> {
+    this.closeVisual(false)
+    this.cancelBuilderTransition()
+    const transition = { conversationId: this.agent.activeConversationId ?? '', pathname: window.location.pathname }
+    this.pendingBuilderLayout = transition
+    this.builderConversationId = transition.conversationId
     this.sidebarScroll = this.shadowRoot?.querySelector<HTMLElement>('.preview-scroll')?.scrollTop ?? 0
     this.chatScroll = this.chatThread?.captureScroll() ?? null
     this.dashboardPreview = true
     this.builderOpen = true
-    if (this.savedBuilderHref && this.builderNeedsRefresh && this.builderFrame) {
-      this.builderFrame.src = this.savedBuilderHref
+    await this.updateComplete
+    const frame = this.builderFrame
+    if (!frame || this.pendingBuilderLayout !== transition) return
+    if (!navigate && this.savedBuilderHref && this.builderNeedsRefresh) {
+      navigate = frame => frame.contentWindow?.location.replace(this.savedBuilderHref)
       this.builderNeedsRefresh = false
     }
+    if (navigate) {
+      const loaded = await new Promise<boolean>(resolve => {
+        const finish = (success: boolean) => {
+          frame.removeEventListener('load', onLoad)
+          window.clearTimeout(timer)
+          if (this.cancelBuilderNavigation === cancel) this.cancelBuilderNavigation = null
+          resolve(success)
+        }
+        const cancel = () => finish(false)
+        const onLoad = () => {
+          if (frame.contentWindow?.location.href === 'about:blank') return
+          const success = Boolean(frame.contentDocument?.querySelector('lv-dashboard-builder'))
+          if (!success && this.pendingBuilderLayout === transition && !this.dashboardSaveError) {
+            this.dashboardSaveError = 'The dashboard could not be opened. Please try again.'
+            this.savingDashboard = false
+          }
+          finish(success)
+        }
+        const timer = window.setTimeout(() => {
+          if (this.pendingBuilderLayout === transition) {
+            this.dashboardSaveError = 'The dashboard is taking longer to open. Please try again.'
+            this.savingDashboard = false
+            this.builderNeedsRefresh = true
+          }
+          finish(false)
+        }, 45000)
+        this.cancelBuilderNavigation = cancel
+        frame.addEventListener('load', onLoad)
+        try { navigate!(frame) } catch {
+          this.dashboardSaveError = 'The dashboard could not be opened. Please try again.'
+          this.savingDashboard = false
+          finish(false)
+        }
+      })
+      if (!loaded) {
+        if (this.pendingBuilderLayout === transition) {
+          this.pendingBuilderLayout = null
+          this.builderNeedsRefresh = true
+        }
+        return
+      }
+    }
+    // Replace the embedded document before pushing the chat layout entry.
+    // Both entries then retain the same builder on browser Back/Forward.
+    if (this.pendingBuilderLayout !== transition || !this.isConnected || !this.builderOpen
+      || transition.conversationId !== this.agent.activeConversationId || transition.pathname !== window.location.pathname) {
+      if (this.pendingBuilderLayout === transition) this.pendingBuilderLayout = null
+      return
+    }
+    this.pendingBuilderLayout = null
     setChatPreviewLocation('builder')
   }
 
@@ -125,17 +195,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.selectedPreviewVisual = ''
     this.savingDashboard = true
     clearChatDashboardLocation()
-    this.enterBuilder()
-    await this.updateComplete
-    if (this.builderFrame) {
+    void this.enterBuilder(frame => {
       this.arrangeCreatedDashboard = arrangeLayout
-      this.builderFrame.src = href
-    }
+      frame.contentWindow?.location.replace(href)
+    })
     window.clearTimeout(this.saveTimer)
     this.saveTimer = window.setTimeout(() => {
       if (!this.savingDashboard) return
       this.savingDashboard = false
-      this.dashboardSaveError = 'The dashboard is taking longer to open. Use its Open in Builder link to retry.'
+      this.dashboardSaveError = 'The dashboard is taking longer to open. Please try again.'
     }, 45000)
   }
 
@@ -181,6 +249,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private handleBuilderMessage = (event: MessageEvent<ChatDashboardMessage>): void => {
     if (event.origin !== window.location.origin) return
+    if (this.builderConversationId !== null && this.builderConversationId !== this.agent.activeConversationId) return
     const mutation = event.data?.type === 'lv-dashboard-mutation'
     if (event.source !== (mutation ? this.mutationFrame : this.builderFrame)?.contentWindow) return
     if (!mutation && this.builderNeedsRefresh) return
@@ -307,7 +376,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.savingDashboard = true
     if (!keepBuilder) {
       this.builderNeedsRefresh = true
-      if (this.builderFrame) this.builderFrame.src = 'about:blank'
+      this.builderFrame?.contentWindow?.location.replace('about:blank')
     }
     this.dashboardSaveError = ''
     window.clearTimeout(this.saveTimer)
@@ -368,43 +437,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     })
   }
 
-  private async saveDashboard(openBuilder = false): Promise<void> {
-    this.dashboardSaveError = ''
-    if (this.dashboardSaved || (openBuilder && this.savedBuilderHref)) {
-      if (openBuilder) this.enterBuilder()
-      return
-    }
-    if (this.savingDashboard) return
-    // Preview opens an empty draft until the user explicitly adds a visual.
-    const item = this.agent.transcript?.find(item => item.artifact && item.status === 'complete')
-    let semanticModel: string
-    try {
-      semanticModel = JSON.parse(item?.argumentsJson || item?.inputJson || '').semanticModelId
-      if (!semanticModel) throw new Error('Missing semantic model')
-    } catch {
-      this.dashboardSaveError = 'Ask the agent to create a visual before opening a dashboard.'
-      return
-    }
-    this.saveRequestID ||= uuidv7()
-    this.pendingSaveSignature = this.artifactSignature
-    this.pendingPreviewArtifacts = []
-    this.builderNeedsRefresh = false
-    if (openBuilder) this.enterBuilder()
-    this.savingDashboard = true
-    await this.updateComplete
-    submitVisualForm('/dashboards/new', this.builderFrame, {
-      title: conversationTitle(this.agent),
-      semanticModel, embed: 'chat',
-      idempotencyKey: this.saveRequestID,
-    })
-    this.saveTimer = window.setTimeout(() => {
-      if (!this.savingDashboard) return
-      this.savingDashboard = false
-      this.dashboardSaveError = 'The save is taking longer than expected. Retry to retrieve the same draft.'
-    }, 45000)
-  }
-
-
   connectedCallback(): void {
     super.connectedCallback()
     if (typeof window === 'undefined') return
@@ -418,6 +450,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   disconnectedCallback(): void {
+    this.cancelBuilderTransition()
     this.compactMedia?.removeEventListener('change', this.onCompactViewportChange)
     this.compactMedia = undefined
     window.removeEventListener('popstate', this.syncPreviewLocation)
@@ -428,10 +461,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private syncPreviewLocation = (): void => {
+    this.cancelBuilderTransition()
     const location = new URL(window.location.href)
     const preview = location.searchParams.get('preview')
     const href = this.validBuilderHref(location.searchParams.get('dashboard'))
-    if (href && href !== this.savedBuilderHref) {
+    if (href && href !== this.validBuilderHref(this.savedBuilderHref)) {
       this.savedBuilderHref = href
       this.restoredBuilderHref = href
       const retained = window.history.state?.chatDashboard
@@ -455,6 +489,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       result.searchParams.set('embed', 'chat')
       if (href.searchParams.has('draft')) result.searchParams.set('draft', href.searchParams.get('draft')!)
       if (href.searchParams.has('page')) result.searchParams.set('page', href.searchParams.get('page')!)
+      if (href.searchParams.get('mode') === 'preview') result.searchParams.set('mode', 'preview')
       return result.pathname + result.search
     } catch { return '' }
   }
@@ -466,6 +501,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private async openDashboardPreview(event?: CustomEvent<{ artifactId?: string }>): Promise<void> {
+    this.cancelBuilderTransition()
 		this.closeVisual(false)
     const fromBuilder = this.builderOpen
     const position = fromBuilder ? this.chatScroll : this.chatThread?.captureScroll()
@@ -489,6 +525,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private async closeDashboardPreview(): Promise<void> {
+    this.cancelBuilderTransition()
     this.builderOpen = false
     this.dashboardPreview = true
     setChatPreviewLocation('dashboard', true)
@@ -496,13 +533,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private async closeVisualSidebar(): Promise<void> {
+    this.cancelBuilderTransition()
     const position = this.chatThread?.captureScroll()
     this.dashboardPreview = false
     setChatPreviewLocation(null, true)
     await this.updateComplete
     await this.chatThread?.updateComplete
     if (position) this.chatThread?.restoreScroll(position)
-    this.shadowRoot?.querySelector<HTMLElement>('.open-preview')?.focus()
+    this.shadowRoot?.querySelector<HTMLElement>('.conversation-titlebar .chat-size-toggle')?.focus({ preventScroll: true })
   }
 
   private get selectedPreviewArtifact(): ChatArtifactSignal | undefined {
@@ -559,6 +597,12 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   updated(changed: Map<PropertyKey, unknown>): void {
+    if (this.pendingBuilderLayout && this.pendingBuilderLayout.conversationId !== this.agent.activeConversationId) {
+      this.cancelBuilderTransition()
+      this.builderOpen = false
+      this.dashboardPreview = false
+      this.builderNeedsRefresh = true
+    }
     if (changed.has('builderOpen')) {
       this.dispatchEvent(new CustomEvent('lv-chat-layout-change', {
         bubbles: true, composed: true, detail: { builderOpen: this.builderOpen },
@@ -784,8 +828,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         </div>
         <div class="titlebar-actions">
           ${!this.dashboardPreview && this.previewArtifacts.length ? html`<button class="preview-action open-preview" type="button" @click=${() => this.openDashboardPreview()}>${lucideIcon(LayoutDashboard)} Visuals (${this.previewArtifacts.length})</button>` : null}
-          ${this.savedBuilderHref ? html`<button class="preview-action" type="button" @click=${() => this.enterBuilder()}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
-          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" @click=${() => this.openDashboardPreview()}>${lucideIcon(Minimize2)}</button>` : null}
+          ${this.savedBuilderHref ? html`<button class="preview-action" type="button" title="Preview dashboard"
+            ?disabled=${this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId)}
+            @click=${this.previewDashboard}>${lucideIcon(LayoutDashboard)} Preview</button>` : null}
+          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button"
+            aria-label=${this.dashboardPreview ? 'Close visuals sidebar' : 'Open visuals sidebar'}
+            title=${this.dashboardPreview ? 'Close visuals sidebar' : 'Open visuals sidebar'}
+            aria-expanded=${this.dashboardPreview} aria-controls="chat-visuals-sidebar"
+            @click=${() => this.dashboardPreview ? this.closeVisualSidebar() : this.openDashboardPreview()}>
+            ${lucideIcon(this.dashboardPreview ? Maximize2 : Minimize2)}</button>` : null}
         </div>
       </div>
     `
@@ -809,13 +860,12 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const added = Boolean(selected && this.dashboardCopies[selected.id])
     const canSave = Boolean(selected && this.agent.transcript?.some(item => item.artifact?.id === selected.id))
     return html`
-      <section class="preview-panel" aria-label="Dashboard preview" ?hidden=${!visible} @lv-visualization-window-request=${this.requestDashboardVisualWindow}>
+      <section id="chat-visuals-sidebar" class="preview-panel" aria-label="Dashboard preview" ?hidden=${!visible} @lv-visualization-window-request=${this.requestDashboardVisualWindow}>
         <div class="preview-heading">
           <h2>Visual</h2>
           <div class="preview-actions">
             ${canSave ? html`<button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>` : null}
             <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
-            <button class="preview-action preview-builder-action" type="button" aria-label="Open in Builder" title="Open in Builder" ?disabled=${this.savingDashboard || !artifacts.length} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Open in Builder</button>
             <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
           </div>
         </div>

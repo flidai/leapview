@@ -1400,6 +1400,33 @@ test('query audit page filters table rows and exposes optional metadata columns'
   }
 })
 
+test('query audit closes the column selector when interacting with the history filters', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
+    await page.evaluate(async (fixture) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: fixture, adminQueryHistory: fixture.queryHistory, adminQueryDetail: { eventId: '', loading: false, error: '' } })
+      const element = document.createElement('lv-admin-page') as any
+      document.body.replaceChildren(element)
+      await element.updateComplete
+      await (element.shadowRoot.querySelector('lv-record-table') as any).updateComplete
+    }, queryAuditFixturePage())
+
+    const table = page.locator('lv-admin-page lv-record-table')
+    await table.locator('.record-table-column-selector summary').click()
+    await table.getByRole('checkbox', { name: 'Runtime', exact: true }).uncheck()
+    expect(await table.locator('details').evaluate((element: HTMLDetailsElement) => element.open)).toBe(true)
+    await page.locator('lv-admin-page').getByRole('button', { name: 'Last hour', exact: true }).click()
+    await table.evaluate((element: any) => element.updateComplete)
+    expect(await table.locator('details').evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
+    expect(await table.locator('thead').textContent()).not.toContain('Runtime')
+  } finally {
+    await page.close()
+  }
+})
+
 test('query audit emits load more commands from backend-driven history state', async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

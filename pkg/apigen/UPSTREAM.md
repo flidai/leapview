@@ -26,6 +26,9 @@ idempotency or concurrency policies, generated Go command contracts, and the
 OpenAPI `x-apigen-command` projection. It also adds generated concrete-route
 policy lookup and full runtime registries plus the shared command invocation,
 dependency, optimistic-concurrency, completion-guard, and observation runtime.
+TypeSpec project staging also excludes repository metadata, dependency
+installations, and local work/cache artifact trees so repository-root sources
+do not copy mutable runtime state.
 The published Go module omits the nested
 `example` module even though the root smoke tests require it, so `example/` was
 copied without modification from the same upstream commit recorded above.

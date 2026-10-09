@@ -849,7 +849,7 @@ func copyTypeSpecProject(src string, dst string, excludedDir string) error {
 		if excludedRel != "" && filepath.Clean(rel) == excludedRel {
 			return filepath.SkipDir
 		}
-		if rel != "." && entry.Name() == "node_modules" {
+		if rel != "." && typeSpecWorkspaceEntry(entry.Name()) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -893,6 +893,17 @@ func copyTypeSpecProject(src string, dst string, excludedDir string) error {
 		}
 		return nil
 	})
+}
+
+// typeSpecWorkspaceEntry excludes dependency installations and mutable workspace
+// state without excluding ordinary authored hidden directories.
+func typeSpecWorkspaceEntry(name string) bool {
+	switch name {
+	case ".git", ".tmp", ".cache", ".worktrees", ".artifacts", "node_modules":
+		return true
+	default:
+		return false
+	}
 }
 
 func typeSpecStagingExclusionRelativePath(sourceDir string, excludedDir string) (string, error) {

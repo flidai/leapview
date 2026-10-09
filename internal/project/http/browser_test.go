@@ -40,8 +40,8 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 		{
 			ID: "dashboard:mine", StableID: "instance:project:test:dashboard:mine", ProjectID: "project:test", Title: "My analysis",
 			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceInstance, Owner: "alice", DraftID: "draft-mine", PageCount: 2,
-			FirstPageID: "overview",
-			Revision:    &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-mine", Number: 2, ContentHash: strings.Repeat("a", 64), CreatedAt: now},
+			FirstPageID: "overview", CanEdit: true, CanDelete: true,
+			Revision: &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-mine", Number: 2, ContentHash: strings.Repeat("a", 64), CreatedAt: now},
 		},
 		{
 			ID: "dashboard:managed", StableID: "project:project:test:dashboard:managed", ProjectID: "project:test", Title: "Executive sales",
@@ -83,6 +83,9 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	wantMineHref := "/dashboards/dashboard:mine/preview?draft=draft-mine&page=overview&revisionContentHash=" + strings.Repeat("a", 64) + "&revisionId=revision-mine&revisionNumber=2"
 	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != wantMineHref || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
 		t.Fatalf("mine = %#v", mine)
+	}
+	if !mine.CanEdit || !mine.CanDelete || managed.CanEdit || managed.CanDelete || pending.CanEdit || pending.CanDelete {
+		t.Fatalf("catalog permissions differ from the authorized read model: mine=%#v managed=%#v pending=%#v", mine, managed, pending)
 	}
 	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || managed.Popularity != "high" || managed.UpdatedAt != now.Add(-time.Hour).Format(time.RFC3339) {
 		t.Fatalf("managed = %#v", managed)
