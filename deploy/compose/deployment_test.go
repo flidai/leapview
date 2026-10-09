@@ -556,7 +556,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	for _, required := range []string{
 		"ARG LEAPVIEW_IMAGE",
 		"FROM ${LEAPVIEW_IMAGE} AS candidate",
-		"FROM debian:bookworm-slim@sha256:",
+		"FROM public.ecr.aws/docker/library/debian:bookworm-slim@sha256:",
 		"dbus-daemon",
 		"gnome-keyring",
 		"COPY --from=candidate /usr/local/bin/leapview /usr/local/bin/leapview",
