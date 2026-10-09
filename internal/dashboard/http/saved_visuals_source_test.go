@@ -136,6 +136,28 @@ func TestGeneratedVisualCopyKeepsControlWithDisjointOptionDependency(t *testing.
 	}
 }
 
+func TestGeneratedVisualCopyDoesNotConfuseComponentAndDefinitionIDs(t *testing.T) {
+	var doc document.DashboardDocument
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Dashboard","metadata":{"id":"dashboard:sales","name":"sales"},"spec":{"semanticModel":"sales","visuals":[{"id":"revenue","type":"kpi","query":{"type":"aggregate","dimensions":[],"metrics":["net_revenue"]},"presentation":{"type":"kpi"}},{"id":"orders","type":"kpi","query":{"type":"aggregate","dimensions":[],"metrics":["order_count"]},"presentation":{"type":"kpi"}}],"pages":[{"id":"overview","title":"Overview","components":[{"id":"card","type":"visual","visual":"revenue","placement":{"column":1,"row":1,"columnSpan":3,"rowSpan":2}},{"id":"revenue","type":"visual","visual":"orders","placement":{"column":4,"row":1,"columnSpan":3,"rowSpan":2}}]}],"filters":[{"id":"country","label":"Country","dimension":"country","targets":["overview/revenue"],"control":{"type":"singleSelect"}}]}}`), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		component string
+		want      int
+	}{
+		{"card", 0},
+		{"revenue", 1},
+	} {
+		copied, err := dashboardVisualForLibrary(doc, "overview", tc.component)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(copied.Filters) != tc.want {
+			t.Fatalf("component %s copied %d filters, want %d", tc.component, len(copied.Filters), tc.want)
+		}
+	}
+}
+
 func TestGeneratedVisualCopyKeepsPlacementAndPageFilterScopes(t *testing.T) {
 	for _, scope := range []string{"qualified", "page", "page-override", "other-page"} {
 		t.Run(scope, func(t *testing.T) {

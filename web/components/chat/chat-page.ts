@@ -293,6 +293,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private handleVisualLibraryState = (event: CustomEvent<VisualLibraryState>): void => {
+    const previousSavedIds = new Set(this.visualLibraryState.savedIds)
     this.visualLibraryState = event.detail
     const prefix = `dashboard:${this.projectedDashboardId}:${this.dashboardPageId}:`
     for (const artifact of event.detail.dashboardArtifacts ?? []) {
@@ -301,6 +302,19 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         this.retainedDashboardArtifacts = [...this.retainedDashboardArtifacts, this.savedDashboardArtifacts.find(item => item.id === artifact.id) ?? artifact]
       }
       this.rememberDashboardCopy(artifact.id, {id: artifact.id.slice(prefix.length), pageId: this.dashboardPageId})
+    }
+    if (!event.detail.savingId && !event.detail.error) {
+      const savedIds = new Set(event.detail.savedIds)
+      this.retainedDashboardArtifacts = this.retainedDashboardArtifacts.filter(artifact => {
+        if (!artifact.id.startsWith(prefix) || !previousSavedIds.has(artifact.id) || savedIds.has(artifact.id)) return true
+        const links = this.dashboardCopyLinks[artifact.id] ?? []
+        const live = this.dashboardComponents.some(component => component.artifactId === artifact.id || links.some(link => link.id === component.id && link.pageId === component.pageId))
+        if (live) return true
+        // A removed generated visual needs either its saved source or a live
+        // dashboard placement to be added again.
+        delete this.retainedDashboardVisuals[artifact.id]
+        return false
+      })
     }
     this.reconcileDashboardCopies()
     this.finishPendingVisualRemoval()
@@ -339,7 +353,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private selectDashboardPage(event: Event): void {
     const pageId = (event.target as HTMLSelectElement).value
-    if (!this.liveBuilder || pageId === this.dashboardPageId || !this.dashboardPages.some(page => page.id === pageId)) return
+    if (this.visualLibraryState.savingId || !this.liveBuilder || pageId === this.dashboardPageId || !this.dashboardPages.some(page => page.id === pageId)) return
     this.pendingDashboardPageId = pageId
     this.liveBuilder.postMessage({type: 'lv-select-dashboard-page', pageId} satisfies ChatDashboardMessage, window.location.origin)
   }
@@ -430,6 +444,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private async saveDashboard(openBuilder = false): Promise<void> {
+    if (this.visualLibraryState.savingId) return
     this.dashboardSaveError = ''
     if (this.dashboardSaved || (openBuilder && this.savedBuilderHref)) {
       if (openBuilder) this.enterBuilder()
@@ -862,7 +877,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           <h1>${title}</h1>
         </div>
         <div class="titlebar-actions">
-          ${this.savedBuilderHref || this.previewArtifacts.length ? html`<button class="preview-action" type="button" ?disabled=${this.savingDashboard || this.builderUpdating} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
+          ${this.savedBuilderHref || this.previewArtifacts.length ? html`<button class="preview-action" type="button" ?disabled=${this.savingDashboard || this.builderUpdating || Boolean(this.visualLibraryState.savingId)} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
           <a class="preview-action" href="/visuals/saved">${lucideIcon(Bookmark)} Saved visuals</a>
         </div>
       </div>
@@ -897,7 +912,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           </div>
         </div>
         ${this.savedBuilderHref ? html`<label class="dashboard-destination">Dashboard page
-          <select aria-label="Dashboard page" .value=${this.pendingDashboardPageId || this.dashboardPageId} ?disabled=${this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || !this.dashboardPages.length} @change=${this.selectDashboardPage}>
+          <select aria-label="Dashboard page" .value=${this.pendingDashboardPageId || this.dashboardPageId} ?disabled=${saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || !this.dashboardPages.length} @change=${this.selectDashboardPage}>
             ${this.dashboardPages.map(page => html`<option value=${page.id} .selected=${page.id === (this.pendingDashboardPageId || this.dashboardPageId)}>${page.title}</option>`)}
           </select>
           <span>${added ? 'Added to this page' : 'Add to this page'}</span>

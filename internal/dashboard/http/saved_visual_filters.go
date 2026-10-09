@@ -48,7 +48,7 @@ func placedVisualFilters(doc document.DashboardDocument, page document.Dashboard
 					}
 				}
 			}
-		} else if filter.Targets != nil && (slices.Contains(*filter.Targets, page.ID+"/"+componentID) || slices.Contains(*filter.Targets, page.ID+"/"+visualID)) {
+		} else if filter.Targets != nil && slices.Contains(*filter.Targets, page.ID+"/"+componentID) {
 			targets := []string{visualID}
 			filter.Targets = &targets
 		}
