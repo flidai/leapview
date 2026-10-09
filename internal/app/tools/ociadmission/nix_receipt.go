@@ -50,12 +50,16 @@ func verifyNixReceipt(bundle string, opts admissionOptions, admission artifactad
 		}
 	}
 	for name, expected := range map[string]string{"sbom.json": admission.SBOM.Reference, "container-vulnerability-policy.json": admission.SecurityPolicy.Reference, "trivy-report.json": profile.OCIEvidenceDigest} {
-		data, err := readBundleFile(bundle, name, maxVulnerabilityJSONBytes)
+		limit := maxVulnerabilityJSONBytes
+		if name == "sbom.json" {
+			limit = maxNixEvidenceBytes
+		}
+		data, err := readBundleFile(bundle, name, limit)
 		if err != nil || evidenceDigest(data) != expected {
 			return fmt.Errorf("Nix receipt %s reference differs", name)
 		}
 	}
-	sbom, err := readBundleFile(bundle, "sbom.json", maxVulnerabilityJSONBytes)
+	sbom, err := readBundleFile(bundle, "sbom.json", maxNixEvidenceBytes)
 	if err != nil || evidenceDigest(sbom) != verified.FileHashes["original-sbom.spdx.json"] {
 		return errors.New("Nix original signed SPDX differs from evidence inventory")
 	}

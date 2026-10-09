@@ -87,7 +87,11 @@ func writeNixBundle(opts nixAdmissionOptions, env []string, fresh string, verifi
 
 // Require the entire closed evidence inventory, not merely a summary receipt.
 func nixEvidenceFiles(root string, expected map[string]string) (map[string][]byte, error) {
+	if len(expected) > 4088 {
+		return nil, errors.New("Nix raw evidence inventory exceeds transport bound")
+	}
 	files := make(map[string][]byte)
+	total := 0
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -110,6 +114,10 @@ func nixEvidenceFiles(root string, expected map[string]string) (map[string][]byt
 		if err != nil || evidenceDigest(data) != expected[relative] {
 			return errors.New("Nix evidence report differs from verified inventory")
 		}
+		total += len(data)
+		if total > 512*1024*1024 {
+			return errors.New("Nix raw evidence bytes exceed transport bound")
+		}
 		files["evidence/"+relative] = data
 		return nil
 	})
@@ -124,15 +132,23 @@ func nixEvidenceFiles(root string, expected map[string]string) (map[string][]byt
 
 func persistNixBundle(directory string, files map[string][]byte, binding admissionBinding) error {
 	binding.Files = make(map[string]string, len(files))
+	total := 0
 	for name, data := range files {
 		if len(data) == 0 || len(data) > maxNixEvidenceBytes {
 			return fmt.Errorf("Nix evidence %s exceeds bound", name)
+		}
+		total += len(data)
+		if total > 512*1024*1024 {
+			return errors.New("Nix bundle bytes exceed transport bound")
 		}
 		binding.Files[name] = evidenceDigest(data)
 	}
 	encoded, err := json.Marshal(binding)
 	if err != nil {
 		return err
+	}
+	if len(files)+1 > 4096 || total+len(encoded) > 512*1024*1024 {
+		return errors.New("Nix bundle inventory exceeds transport bound")
 	}
 	files["binding.json"] = encoded
 	parent := filepath.Dir(directory)

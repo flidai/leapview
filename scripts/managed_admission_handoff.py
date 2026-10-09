@@ -284,6 +284,12 @@ def retain_evidence(directory, files, artifact, authorization):
                 output.flush()
                 os.fchmod(output.fileno(), 0o400)
                 os.fsync(output.fileno())
+        for name in sorted(directories, key=lambda value: len(Path(value).parts), reverse=True):
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            try:
+                os.fsync(child)
+            finally:
+                os.close(child)
         os.fsync(descriptor)
         os.fsync(parent)
         complete = True
