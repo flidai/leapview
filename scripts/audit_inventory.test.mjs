@@ -138,6 +138,17 @@ test('canonical catalogs include API, main/site routes, agent tools and actual D
   assert.ok(result.limitations.some(item => item.includes('runtime CLI')))
 })
 
+test('conditional protocol mounts are inventoried without claiming protocol journey execution', () => {
+  const inputs = fixture()
+  inputs.texts['internal/app/conditional_route_inventory_test.go'] = 'const conditionalRouteInventory = `\n* /mcp\n* /scim/*\n* /upload-protocols/tus\n* /upload-protocols/tus/*\nGET /oauth/authorize\nPOST /oauth/authorize\n`'
+  const result = collectFeatures(inputs)
+  const rows = result.features.filter(row => row.detail.runtimeContract === 'TestConditionalRouteInventory')
+  assert.deepEqual(rows.map(row => row.name), ['* /mcp', '* /scim/*', '* /upload-protocols/tus', '* /upload-protocols/tus/*', 'GET /oauth/authorize', 'POST /oauth/authorize'])
+  assert.deepEqual(rows.map(row => row.ownerIssue), ['FAI-1095', 'FAI-1089', 'FAI-1091', 'FAI-1091', 'FAI-1089', 'FAI-1089'])
+  assert.ok(rows.every(row => row.currentDisposition === 'not_run' && row.detail.conditional === true))
+  assert.ok(result.limitations.some(item => item.includes('Opaque protocol mounts')))
+})
+
 test('runtime CLI distinguishes help groups from runnable commands and includes root', () => {
   const result = collectFeatures({ ...fixture(), cliManifest: { schemaVersion: 2, commands: [
     { path: [], runnable: true }, { path: ['data'], runnable: false }, { path: ['data', 'upload'], runnable: true },
