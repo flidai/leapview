@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS credential.validation_receipt (
     CHECK (destination ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (actor_id = btrim(actor_id) AND octet_length(actor_id) BETWEEN 1 AND 255 AND actor_id !~ '[[:cntrl:]]'),
     CHECK (binding_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$'),
-    CHECK (binding_revision > 0),
+    CHECK ((scope_kind = 'connection' AND binding_revision > 0) OR (scope_kind = 'agent' AND binding_revision >= 0)),
     CHECK (configuration_digest ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (validated_at > '-infinity'::timestamptz AND isfinite(validated_at)),
     CHECK (expires_at > '-infinity'::timestamptz AND isfinite(expires_at)),
@@ -209,6 +209,8 @@ CREATE TABLE IF NOT EXISTS credential.activation_preparation (
     created_at               timestamptz NOT NULL,
     switching_at             timestamptz,
     committed_at             timestamptz,
+    completed_at             timestamptz,
+    CHECK (completed_at IS NULL OR (committed_at IS NOT NULL AND completed_at >= committed_at AND isfinite(completed_at))),
     aborted_at               timestamptz,
     aborted_by               text,
     UNIQUE (receipt_id),
@@ -244,7 +246,7 @@ CREATE TABLE IF NOT EXISTS credential.activation_preparation (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS activation_preparation_one_pending_deployment_idx
-    ON credential.activation_preparation (deployment_id) WHERE aborted_at IS NULL;
+    ON credential.activation_preparation (deployment_id) WHERE aborted_at IS NULL AND completed_at IS NULL;
 
 CREATE OR REPLACE FUNCTION credential.guard_activation_preparation_transition() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
@@ -252,7 +254,7 @@ DECLARE
     commit_now timestamptz;
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        IF NEW.switching_at IS NOT NULL OR NEW.committed_at IS NOT NULL OR NEW.aborted_at IS NOT NULL OR NEW.aborted_by IS NOT NULL
+        IF NEW.completed_at IS NOT NULL OR NEW.switching_at IS NOT NULL OR NEW.committed_at IS NOT NULL OR NEW.aborted_at IS NOT NULL OR NEW.aborted_by IS NOT NULL
 	       OR NOT EXISTS (
 	            SELECT 1 FROM credential.validation_receipt AS receipt
 	            WHERE receipt.deployment_id = NEW.deployment_id
@@ -277,6 +279,21 @@ BEGIN
        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
         RAISE EXCEPTION 'credential activation preparation intent is immutable';
     END IF;
+    -- Completion is a separate durable transition after exact runtime readiness.
+    -- No historical identity, receipt, pointer or commit timestamp may change.
+    IF OLD.committed_at IS NOT NULL AND OLD.completed_at IS NULL
+       AND OLD.aborted_at IS NULL AND OLD.aborted_by IS NULL
+       AND NEW.switching_at IS NOT DISTINCT FROM OLD.switching_at
+       AND NEW.committed_at IS NOT DISTINCT FROM OLD.committed_at
+       AND NEW.aborted_at IS NULL AND NEW.aborted_by IS NULL
+       AND NEW.completed_at IS NOT NULL AND isfinite(NEW.completed_at)
+       AND NEW.completed_at >= OLD.committed_at
+       AND NEW.completed_at <= clock_timestamp() THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.completed_at IS NOT NULL OR OLD.completed_at IS NOT NULL THEN
+        RAISE EXCEPTION 'credential activation completion is terminal';
+    END IF;
     IF OLD.aborted_at IS NOT NULL OR OLD.aborted_by IS NOT NULL OR OLD.committed_at IS NOT NULL THEN
         RAISE EXCEPTION 'credential activation preparation cannot transition after abort or commit';
     END IF;
@@ -292,13 +309,7 @@ BEGIN
         IF NEW.committed_at >= OLD.switching_at
            AND NEW.committed_at <= commit_now
            AND commit_now >= OLD.switching_at THEN
-            IF NOT EXISTS (
-                SELECT 1 FROM credential.validation_receipt AS receipt
-                WHERE receipt.deployment_id = OLD.deployment_id
-                  AND receipt.receipt_id = OLD.receipt_id
-                  AND receipt.validated_at <= commit_now
-                  AND receipt.expires_at > commit_now
-            ) THEN
+            IF NOT credential.activation_receipt_is_fresh(OLD.deployment_id, OLD.operation_id, OLD.receipt_id, commit_now) THEN
                 RAISE EXCEPTION 'credential activation receipt is no longer fresh'
                     USING ERRCODE = '40001', CONSTRAINT = 'activation_preparation_receipt_freshness';
             END IF;
@@ -351,7 +362,7 @@ BEGIN
         GRANT INSERT ON credential.validation_receipt TO leapview_control_runtime;
         GRANT SELECT ON credential.validation_receipt TO leapview_control_runtime;
         GRANT SELECT, INSERT ON credential.activation_preparation TO leapview_control_runtime;
-        GRANT UPDATE (switching_at, committed_at, aborted_at, aborted_by) ON credential.activation_preparation TO leapview_control_runtime;
+        GRANT UPDATE (switching_at, committed_at, completed_at, aborted_at, aborted_by) ON credential.activation_preparation TO leapview_control_runtime;
         GRANT SELECT, INSERT ON credential.encryption_budget TO leapview_control_runtime;
         GRANT UPDATE (uses) ON credential.encryption_budget TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION credential.valid_binding_fields(text, text, text, text, text) TO leapview_control_runtime;

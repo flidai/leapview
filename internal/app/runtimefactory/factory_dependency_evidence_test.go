@@ -64,6 +64,9 @@ func TestPrepareDashboardUsesValidatedCandidateRuntimeEvidenceWithoutActiveSourc
 		evidence, ok := input.DependencyEvidence["semantic:sales"]
 		gotEvidence = ok && evidence.Available()
 		gotTargetID, gotSnapshotSealID = input.TargetID, input.SnapshotSealID
+		if input.ConnectionIDs["warehouse"] != "connection:warehouse" {
+			t.Fatalf("sealed runtime lost compiled connection IDs: %#v", input.ConnectionIDs)
+		}
 		return &dashboardruntime.Service{}, nil
 	}
 	factory := servingStateRuntimeFactory{runtimeDir: t.TempDir()}
@@ -87,6 +90,35 @@ func TestPrepareDashboardUsesValidatedCandidateRuntimeEvidenceWithoutActiveSourc
 	}
 	if gotTargetID != "target-1" || gotSnapshotSealID != "seal-1" {
 		t.Fatalf("target/seal provenance=(%q,%q), want (target-1,seal-1)", gotTargetID, gotSnapshotSealID)
+	}
+}
+
+func TestPreparePreservesCompiledConnectionNames(t *testing.T) {
+	artifact, identity, managed := runtimeDependencyEvidenceArtifact(t)
+	called := false
+	factory := servingStateRuntimeFactory{
+		runtimeDir: t.TempDir(), duckDBDir: t.TempDir(),
+		dashboardRuntime: func(_ context.Context, input dashboardruntimefactory.Input) (*dashboardruntime.Service, error) {
+			called = true
+			if input.ConnectionIDs["warehouse"] != "connection:warehouse" {
+				t.Fatalf("runtime lost compiled connection IDs: %#v", input.ConnectionIDs)
+			}
+			return &dashboardruntime.Service{}, nil
+		},
+	}
+	_, err := factory.Prepare(t.Context(), runtimehost.RuntimeInput{
+		State:    servingstate.State{ID: servingstate.ID(identity.GenerationID), ProjectID: identity.ProjectID, Environment: servingstate.Environment(identity.Environment), Digest: artifact.Digest},
+		Artifact: artifact, ManagedData: managed,
+		Candidate: &runtimehost.CandidateRuntimeContext{
+			CandidateID: "candidate-1", RuntimeVersion: "runtime:v1", BindingFingerprint: dependencyEvidenceTestDigest('a'),
+			BindingKinds: map[string]string{"connection:warehouse": "managed"}, Capabilities: []runtimehost.RuntimeCapabilityEvidence{dependencyEvidenceTestCapability('1')},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("runtime builder was not called")
 	}
 }
 
