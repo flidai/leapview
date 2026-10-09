@@ -36,18 +36,39 @@ func TestNativeMySQLSourceReadDenialAndRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	const password = "owned-native-mysql-fixture"
+	// The entrypoint first exposes a temporary socket server before creating
+	// fixture_reader. Readiness must prove the final TCP server accepts the
+	// same credential and database used by the native source attachment.
+	ready := wait.ForExec([]string{"env", "MYSQL_PWD=" + password, "mysql", "--protocol=TCP", "--host=127.0.0.1", "--user=fixture_reader", "fixtures", "--execute=SELECT 1;"}).WithStartupTimeout(90 * time.Second)
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{Started: true, ContainerRequest: testcontainers.ContainerRequest{
 		FromDockerfile: testcontainers.FromDockerfile{ContextArchive: bytes.NewReader(archive.Bytes()), Repo: "leapview-test/mysql", Tag: "8.4.11-v2", KeepImage: true},
 		Env:            map[string]string{"MYSQL_ROOT_PASSWORD": "owned-native-mysql-root", "MYSQL_DATABASE": "fixtures", "MYSQL_USER": "fixture_reader", "MYSQL_PASSWORD": password},
-		ExposedPorts:   []string{"3306/tcp"}, WaitingFor: wait.ForListeningPort("3306/tcp").WithStartupTimeout(90 * time.Second),
+		ExposedPorts:   []string{"3306/tcp"}, WaitingFor: ready,
 	}})
 	if container != nil {
 		testcontainers.CleanupContainer(t, container)
+		t.Cleanup(func() {
+			if !t.Failed() {
+				return
+			}
+			logContext, cancelLogs := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelLogs()
+			logs, err := container.Logs(logContext)
+			if err != nil {
+				t.Logf("read owned MySQL fixture failure logs: %v", err)
+				return
+			}
+			defer logs.Close()
+			data, _ := io.ReadAll(io.LimitReader(logs, 64<<10))
+			diagnostics := strings.ReplaceAll(string(data), password, "<fixture-password>")
+			diagnostics = strings.ReplaceAll(diagnostics, "owned-native-mysql-root", "<root-fixture-password>")
+			t.Logf("owned MySQL fixture failure logs: %s", diagnostics)
+		})
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, output, err := container.Exec(ctx, []string{"env", "MYSQL_PWD=" + password, "mysql", "--user=fixture_reader", "fixtures", "--execute=CREATE TABLE fixture_rows (id BIGINT, value VARCHAR(20)); INSERT INTO fixture_rows VALUES (1, 'x');"})
+	code, output, err := container.Exec(ctx, []string{"env", "MYSQL_PWD=" + password, "mysql", "--protocol=TCP", "--host=127.0.0.1", "--user=fixture_reader", "fixtures", "--execute=CREATE TABLE fixture_rows (id BIGINT, value VARCHAR(20)); INSERT INTO fixture_rows VALUES (1, 'x');"})
 	if err != nil || code != 0 {
 		var diagnostics string
 		if output != nil {
