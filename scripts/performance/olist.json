@@ -1,0 +1,10 @@
+{
+  "name": "olist",
+  "dashboardPath": "/dashboards/dashboard:visual-showcase/pages/overview",
+  "rapidToggleScenario": "category",
+  "scenarios": [
+    { "name": "purchase_month", "visualId": "revenue" },
+    { "name": "category", "visualId": "categories" },
+    { "name": "delivery_state", "visualId": "delivery" }
+  ]
+}

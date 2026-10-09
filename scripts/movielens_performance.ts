@@ -1,4 +1,4 @@
-import { chromium, type Page } from '@playwright/test'
+import { chromium, type Page, type Request } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -257,7 +257,8 @@ export async function runPerformanceSuite(): Promise<void> {
 	const logCursor = await refreshLogCursor()
 	const dashboardURL = new URL(suite.dashboardPath, baseURL).toString()
   const browser = await chromium.launch()
-  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 },
+    ...(Bun.env.LEAPVIEW_QA_STORAGE_STATE ? { storageState: Bun.env.LEAPVIEW_QA_STORAGE_STATE } : {}) })
   const browserHealth = collectBrowserHealth(page)
   const samples: Sample[] = []
   let rapidToggle: RapidToggleResult | null = null
@@ -721,7 +722,8 @@ async function waitForStatus(page: Page, predicate: (status: DashboardStatusSnap
   throw new Error(`timed out after ${timeoutMs}ms waiting for dashboard refresh state`)
 }
 
-function collectBrowserHealth(page: Page): { consoleErrors: string[]; failedNetworkResponses: string[]; expectedRapidSupersessionAborts: string[] } {
+export function collectBrowserHealth(page: Page, ignoreRequestFailure: (request: Request) => boolean = request =>
+  new URL(request.url()).pathname === '/updates'): { consoleErrors: string[]; failedNetworkResponses: string[]; expectedRapidSupersessionAborts: string[] } {
   const health = {
     consoleErrors: [] as string[],
     failedNetworkResponses: [] as string[],
@@ -736,7 +738,7 @@ function collectBrowserHealth(page: Page): { consoleErrors: string[]; failedNetw
     if (response.status() >= 400) health.failedNetworkResponses.push(`${response.status()} ${response.request().method()} ${response.url()}`)
   })
   page.on('requestfailed', (request) => {
-    if (new URL(request.url()).pathname === '/updates') return
+    if (ignoreRequestFailure(request)) return
     health.failedNetworkResponses.push(`${request.failure()?.errorText ?? 'request failed'} ${request.method()} ${request.url()}`)
   })
   return health

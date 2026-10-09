@@ -98,35 +98,17 @@ func ResolveEffectivePathLocation(source semanticmodel.Source, connection semant
 		if variant == nil {
 			return nil, fmt.Errorf("text path location variant is nil")
 		}
-		var connectionOptions *projectcontracts.TextReaderOptions
-		if defaults != nil {
-			connectionOptions = defaults.Text
-		}
-		generated := projectcontracts.DefaultTextReaderOptions()
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "text"), Format: "text", Options: &projectcontracts.TextReaderOptions{
-			Delimiter: pickString(fieldString(variant.Options, func(v *projectcontracts.TextReaderOptions) *string { return v.Delimiter }), fieldString(connectionOptions, func(v *projectcontracts.TextReaderOptions) *string { return v.Delimiter }), generatedString(generated, func(v *projectcontracts.TextReaderOptions) *string { return v.Delimiter })),
-			Quote:     pickString(fieldString(variant.Options, func(v *projectcontracts.TextReaderOptions) *string { return v.Quote }), fieldString(connectionOptions, func(v *projectcontracts.TextReaderOptions) *string { return v.Quote }), generatedString(generated, func(v *projectcontracts.TextReaderOptions) *string { return v.Quote })),
-			Header:    pickBool(fieldBool(variant.Options, func(v *projectcontracts.TextReaderOptions) *bool { return v.Header }), fieldBool(connectionOptions, func(v *projectcontracts.TextReaderOptions) *bool { return v.Header }), generatedBool(generated, func(v *projectcontracts.TextReaderOptions) *bool { return v.Header })),
-		}}}, nil
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "text"), Format: "text"}}, nil
 	case *projectcontracts.BlobPathSourceLocation:
 		if variant == nil {
 			return nil, fmt.Errorf("blob path location variant is nil")
 		}
-		var connectionOptions *projectcontracts.BlobReaderOptions
-		if defaults != nil {
-			connectionOptions = defaults.Blob
-		}
-		generated := projectcontracts.DefaultBlobReaderOptions()
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "blob"), Format: "blob", Options: &projectcontracts.BlobReaderOptions{Compression: pickString(fieldString(variant.Options, func(v *projectcontracts.BlobReaderOptions) *string { return v.Compression }), fieldString(connectionOptions, func(v *projectcontracts.BlobReaderOptions) *string { return v.Compression }), generatedString(generated, func(v *projectcontracts.BlobReaderOptions) *string { return v.Compression }))}}}, nil
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "blob"), Format: "blob"}}, nil
 	case *projectcontracts.VortexPathSourceLocation:
 		if variant == nil {
 			return nil, fmt.Errorf("vortex path location variant is nil")
 		}
-		var connectionOptions *projectcontracts.VortexReaderOptions
-		if defaults != nil {
-			connectionOptions = defaults.Vortex
-		}
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "vortex"), Format: "vortex", Options: mergeVortex(variant.Options, connectionOptions)}}, nil
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "vortex"), Format: "vortex"}}, nil
 	case *projectcontracts.DeltaPathSourceLocation:
 		if variant == nil {
 			return nil, fmt.Errorf("delta path location variant is nil")
@@ -271,18 +253,6 @@ func generatedString[T any](value *T, getter func(*T) *string) *string {
 	return fieldString(value, getter)
 }
 func generatedInt32[T any](value *T, getter func(*T) *int32) *int32 { return fieldInt32(value, getter) }
-func mergeVortex(source, connection *projectcontracts.VortexReaderOptions) *projectcontracts.VortexReaderOptions {
-	if source == nil && connection == nil {
-		return nil
-	}
-	result := &projectcontracts.VortexReaderOptions{}
-	if source != nil && source.Version != nil {
-		result.Version = cloneString(source.Version)
-	} else if connection != nil {
-		result.Version = cloneString(connection.Version)
-	}
-	return result
-}
 func mergeDelta(source, connection *projectcontracts.DeltaReaderOptions) *projectcontracts.DeltaReaderOptions {
 	if source == nil && connection == nil {
 		return nil

@@ -210,6 +210,11 @@ func NewProjectGraph(resources []Resource, edges []Edge) (ProjectGraph, error) {
 	if err := validate(resourcesCopy, edgesCopy); err != nil {
 		return ProjectGraph{}, err
 	}
+	// Canonicalize only the constructor-owned copy. Validation of a published
+	// immutable graph must never replace shared fields or metadata slices.
+	for index := range resourcesCopy {
+		resourcesCopy[index].Metadata.Tags = sortedStrings(resourcesCopy[index].Metadata.Tags)
+	}
 	sortResources(resourcesCopy)
 	sortEdges(edgesCopy)
 
@@ -568,20 +573,18 @@ func validate(resources []Resource, edges []Edge) error {
 	ids := make(map[ResourceID]struct{}, len(resources))
 	names := make(map[string]ResourceID, len(resources))
 	for index := range resources {
-		resource := &resources[index]
+		resource := resources[index]
 		id, err := NewResourceID(resource.ID.String())
 		if err != nil {
 			return fmt.Errorf("resource %d: %w", index, err)
 		}
-		resource.ID = id
 		if resource.Kind == KindProjectNamespace {
 			return fmt.Errorf("resource %q: %w: control-plane project namespace is not portable", id, ErrProjectRoot)
 		}
-		kind, err := ParseKind(string(resource.Kind))
+		_, err = ParseKind(string(resource.Kind))
 		if err != nil {
 			return fmt.Errorf("resource %q: %w", id, err)
 		}
-		resource.Kind = kind
 		if resource.Name == "" {
 			return fmt.Errorf("resource %q: %w (name is required)", id, ErrInvalidName)
 		}
@@ -596,13 +599,12 @@ func validate(resources []Resource, edges []Edge) error {
 			return fmt.Errorf("resources %q and %q: %w %q", previous, id, ErrDuplicateName, resource.Name)
 		}
 		names[resource.Name] = id
-		resource.Metadata.Tags = sortedStrings(resource.Metadata.Tags)
 	}
 
 	edgesSeen := make(map[string]struct{}, len(edges))
 	adjacency := make(map[ResourceID][]ResourceID, len(ids))
 	for index := range edges {
-		edge := &edges[index]
+		edge := edges[index]
 		from, err := NewResourceID(edge.From.String())
 		if err != nil {
 			return fmt.Errorf("edge %d from: %w", index, err)
@@ -611,7 +613,6 @@ func validate(resources []Resource, edges []Edge) error {
 		if err != nil {
 			return fmt.Errorf("edge %d to: %w", index, err)
 		}
-		edge.From, edge.To = from, to
 		if _, ok := ids[from]; !ok {
 			return fmt.Errorf("edge %d from %q: %w", index, from, ErrMissingEndpoint)
 		}

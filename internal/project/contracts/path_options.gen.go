@@ -41,31 +41,6 @@ func DefaultExcelReaderOptions() *ExcelReaderOptions {
 	}
 }
 
-// DefaultTextReaderOptions returns the generated, versioned defaults for text path sources.
-func DefaultTextReaderOptions() *TextReaderOptions {
-	delimiter := "\t"
-	header := false
-	quote := "\""
-	return &TextReaderOptions{
-		Delimiter: &delimiter,
-		Header:    &header,
-		Quote:     &quote,
-	}
-}
-
-// DefaultBlobReaderOptions returns the generated, versioned defaults for blob path sources.
-func DefaultBlobReaderOptions() *BlobReaderOptions {
-	compression := "auto"
-	return &BlobReaderOptions{
-		Compression: &compression,
-	}
-}
-
-// DefaultVortexReaderOptions returns the generated, versioned defaults for vortex path sources.
-func DefaultVortexReaderOptions() *VortexReaderOptions {
-	return nil
-}
-
 // DefaultDeltaReaderOptions returns the generated, versioned defaults for delta path sources.
 func DefaultDeltaReaderOptions() *DeltaReaderOptions {
 	return nil
@@ -97,9 +72,9 @@ var FormatRegistry = []FormatProfile{
 	{Name: "json", Extensions: []string{".json", ".jsonl", ".ndjson"}, ScanKind: "table_function", ScanFunction: "read_json", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
 	{Name: "parquet", Extensions: []string{".parquet"}, ScanKind: "table_function", ScanFunction: "read_parquet", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
 	{Name: "excel", Extensions: []string{".xlsx"}, ScanKind: "table_function", ScanFunction: "read_xlsx", RequiredExtension: "excel", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
-	{Name: "text", Extensions: []string{".txt"}, ScanKind: "table_function", ScanFunction: "read_text", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
-	{Name: "blob", Extensions: []string{".blob"}, ScanKind: "table_function", ScanFunction: "read_blob", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
-	{Name: "vortex", Extensions: []string{".vortex"}, ScanKind: "table_function", ScanFunction: "read_vortex", RequiredExtension: "vortex", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "text", Extensions: []string{".txt"}, ScanKind: "table_function", ScanFunction: "read_text", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: false},
+	{Name: "blob", Extensions: []string{".blob"}, ScanKind: "table_function", ScanFunction: "read_blob", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: false},
+	{Name: "vortex", Extensions: []string{".vortex"}, ScanKind: "table_function", ScanFunction: "read_vortex", RequiredExtension: "vortex", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: false},
 	{Name: "delta", Extensions: []string{}, ScanKind: "table_function", ScanFunction: "delta_scan", RequiredExtension: "delta", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: true, AllowsOptions: true},
 	{Name: "iceberg", Extensions: []string{}, ScanKind: "table_function", ScanFunction: "iceberg_scan", RequiredExtension: "iceberg", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: true, AllowsOptions: true},
 	{Name: "lance", Extensions: []string{".lance"}, ScanKind: "replacement", ScanFunction: "", RequiredExtension: "lance", SourceSecretType: "lance", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: true, AllowsOptions: false},

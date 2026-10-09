@@ -13,6 +13,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,7 @@ func TestLiveQuackTargetRuntimePool(t *testing.T) {
 		Limits: TargetRuntimeLimits{
 			MemoryMaxBytes: 128 << 20, TempMaxBytes: 64 << 20, MaxThreads: 1,
 		},
-		RequireTLS: true,
+		RequireTLS: true, ExtensionAdmission: newDuckDBTestExtensionAdmission(t, "httpfs", "quack"),
 	})
 	require.NoError(t, err)
 	pool, err := factory.Prepare(context.Background(), binding, snapshot)
@@ -59,7 +60,7 @@ func TestLiveQuackTargetRuntimePool(t *testing.T) {
 
 	prepared, ok := pool.(*targetRuntimePool)
 	require.True(t, ok)
-	session, ok := prepared.session.(*isolatedTargetRuntimeSession)
+	session, ok := prepared.session.(analyticsresource.Session)
 	require.True(t, ok)
 	model := &semanticmodel.Model{Connections: map[string]semanticmodel.Connection{
 		"lakehouse": prepared.connection,
@@ -69,7 +70,7 @@ func TestLiveQuackTargetRuntimePool(t *testing.T) {
 	})
 	require.NoError(t, err)
 	var rowCount int64
-	require.NoError(t, session.connection.QueryRowContext(
+	require.NoError(t, session.QueryRowContext(
 		context.Background(), "SELECT count(*) FROM ("+relation+")",
 	).Scan(&rowCount))
 	if rowCount <= 0 {
