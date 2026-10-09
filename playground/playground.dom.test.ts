@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
-import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser, type Page, type Request as BrowserRequest } from '@playwright/test'
 import { chartExamples } from './chart-fixtures'
 import { playgroundResponse } from './server'
 import { startTestPlayground } from './test-server'
@@ -11,6 +11,12 @@ let server: Awaited<ReturnType<typeof startTestPlayground>>
 let page: Page
 let errors: string[]
 let unexpectedRequests: string[]
+
+function recordFailedAsset(request: BrowserRequest) {
+  const url = new URL(request.url())
+  if (url.origin !== server.url.origin || !['script', 'stylesheet'].includes(request.resourceType())) return
+  errors.push(`${request.failure()?.errorText ?? 'request failed'} ${request.url()}`)
+}
 
 beforeAll(async () => {
   server = await startTestPlayground()
@@ -29,8 +35,11 @@ beforeEach(async () => {
     if (url.origin !== server.url.origin || !['/', '/index.html', '/__playground/events'].includes(url.pathname) && !url.pathname.startsWith('/assets/') && !url.pathname.startsWith('/static/')) unexpectedRequests.push(request.url())
   })
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
+  page.on('requestfailed', recordFailedAsset)
 })
 afterEach(async () => {
+  // Closing a page deliberately cancels any remaining asset requests.
+  page?.off('requestfailed', recordFailedAsset)
   await page?.close()
   expect(unexpectedRequests).toEqual([])
   expect(errors).toEqual([])
@@ -204,6 +213,14 @@ test('a failed example module leaves navigation usable and reload can recover', 
   await open('controls/select')
   await page.reload()
   await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+})
+
+test('failed lazy asset diagnostics retain the browser transport reason', async () => {
+  await page.route('**/assets/chunks/charts-*.js', route => route.abort('connectionreset'))
+  await open('charts/line')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toContainText('Failed to fetch dynamically imported module')
+  expect(errors).toEqual([expect.stringMatching(/^net::ERR_CONNECTION_RESET http:\/\/127\.0\.0\.1:\d+\/assets\/chunks\/charts-[^/]+\.js$/)])
+  errors = [] // The transport failure is intentional and asserted above.
 })
 
 test('browser review waits for the actual preview while its module is delayed', async () => {
