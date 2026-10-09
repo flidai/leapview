@@ -898,15 +898,32 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	if !sessionEvidenceSupported {
 		return fail(errors.New("PostgreSQL access repository does not support credential-validation browser-session authority evidence"))
 	}
+	credentialProject := currentProject
+	credentialAuthorize := accessmodule.ConnectionAuthorizerFromSnapshot(
+		instanceID, authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects,
+	)
+	if production {
+		admissions, err := credentialmodule.NewFirstSourceAdmissionReader(bootstrap.RuntimePool().NativePool(), graph.ConnectionBindingAudit.RecordAuditEvent)
+		if err != nil {
+			return fail(fmt.Errorf("build first-source credential admission reader: %w", err))
+		}
+		scope := firstSourceCredentialServiceScope{
+			authority: firstSourceCredentialAuthority{
+				production: true, targetID: instanceID, environment: string(environment),
+				pool: bootstrap.RuntimePool().NativePool(), fence: graph.DeploymentRepository,
+				admissions: admissions, bindings: graph.ConnectionBinding,
+				policyTx: appaccesspostgres.LockedCurrentAuthorizationPolicyTx,
+			},
+			targets: graph.DeploymentRepository, admissions: admissions,
+			activeProject: currentProject, activeAuthorize: credentialAuthorize,
+		}
+		credentialProject, credentialAuthorize = scope.CurrentProject, scope.AuthorizeConnection
+	}
 	credentialServices, err := credentialmodule.Build(ctx, credentialmodule.Config{
 		Pool: bootstrap.RuntimePool().NativePool(), Audit: graph.ConnectionBindingAudit.RecordAuditEvent,
 		KeyringPath: cfg.CredentialKeyringFile, InstanceID: instanceID, Environment: string(environment),
 		CustomerOwner: graph.Bootstrap, Bindings: newCredentialTargetBindingReader(graph.ConnectionBinding),
-		CurrentProject: currentProject,
-		AuthorizeConnection: accessmodule.ConnectionAuthorizerFromSnapshot(
-			instanceID,
-			authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects,
-		),
+		CurrentProject: credentialProject, AuthorizeConnection: credentialAuthorize,
 		ValidationProbe:   newCredentialValidationProbe(graph.ConnectionBinding, analytics),
 		RecheckCredential: accessmodule.CredentialAuthorityRechecker(tokenEvidence, sessionEvidence),
 	})
