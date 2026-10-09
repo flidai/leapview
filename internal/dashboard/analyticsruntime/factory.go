@@ -26,6 +26,7 @@ import (
 
 type Options struct {
 	Projects                 analyticscontract.ProjectFactory
+	ConnectionIDs            map[string]string
 	ResultLimits             dataquery.ResultLimits
 	SnapshotID               int64
 	ServingStateID           string
@@ -64,7 +65,7 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 		models[id.String()] = model
 	}
 	runtime, err := options.Projects.OpenProject(ctx, analyticscontract.ProjectRequest{
-		Models: models, SnapshotID: options.SnapshotID,
+		Models: models, SnapshotID: options.SnapshotID, ConnectionIDs: options.ConnectionIDs,
 		RequiredExtensions: requiredProjectExtensions(config.Definition),
 		ResultLimits:       options.ResultLimits,
 		ServingStateID:     options.ServingStateID, ProjectID: options.ProjectID, Environment: options.Environment,

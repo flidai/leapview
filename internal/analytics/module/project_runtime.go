@@ -59,6 +59,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 			projectID: request.ProjectID, environment: request.Environment,
 		}
 	}
+	connectionResolver = connectionNameResolver(connectionResolver, request.ConnectionIDs)
 	runtimeIdentity := projectRuntimeCacheIdentity(request)
 	queryResultCache, err := f.module.cache.OpenScope(resultcache.ScopeID{
 		RuntimeID: runtimeIdentity + "\x00results", PartitionID: analyticscache.PartitionIdentity(partition),

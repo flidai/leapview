@@ -227,15 +227,15 @@ func (e *duckDBProjectMaterializer) connectionResolver(request analyticsmaterial
 		if !ok || resolver == nil {
 			return unavailableConnectionResolver{}
 		}
-		return resolver
+		return connectionNameResolver(resolver, request.ConnectionIDs)
 	}
 	if request.ConnectionEvidenceServingStateID == "" {
 		return nil
 	}
-	return &activeRuntimeConnectionResolver{
+	return connectionNameResolver(&activeRuntimeConnectionResolver{
 		module: e.module, servingStateID: string(request.ConnectionEvidenceServingStateID),
 		projectID: request.Identity.ProjectID, environment: string(servingstate.NormalizeEnvironment(request.Environment)),
-	}
+	}, request.ConnectionIDs)
 }
 
 // unavailableConnectionResolver preserves the resolver contract while
