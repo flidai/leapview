@@ -309,52 +309,54 @@ test('chat preview starts with side-by-side tools open and preserves independent
   } finally { await page.close() }
 })
 
-test('Visual magic in the preview builder preserves authored placement and zoom', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  try {
-    await page.goto(`${baseURL}/embed-host`)
-    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
-    await editor.locator('.field-results').waitFor()
-    expect(await editor.getByRole('button', { name: 'Arrange visuals', exact: true }).count()).toBe(0)
-    expect(await editor.getByRole('button', { name: 'Collapse Visuals pane', exact: true }).isVisible()).toBe(true)
-    await editor.evaluate(async (element: any) => {
-      const builder = JSON.parse(JSON.stringify(element.builder))
-      const visual = builder.pages[0].visuals[0]
-      builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, slots: [], previewError: 'Add a measure to preview.', placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
-      mergePatch({ builder })
-      element.canvasZoom = 1.25
-      element.testCommands = []
-      element.addEventListener('lv-builder-command', (event: CustomEvent) => element.testCommands.push(event.detail))
-      await element.updateComplete
-      window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: window, data: { type: 'lv-arrange-dashboard-visuals' } }))
-    })
-    expect(await editor.evaluate((e: any) => e.testCommands.length)).toBe(0)
-    await editor.getByRole('button', { name: 'Visual magic', exact: true }).click()
-    expect(await editor.getByRole('button', { name: 'Visual magic', exact: true }).isDisabled()).toBe(true)
-    await editor.evaluate(async (e: any) => {
-      const started = Date.now()
-      while (e.testCommands.length !== 1) {
-        if (Date.now() - started > 3000) throw new Error('Parent Arrange command did not reach builder')
-        await new Promise(resolve => setTimeout(resolve, 10))
-      }
-    })
-    expect(await editor.evaluate((e: any) => e.testCommands[0])).toMatchObject({ action: 'set_placements', fillMissingFields: true, placements: [
-      { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 12, rowSpan: 5 } },
-      { componentId: 'chart-1', placement: { column: 1, row: 6, columnSpan: 12, rowSpan: 5 } },
-      { componentId: 'chart-2', placement: { column: 1, row: 11, columnSpan: 12, rowSpan: 5 } },
-    ] })
-    expect(await editor.evaluate((e: any) => e.canvasZoom)).toBe(1.25)
-    const result = await editor.evaluate(async (e: any) => {
-      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: e } }))
-      await e.updateComplete
-      return { pending: e.pendingFixVisuals, message: e.fixVisualsMessage }
-    })
-    expect(result.pending).toBeNull()
-    expect(result.message).toContain('3 visuals could not be completed automatically')
-    expect(await editor.getByRole('status').filter({ hasText: result.message }).isVisible()).toBe(true)
-  } finally { await page.close() }
-})
+for (const embedded of [false, true]) {
+  test(`Visual magic in the ${embedded ? 'preview' : 'standalone'} builder preserves authored placement and zoom`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    try {
+      await page.goto(embedded ? `${baseURL}/embed-host` : baseURL)
+      const editor = embedded ? page.frameLocator('iframe').locator('lv-dashboard-builder') : page.locator('lv-dashboard-builder')
+      await editor.locator('.field-results').waitFor()
+      expect(await editor.getByRole('button', { name: 'Arrange visuals', exact: true }).count()).toBe(0)
+      expect(await editor.getByRole('button', { name: 'Collapse Visuals pane', exact: true }).isVisible()).toBe(true)
+      await editor.evaluate(async (element: any) => {
+        const builder = JSON.parse(JSON.stringify(element.builder))
+        const visual = builder.pages[0].visuals[0]
+        builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, slots: [], previewError: 'Add a measure to preview.', placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+        mergePatch({ builder })
+        element.canvasZoom = 1.25
+        element.testCommands = []
+        element.addEventListener('lv-builder-command', (event: CustomEvent) => element.testCommands.push(event.detail))
+        await element.updateComplete
+        window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: window, data: { type: 'lv-arrange-dashboard-visuals' } }))
+      })
+      expect(await editor.evaluate((e: any) => e.testCommands.length)).toBe(0)
+      await editor.getByRole('button', { name: 'Visual magic', exact: true }).click()
+      expect(await editor.getByRole('button', { name: 'Visual magic', exact: true }).isDisabled()).toBe(true)
+      await editor.evaluate(async (e: any) => {
+        const started = Date.now()
+        while (e.testCommands.length !== 1) {
+          if (Date.now() - started > 3000) throw new Error('Parent Arrange command did not reach builder')
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+      })
+      expect(await editor.evaluate((e: any) => e.testCommands[0])).toMatchObject({ action: 'set_placements', fillMissingFields: true, placements: [
+        { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 12, rowSpan: 5 } },
+        { componentId: 'chart-1', placement: { column: 1, row: 6, columnSpan: 12, rowSpan: 5 } },
+        { componentId: 'chart-2', placement: { column: 1, row: 11, columnSpan: 12, rowSpan: 5 } },
+      ] })
+      expect(await editor.evaluate((e: any) => e.canvasZoom)).toBe(1.25)
+      const result = await editor.evaluate(async (e: any) => {
+        document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: e } }))
+        await e.updateComplete
+        return { pending: e.pendingFixVisuals, message: e.fixVisualsMessage }
+      })
+      expect(result.pending).toBeNull()
+      expect(result.message).toContain('3 visuals could not be completed automatically')
+      expect(await editor.getByRole('status').filter({ hasText: result.message }).isVisible()).toBe(true)
+    } finally { await page.close() }
+  })
+}
 
 test('new preview visual automatically fits after its add settles and shares one Undo', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })

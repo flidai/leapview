@@ -11,7 +11,7 @@ import type { ChatDashboardMessage, SavedVisualImportMessage } from '../chat/das
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, Grid2X2, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, WandSparkles, X } from 'lucide'
+import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, WandSparkles, X } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { styleMap } from 'lit/directives/style-map.js'
@@ -652,16 +652,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.emitCommand('set_placements', { pageId: page.id, placements, compact: false })
   }
 
-  private readonly arrangeVisuals = (): void => {
-    // Fix repairs missing fields using the currently authored layout. In a
-    // standalone builder, Arrange remains an explicit request to repack.
+  private readonly fixVisuals = (): void => {
+    // Complete missing fields while preserving the currently authored layout.
     if (this.builderFilterController.pending || this.builderFilterCommandInFlight) {
       this.chatProjectionKey = ''
       this.requestUpdate()
       return
     }
     const page = this.builder ? this.selectedPage(this.builder) : undefined
-    if (this.embeddedInChat && page?.visuals.length && this.builder?.capabilities.canEdit && !this.commandPending) {
+    if (page?.visuals.length && this.builder?.capabilities.canEdit && !this.commandPending) {
       this.pendingFixVisuals = { pageID: page.id, visualIDs: new Set(page.visuals.filter(visual => this.visualNeedsRepair(visual)).map(visual => visual.id)) }
       this.fixVisualsMessage = ''
       if (this.pendingFixVisuals.visualIDs.size === 0) {
@@ -671,7 +670,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         return
       }
     }
-    const preservedIDs = new Set(this.embeddedInChat ? page?.visuals.map(visual => visual.id) : [])
+    const preservedIDs = new Set(page?.visuals.map(visual => visual.id))
     this.applyBalancedLayout(true, true, preservedIDs)
     // A layout that is already balanced still acknowledges the parent click.
     this.chatProjectionKey = ''
@@ -964,7 +963,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
     const canDelete = this.canDeleteDashboard(builder)
-    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || (builder.capabilities.canArchive && !canDelete) || canDelete || Boolean(this.forkHref) || (this.embeddedInChat && builder.capabilities.canEdit)
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || (builder.capabilities.canArchive && !canDelete) || canDelete || Boolean(this.forkHref) || builder.capabilities.canEdit
     const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
@@ -994,8 +993,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
-          ${this.embeddedInChat ? html`<button class="magic-fill" type="button" aria-label="Visual magic" aria-busy=${Boolean(this.pendingFixVisuals)} title="Complete missing chart fields on this page. Your layout stays unchanged." ?disabled=${!builder.capabilities.canEdit || this.commandPending || Boolean(this.pendingFixVisuals) || this.builderFilterController.pending || Boolean(this.builderFilterCommandInFlight) || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>${lucideIcon(WandSparkles, { size: 16, strokeWidth: 2 })}<span>${this.pendingFixVisuals ? 'Completing…' : 'Visual magic'}</span></button>` : nothing}
-          ${this.embeddedInChat ? nothing : html`<button class="arrange-toolbar" type="button" aria-label="Arrange visuals" title="Fit visuals into a balanced grid" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>${lucideIcon(Grid2X2, { size: 16, strokeWidth: 2 })}<span class="arrange-label">Arrange visuals</span></button>`}
+          <button class="magic-fill" type="button" aria-label="Visual magic" aria-busy=${Boolean(this.pendingFixVisuals)} title="Complete missing chart fields on this page. Your layout stays unchanged." ?disabled=${!builder.capabilities.canEdit || this.commandPending || Boolean(this.pendingFixVisuals) || this.builderFilterController.pending || Boolean(this.builderFilterCommandInFlight) || !this.selectedPage(builder)?.visuals.length} @click=${this.fixVisuals}>${lucideIcon(WandSparkles, { size: 16, strokeWidth: 2 })}<span>${this.pendingFixVisuals ? 'Completing…' : 'Visual magic'}</span></button>
           <button type="button" class="icon-action" data-builder-action="tools" aria-label=${this.toolsHidden ? 'Show tools' : 'Hide tools'} title=${this.toolsHidden ? 'Show editing panels' : 'Hide editing panels'} aria-expanded=${!this.toolsHidden} aria-controls="builder-tools" @click=${this.toggleTools}>${lucideIcon(this.toolsHidden ? PanelRightOpen : PanelRightClose, { size: 16, strokeWidth: 2 })}<span class="sr-only">${this.toolsHidden ? 'Show tools' : 'Hide tools'}</span></button>
           <details class="dashboard-metadata">
             <summary aria-label="Dashboard settings" title="Dashboard settings">${lucideIcon(Settings2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Dashboard settings</span></summary>
@@ -1011,7 +1009,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
               <div class="more-menu" aria-label="More dashboard actions">
-                ${this.embeddedInChat ? html`<button type="button" aria-label="Arrange visuals" title="Close gaps by fitting charts into balanced rows" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${() => this.applyBalancedLayout(true)}>Arrange visuals</button>` : html`<button class="arrange-mobile" type="button" aria-label="Arrange visuals" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>Arrange visuals</button>`}
+                <button type="button" aria-label="Arrange visuals" title="Close gaps by fitting charts into balanced rows" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${() => this.applyBalancedLayout(true)}>Arrange visuals</button>
                 ${this.forkHref ? html`<a class="button" href=${this.forkHref}>Make a copy</a>` : nothing}
                 ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'organization' ? 'Make private' : 'Share with organization'}</button>` : nothing}
                 ${builder.capabilities.canExport
@@ -1024,7 +1022,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${builder.capabilities.canPublish ? html`<button type="button" class="primary" data-builder-action="publish" title=${publishTitle} ?disabled=${publishDisabled} @click=${this.publish}>${publishLabel}</button>` : nothing}
         </div>
       </header>
-      ${this.embeddedInChat && this.fixVisualsMessage ? html`<p class="magic-fill-result" role="status">${this.fixVisualsMessage}</p>` : nothing}
+      ${this.fixVisualsMessage ? html`<p class="magic-fill-result" role="status">${this.fixVisualsMessage}</p>` : nothing}
     `
   }
 
@@ -1405,7 +1403,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     if (fromParent && event.data?.type === 'lv-arrange-dashboard-visuals') {
       if (event.data.reflow) this.applyBalancedLayout(false)
-      else this.arrangeVisuals()
+      else this.fixVisuals()
     }
     if (fromParent && (event.data as {type: string}).type === 'lv-select-dashboard-page') {
       const pageId = (event.data as unknown as {pageId: string}).pageId
