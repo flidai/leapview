@@ -1,0 +1,117 @@
+name: Qualification / Protected Desktop lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      predecessor_run:
+        description: Successful protected Desktop producer with the lower Debian version
+        required: true
+        type: string
+      predecessor_attempt:
+        description: Exact successful predecessor attempt
+        required: true
+        type: string
+      candidate_run:
+        description: Successful protected Desktop producer with the newer Debian version
+        required: true
+        type: string
+      candidate_attempt:
+        description: Exact successful candidate attempt
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+concurrency:
+  group: desktop-lifecycle-${{ inputs.predecessor_run }}-${{ inputs.predecessor_attempt }}-${{ inputs.candidate_run }}-${{ inputs.candidate_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    environment: leapview-ephemeral-qualification
+    timeout-minutes: 90
+    env:
+      PREDECESSOR_RUN: ${{ inputs.predecessor_run }}
+      PREDECESSOR_ATTEMPT: ${{ inputs.predecessor_attempt }}
+      CANDIDATE_RUN: ${{ inputs.candidate_run }}
+      CANDIDATE_ATTEMPT: ${{ inputs.candidate_attempt }}
+    steps:
+      - name: Check out protected lifecycle tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+      - name: Install pinned Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+            sandbox-fallback = false
+      - name: Authenticate and retain both exact producer outputs
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          nix develop --no-update-lock-file ./protected -c python3 protected/scripts/nix_desktop_lifecycle_inputs.py \
+            --predecessor-run "$PREDECESSOR_RUN" --predecessor-attempt "$PREDECESSOR_ATTEMPT" \
+            --candidate-run "$CANDIDATE_RUN" --candidate-attempt "$CANDIDATE_ATTEMPT" \
+            --directory "$RUNNER_TEMP/desktop-lifecycle-inputs" --github-output "$GITHUB_OUTPUT"
+      - name: Read predecessor source identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.inputs.outputs.predecessor_sourceRevision }}
+          path: predecessor-source
+          persist-credentials: false
+      - name: Read predecessor protected signer identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.inputs.outputs.predecessor_signerRevision }}
+          path: predecessor-signer
+          persist-credentials: false
+      - name: Read candidate source identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.inputs.outputs.candidate_sourceRevision }}
+          path: candidate-source
+          persist-credentials: false
+      - name: Read candidate protected signer identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.inputs.outputs.candidate_signerRevision }}
+          path: candidate-signer
+          persist-credentials: false
+      - name: Install disposable native GUI host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb xauth xdg-utils iproute2
+      - name: Verify live attestations and exercise the offline exact-archive lifecycle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          nix develop --no-update-lock-file ./protected -c python3 protected/scripts/nix_desktop_lifecycle.py qualify \
+            --inputs "$RUNNER_TEMP/desktop-lifecycle-inputs" \
+            --predecessor-run "$PREDECESSOR_RUN" --predecessor-attempt "$PREDECESSOR_ATTEMPT" \
+            --candidate-run "$CANDIDATE_RUN" --candidate-attempt "$CANDIDATE_ATTEMPT" \
+            --predecessor-source "$GITHUB_WORKSPACE/predecessor-source" \
+            --predecessor-signer "$GITHUB_WORKSPACE/predecessor-signer" \
+            --candidate-source "$GITHUB_WORKSPACE/candidate-source" \
+            --candidate-signer "$GITHUB_WORKSPACE/candidate-signer" \
+            --output "$RUNNER_TEMP/desktop-lifecycle-public"
+      - name: Retain only the completed public lifecycle receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/desktop-lifecycle-public/desktop-lifecycle.json
+          if-no-files-found: warn
+          retention-days: 14
