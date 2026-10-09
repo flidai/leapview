@@ -1,119 +1,11 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
-import { typographyTestTokens } from '../test-typography-tokens'
+import { expect, test } from 'bun:test'
+import { chatThreadBrowserFixture } from './chat-thread-browser.test-fixture'
 
-let server: Server
-let browser: Browser
-let baseURL = ''
-
-beforeAll(async () => {
-  const root = join(process.cwd(), '.tmp/chat-thread-test')
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname !== '/') {
-      const file = normalize(join(root, url.pathname))
-      if (!file.startsWith(root)) {
-        response.writeHead(404)
-        response.end('not found')
-        return
-      }
-      try {
-        response.setHeader('content-type', 'text/javascript')
-        response.end(await readFile(file))
-        return
-      } catch {
-        response.writeHead(404)
-        response.end('not found')
-        return
-      }
-    }
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(`
-      <!doctype html>
-      <html>
-        <head>
-          <style>
-            :root {
-              --lv-chart-surface: rgb(1, 2, 3);
-              --lv-border-default: 2px solid rgb(4, 5, 6);
-              ${typographyTestTokens}
-              --fontStack-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	              --lv-bg-app: rgb(11, 12, 13);
-              --lv-bg-page: #fff;
-              --lv-bg-panel: #fff;
-              --lv-bg-panel-muted: #f6f8fa;
-              --lv-bg-control: #f6f8fa;
-              --lv-fg-default: #24292f;
-              --lv-fg-muted: #57606a;
-              --lv-fg-accent: #0969da;
-              --lv-line-muted: #d8dee4;
-              --lv-border-width: 1px;
-              --lv-border-muted: 1px solid #d8dee4;
-              --lv-radius-default: 6px;
-              --base-size-4: 4px;
-              --base-size-8: 8px;
-              --base-size-12: 12px;
-              --base-size-16: 16px;
-              --base-size-20: 20px;
-              --lv-space-sm: 8px;
-
-
-
-
-
-
-
-
-
-              --lv-chat-thread-padding: 16px;
-              --lv-chat-stack-width: 760px;
-              --lv-chat-stack-gap: 16px;
-              --lv-chat-message-width: 760px;
-              --lv-chat-message-gap: 8px;
-              --lv-chat-agent-item-gap: 8px;
-              --lv-chat-empty-min-height: 180px;
-              --lv-chat-bubble-padding-block: 12px;
-              --lv-chat-bubble-padding-inline: 16px;
-              --lv-chat-markdown-block-gap: 10px;
-              --lv-chat-markdown-list-indent: 20px;
-              --lv-chat-markdown-list-item-gap: 2px;
-              --lv-chat-code-radius: 4px;
-              --lv-chat-code-padding-block: 1px;
-              --lv-chat-code-padding-inline: 4px;
-              --lv-chat-code-font-scale: 0.92em;
-              --lv-chat-pre-padding-block: 9px;
-              --lv-chat-pre-padding-inline: 10px;
-              --lv-chat-quote-border-width: 2px;
-              --lv-chat-link-underline-thickness: 1px;
-              --lv-chat-link-underline-offset: 2px;
-            }
-          </style>
-          <script type="module" src="/chat-under-test.js"></script>
-        </head>
-        <body><lv-chat-thread></lv-chat-thread><lv-visual-modal></lv-visual-modal></body>
-      </html>
-    `)
-    }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
-})
-
-afterAll(async () => {
-	await browser?.close()
-	await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-}, 15_000)
+const fixture = chatThreadBrowserFixture()
 
 test('chat thread uses the surrounding app surface background', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.waitForFunction(() => customElements.get('lv-chat-thread'))
 
   const background = await page.locator('lv-chat-thread').evaluate((element: any) => {
@@ -126,9 +18,9 @@ test('chat thread uses the surrounding app surface background', async () => {
 })
 
 test('narrow chat wraps messages and keeps long context and visual cards inside the panel', async () => {
-  const page = await browser.newPage({ viewport: { width: 340, height: 800 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 340, height: 800 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-thread'))
     const layout = await page.locator('lv-chat-thread').evaluate(async (element: any) => {
       element.style.height = '700px'
@@ -155,8 +47,8 @@ test('narrow chat wraps messages and keeps long context and visual cards inside 
 })
 
 test('chat thread distinguishes unavailable, empty, and working states', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -186,8 +78,8 @@ test('chat thread distinguishes unavailable, empty, and working states', async (
 })
 
 test('chat thread preserves plain user message text without template whitespace', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -216,8 +108,8 @@ test('chat thread preserves plain user message text without template whitespace'
 })
 
 test('chat thread renders turn-scoped references inside the user message bubble', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -269,8 +161,8 @@ test('chat thread renders turn-scoped references inside the user message bubble'
 })
 
 test('chat thread uses the shared visual identity and color for references', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -305,8 +197,8 @@ test('chat thread uses the shared visual identity and color for references', asy
 })
 
 test('chat thread renders visual artifacts with dashboard web components', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     await customElements.whenDefined('lv-visual-modal')
@@ -427,8 +319,8 @@ test('chat thread renders visual artifacts with dashboard web components', async
 })
 
 test('chat thread hides Explorer action when aggregate query has unsupported state', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -464,8 +356,8 @@ test('chat thread hides Explorer action when aggregate query has unsupported sta
 })
 
 test('chat thread hides processing rows while retaining finished errors and answers', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -523,8 +415,8 @@ test('chat thread hides processing rows while retaining finished errors and answ
 })
 
 test('chat thread expands completed steps with an elapsed label while keeping answers visible', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const thread = page.locator('lv-chat-thread')
   await thread.evaluate(async (element: any) => {
     element.status = { enabled: true, running: false }
@@ -551,8 +443,8 @@ test('chat thread expands completed steps with an elapsed label while keeping an
 })
 
 test('visual replies keep a summary and every chart visible while details stay collapsed', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const thread = page.locator('lv-chat-thread')
   await thread.evaluate(async (element: any) => {
     element.status = { enabled: true, running: false }
@@ -579,8 +471,8 @@ test('visual replies keep a summary and every chart visible while details stay c
 })
 
 test('chat thread hides recovered tool errors only within the same user turn', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const errors = await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -602,8 +494,8 @@ test('chat thread hides recovered tool errors only within the same user turn', a
 })
 
 test('chat thread keeps an error when a different request to the same tool succeeds', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const errors = await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -629,8 +521,8 @@ test('chat thread keeps an error when a different request to the same tool succe
 })
 
 test('chat thread keeps a repaired visual presentation error inside Worked', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const state = await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -653,9 +545,9 @@ test('chat thread keeps a repaired visual presentation error inside Worked', asy
 })
 
 test('chat thread does not treat different visual filters or datasets as retries', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     const errors = await page.evaluate(async () => {
       await customElements.whenDefined('lv-chat-thread')
       const thread = document.querySelector('lv-chat-thread') as any
@@ -680,8 +572,8 @@ test('chat thread does not treat different visual filters or datasets as retries
 })
 
 test('chat thread hides failed tool lookups once the turn produces a visual', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const state = await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -707,8 +599,8 @@ test('chat thread hides failed tool lookups once the turn produces a visual', as
 })
 
 test('chat thread waits until the active run ends before showing unresolved errors', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const states = await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -749,8 +641,8 @@ test('chat thread waits until the active run ends before showing unresolved erro
 })
 
 test('chat thread keeps only the last assistant message in each user turn', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   const answers = await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -777,9 +669,9 @@ test('chat thread keeps only the last assistant message in each user turn', asyn
 })
 
 test('drawer shows only working state until the active run finishes', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
       thread.surface = 'drawer'
       thread.status = { enabled: true, running: true }
@@ -810,9 +702,9 @@ test('drawer shows only working state until the active run finishes', async () =
 })
 
 test('tool failure remains accessible without its processing row', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
       thread.status = { enabled: true, running: false }
       thread.transcript = [{ id: 'failed-tool', kind: 'tool', name: 'catalog_get', status: 'error', resultJson: '{"ok":false}', error: 'Network timed out.' }]
@@ -827,8 +719,8 @@ test('tool failure remains accessible without its processing row', async () => {
 })
 
 test('chat thread keeps structured tool history when durable history replaces live activity', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -863,8 +755,8 @@ test('chat thread keeps structured tool history when durable history replaces li
 })
 
 test('chat thread hides orphaned historical tools while keeping the new run indicator', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -886,8 +778,8 @@ test('chat thread hides orphaned historical tools while keeping the new run indi
 })
 
 test('chat thread renders assistant markdown through shared markdown view', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     await customElements.whenDefined('lv-markdown-view')
@@ -930,8 +822,8 @@ test('chat thread renders assistant markdown through shared markdown view', asyn
 })
 
 test('chat thread rejects payloads embedded in artifact metadata', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
+  const page = await fixture.browser.newPage()
+  await page.goto(fixture.baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
@@ -982,9 +874,9 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
 })
 
 test('message actions copy exact text and prepare edits without redundant ask again', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.evaluate(() => {
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).copied = text } } })
       const thread = document.querySelector('lv-chat-thread') as any
@@ -1008,9 +900,9 @@ test('message actions copy exact text and prepare edits without redundant ask ag
 })
 
 test('message edit action ignores a transcript item without a persisted ID', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.evaluate(async () => {
       const thread = document.querySelector('lv-chat-thread') as any
       thread.status = { enabled: true, running: false }
@@ -1023,202 +915,4 @@ test('message edit action ignores a transcript item without a persisted ID', asy
     await page.getByRole('button', { name: 'Edit message' }).click()
     expect(await page.evaluate(() => (window as any).reuseCount)).toBe(0)
   } finally { await page.close() }
-})
-
-
-test('dashboard replies keep a short summary and reveal the full explanation on demand', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
-    const answer = 'Created your dashboard on the selected page. One requested metric is unavailable.\n\n## Visuals\n\n- Revenue by month\n- Revenue by country\n\n## Filters\n\nCountry and reporting period are available.'
-    await page.locator('lv-chat-thread').evaluate(async (e: any, answer: string) => {
-      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).copied = text } } })
-      e.conversationId = 'conversation'
-      e.status = { enabled: true, running: false }
-      e.transcript = [
-        { id: 'user', kind: 'user', text: 'Create a dashboard' },
-        { id: 'retry', kind: 'tool', name: 'edit_dashboard_source', status: 'error', error: 'Earlier draft needed correction.' },
-        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', runId: 'run', status: 'complete' },
-        { id: 'answer', kind: 'assistant', markdown: answer },
-      ]
-      await e.updateComplete
-    }, answer)
-    const thread = page.locator('lv-chat-thread')
-    for (const surface of ['page', 'drawer']) {
-      await thread.evaluate(async (e: any, surface: string) => { e.surface = surface; await e.updateComplete }, surface)
-      const summary = page.getByText('Created your dashboard on the selected page. One requested metric is unavailable.', { exact: true })
-      expect(await summary.first().isVisible()).toBe(true)
-      expect(await summary.last().isVisible()).toBe(false)
-      expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(false)
-      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).count()).toBe(0)
-      expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
-      const disclosure = thread.locator('.run-steps')
-      await disclosure.locator('summary').click()
-      expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
-      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).count()).toBe(0)
-      expect(await page.getByText('Country and reporting period are available.', { exact: true }).isVisible()).toBe(true)
-      expect(await summary.first().isVisible()).toBe(false)
-      expect(await summary.last().isVisible()).toBe(true)
-      await disclosure.locator('summary').click()
-    }
-    expect(await thread.locator('.run-steps summary').textContent()).toContain('View details')
-    await page.getByRole('group', { name: 'Answer actions' }).getByRole('button', { name: 'Copy message' }).click()
-    expect(await page.evaluate(() => (window as any).copied)).toBe(answer)
-    await thread.evaluate(async (e: any) => {
-      e.transcript = e.transcript.filter((item: any) => item.kind !== 'tool')
-      await e.updateComplete
-    })
-    expect(await thread.locator('.run-steps').count()).toBe(0)
-    expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
-    await thread.evaluate(async (e: any) => {
-      e.dashboardPreviewAvailable = true
-      e.transcript = [
-        { id: 'user', kind: 'user', text: 'Create a dashboard' },
-        { id: 'visual', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'revenue', type: 'bar', summary: 'Revenue' } },
-        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', status: 'complete' },
-        { id: 'answer', kind: 'assistant', text: 'Dashboard ready on the selected page.' },
-      ]
-      await e.updateComplete
-    })
-    expect(await page.getByText('Dashboard ready on the selected page.', { exact: true }).isVisible()).toBe(true)
-    expect(await thread.locator('.run-steps').count()).toBe(0)
-  } finally { await page.close() }
-})
-
-test('a preview action appears once while other dashboard destinations remain in steps', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
-    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
-      e.conversationId = 'conversation'
-      e.status = { enabled: true, running: false }
-      e.transcript = [
-        { id: 'user', kind: 'user', text: 'Build the dashboard' },
-        { id: 'source', kind: 'tool', name: 'get_dashboard_draft', toolCallId: 'source', runId: 'run', status: 'complete' },
-        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', runId: 'run', status: 'complete' },
-        { id: 'answer', kind: 'assistant', text: 'Dashboard ready.' },
-      ]
-      await e.updateComplete
-    })
-    const thread = page.locator('lv-chat-thread')
-    expect(await thread.locator('a[href*="/actions/preview/open"]').count()).toBe(1)
-    expect(await thread.locator('.run-steps a[href*="/actions/source/open"]').count()).toBe(1)
-    expect(await thread.locator('.agent-stack > .tool-actions a[href*="/actions/preview/open"]').count()).toBe(1)
-    await thread.evaluate(async (e: any) => {
-      e.transcript = e.transcript.filter((item: any) => item.id !== 'source')
-      await e.updateComplete
-    })
-    expect(await thread.locator('.run-steps').count()).toBe(0)
-    expect(await thread.locator('a[href*="/actions/preview/open"]').count()).toBe(1)
-  } finally { await page.close() }
-})
-
-test('builder chat opens each dashboard visual individually without duplicate add actions', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
-    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
-      e.dashboardPreviewAvailable = true
-      e.transcript = [{id:'t',kind:'tool',name:'query_visual',status:'complete',artifact:{id:'chart-one',type:'bar',summary:'Revenue'}}]
-      e.dashboardVisualIds = ['chart-one']
-      e.addEventListener('lv-chat-dashboard-preview', (event: CustomEvent) => { (window as any).selectedVisual = event.detail.artifactId })
-      await e.updateComplete
-    })
-    expect(await page.getByRole('button',{name:'Add to dashboard',exact:true}).count()).toBe(0)
-    await page.getByRole('button',{name:'Open Revenue in visuals sidebar',exact:true}).click()
-    expect(await page.evaluate(() => (window as any).selectedVisual)).toBe('chart-one')
-  } finally {await page.close()}
-})
-
-for (const running of [true, false]) test(`dashboard cards remain available during a tool-only turn${running ? ' while running' : ' without a final answer'}`, async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.evaluate(async running => {
-      await customElements.whenDefined('lv-chat-thread')
-      const thread = document.querySelector('lv-chat-thread') as any
-      thread.status = { enabled: true, running, runId: 'inspection' }
-      thread.conversationId = 'conversation'
-      thread.dashboardPreviewAvailable = true
-      thread.dashboardId = 'finance'
-      thread.pageArtifacts = [{ id: 'revenue', type: 'bar', summary: 'Revenue' }]
-      thread.transcript = [
-        { id: 'greeting', kind: 'assistant', text: 'Ready.' },
-        { id: 'user', kind: 'user', text: 'Inspect my dashboard' },
-        { id: 'tool', kind: 'tool', name: 'list_dashboards', status: running ? 'running' : 'complete', runId: 'inspection' },
-      ]
-      thread.addEventListener('lv-chat-dashboard-preview', (event: CustomEvent) => { (window as any).selectedVisual = event.detail.artifactId })
-      await thread.updateComplete
-    }, running)
-    const card = page.getByRole('button', { name: 'Open Revenue in visuals sidebar', exact: true })
-    expect(await card.count()).toBe(1)
-    expect(await card.isVisible()).toBe(true)
-    await card.click()
-    expect(await page.evaluate(() => (window as any).selectedVisual)).toBe('revenue')
-    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
-      thread.status = { enabled: true, running: false }
-      thread.transcript = [...thread.transcript, { id: 'answer', kind: 'assistant', text: 'Your dashboard is available.' }]
-      await thread.updateComplete
-    })
-    expect(await card.count()).toBe(1)
-    const reply = page.locator('.agent-turn').filter({ hasText: 'Your dashboard is available.' })
-    expect(await reply.locator('.visual-reference').count()).toBe(1)
-    expect(await reply.getByRole('group', { name: 'Answer actions' }).count()).toBe(1)
-  } finally { await page.close() }
-})
-
-test('chat keeps retries in collapsed activity while showing the final answer', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.evaluate(async () => {
-      await customElements.whenDefined('lv-chat-thread')
-      const thread = document.querySelector('lv-chat-thread') as any
-      thread.status = { enabled: true, running: false }
-      thread.transcript = [
-        {id:'u',kind:'user',text:'Create a dashboard'},
-        {id:'t1',kind:'tool',name:'query_semantic_model',argumentsJson:'{"modelId":"sales"}',status:'error',error:'Unknown field'},
-        {id:'t2',kind:'tool',name:'query_semantic_model',argumentsJson:'{"modelId":"sales"}',status:'complete'},
-        {id:'a',kind:'assistant',text:'Your dashboard is ready.'},
-      ]
-      await thread.updateComplete
-    })
-    expect(await page.getByRole('button', { name: /Query Semantic Model/ }).count()).toBe(0)
-    expect(await page.getByText('Your dashboard is ready.', { exact: true }).isVisible()).toBe(true)
-    expect(await page.getByRole('alert').count()).toBe(0)
-    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
-      e.transcript = e.transcript.filter((item: any) => item.kind !== 'assistant')
-      await e.updateComplete
-    })
-    expect(await page.getByText('This request stopped before a final answer was ready. You can ask the agent to continue.', {exact:true}).isVisible()).toBe(true)
-    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
-      e.status = { enabled: true, running: false, error: 'Unable to finish this request.' }
-      await e.updateComplete
-    })
-    expect(await page.getByRole('alert').getByText('Unable to finish this request.', {exact:true}).isVisible()).toBe(true)
-  } finally { await page.close() }
-})
-
-test('a later dashboard edit failure remains visible after an earlier successful preview', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
-    const thread = page.locator('lv-chat-thread')
-    await thread.evaluate(async (e: any) => {
-      e.status = {enabled:true,running:false}
-      e.conversationId = 'conversation'
-      e.transcript = [
-        {id:'user',kind:'user',text:'Update my dashboard'},
-        {id:'preview',kind:'tool',name:'preview_dashboard_draft',toolCallId:'preview',status:'complete',argumentsJson:'{"dashboardId":"finance"}'},
-        {id:'failed-edit',kind:'tool',name:'edit_dashboard_source',status:'error',error:'The requested new chart could not be added.'},
-        {id:'answer',kind:'assistant',text:'The existing dashboard is available, but the new chart was not added.'},
-      ]
-      await e.updateComplete
-    })
-    expect(await thread.getByText('The requested new chart could not be added.',{exact:true}).isVisible()).toBe(true)
-  } finally {await page.close()}
 })
