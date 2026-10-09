@@ -6,9 +6,9 @@ import (
 	"errors"
 	"net"
 	"regexp"
-	"strconv"
 
 	"github.com/flidai/leapview/internal/analytics/catalogartifact"
+	"github.com/flidai/leapview/internal/analytics/ducklake"
 	bootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	"github.com/flidai/leapview/internal/recoveryset"
 	"github.com/jackc/pgx/v5"
@@ -173,7 +173,7 @@ AND to_jsonb(s) @> $6::jsonb`, readback.Set.Delivery.PublicationID, readback.Set
 	// sqlc-exception:dynamic-identifier -- exact metadata schema is validated and
 	// checked against the immutable control registration before interpolation.
 	err = duckTx.QueryRow(ctx, `SELECT value,count(*) OVER () FROM `+schema+`.ducklake_metadata WHERE key='version' AND scope IS NULL AND scope_id IS NULL LIMIT 1`).Scan(&version, &matches)
-	if err != nil || matches != 1 || version != strconv.FormatInt(readback.Set.Catalog.CatalogVersion, 10) || version != readback.Set.Serving.CatalogSchemaVersion {
+	if err != nil || matches != 1 || !nativeCatalogVersionMatches(version, readback.Set) {
 		return NativePostgresEvidence{}, errors.New("native DuckLake catalog format differs from the selected seal")
 	}
 	// sqlc-exception:dynamic-identifier -- same authenticated metadata schema;
@@ -199,4 +199,22 @@ AND to_jsonb(s) @> $6::jsonb`, readback.Set.Delivery.PublicationID, readback.Set
 		Marker         string                    `json:"marker"`
 	}{readback.Set.Catalog, metadataSchema, canonicalMarker})
 	return NativePostgresEvidence{ControlDigest: digestBytes(controlValue), DuckLakeDigest: digestBytes(duckValue), Catalog: readback.Set.Catalog}, nil
+}
+
+func nativeCatalogVersionMatches(observed string, set recoveryset.RecoverySet) bool {
+	number, err := ducklake.CatalogVersionNumber(observed)
+	if err != nil || number != set.Catalog.CatalogVersion {
+		return false
+	}
+	actual, err := ducklake.CanonicalCatalogVersion(observed)
+	if err != nil {
+		return false
+	}
+	for _, expected := range []string{set.Serving.CatalogSchemaVersion, set.Compatibility.CatalogFormat} {
+		canonical, err := ducklake.CanonicalCatalogVersion(expected)
+		if err != nil || canonical != actual {
+			return false
+		}
+	}
+	return true
 }
