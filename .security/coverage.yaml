@@ -136,6 +136,12 @@ surfaces:
     scanners: [trivy]
     images:
       - public.ecr.aws/docker/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+  - path: internal/analytics/duckdb/testdata/mysql/Dockerfile
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /internal/analytics/duckdb/testdata/mysql}
+    scanners: [trivy]
+    images:
+      - docker.io/library/mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}

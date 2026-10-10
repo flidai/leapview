@@ -916,3 +916,68 @@ test('message edit action ignores a transcript item without a persisted ID', asy
     expect(await page.evaluate(() => (window as any).reuseCount)).toBe(0)
   } finally { await page.close() }
 })
+
+
+test('dashboard generation replaces generic activity with a specific live status', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+      thread.status = { enabled: true, running: true }
+      thread.dashboardGenerating = true
+      await thread.updateComplete
+    })
+    expect(await page.getByRole('status', { name: 'Building your dashboard', exact: true }).count()).toBe(1)
+    expect(await page.getByRole('status', { name: 'Working', exact: true }).count()).toBe(0)
+  } finally { await page.close() }
+})
+
+test('dashboard assembly pauses when stopped and respects reduced motion', async () => {
+  const page = await fixture.browser.newPage({ reducedMotion: 'reduce' })
+  try {
+    await page.goto(fixture.baseURL)
+    await page.evaluate(async () => {
+      await customElements.whenDefined('lv-dashboard-generation')
+      const stage = document.createElement('lv-dashboard-generation') as any
+      document.body.append(stage)
+      await stage.updateComplete
+    })
+    const stage = page.locator('lv-dashboard-generation')
+    expect(await stage.getByRole('heading', { name: 'Building your dashboard', exact: true }).count()).toBe(1)
+    expect(await stage.locator('.canvas').getAttribute('aria-hidden')).toBe('true')
+    expect(await stage.evaluate((element: any) => getComputedStyle(element.shadowRoot.querySelector('.line')).animationName)).toBe('none')
+    await stage.evaluate(async (element: any) => { element.running = false; await element.updateComplete })
+    expect(await stage.getByRole('heading', { name: 'Dashboard generation paused', exact: true }).count()).toBe(1)
+    expect(await stage.locator('section').getAttribute('aria-busy')).toBe('false')
+    expect(await stage.locator('.steps').count()).toBe(0)
+  } finally { await page.close() }
+})
+
+
+test('bounded mobile dashboard generation scrolls to its final stage', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 390, height: 720 }, reducedMotion: 'reduce' })
+  try {
+    await page.goto(fixture.baseURL)
+    await page.evaluate(async () => {
+      await customElements.whenDefined('lv-dashboard-generation')
+      const region = document.createElement('div')
+      region.style.cssText = 'height:320px;width:350px;overflow:hidden'
+      const stage = document.createElement('lv-dashboard-generation') as any
+      region.append(stage)
+      document.body.replaceChildren(region)
+      await stage.updateComplete
+    })
+    const geometry = await page.locator('lv-dashboard-generation').evaluate((element: any) => {
+      const stage = element.shadowRoot.querySelector('.stage') as HTMLElement
+      const steps = element.shadowRoot.querySelector('.steps') as HTMLElement
+      const bottom = () => steps.getBoundingClientRect().bottom <= element.getBoundingClientRect().bottom + 1
+      const clippedInitially = !bottom()
+      element.scrollTop = element.scrollHeight
+      stage.scrollTop = stage.scrollHeight
+      return { clippedInitially, reachableAfterScroll: bottom(), overflow: getComputedStyle(element).overflowY }
+    })
+    expect(geometry.clippedInitially).toBe(true)
+    expect(geometry.reachableAfterScroll).toBe(true)
+    expect(geometry.overflow).toBe('auto')
+  } finally { await page.close() }
+})

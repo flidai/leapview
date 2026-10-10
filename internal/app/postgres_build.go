@@ -57,7 +57,6 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
-	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
@@ -249,29 +248,11 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	if err != nil {
 		return fail(err)
 	}
-	var authorityRevalidator jobs.AuthorityRevalidator
-	if production {
-		tokenEvidence, evidenceSupported := accessBundle.Repository.(access.APITokenAuthorityEvidenceReader)
-		if !evidenceSupported {
-			return fail(errors.New("PostgreSQL access repository does not support async token authority evidence"))
-		}
-		sessionEvidence, sessionEvidenceSupported := accessBundle.Repository.(access.SessionAuthorityEvidenceReader)
-		if !sessionEvidenceSupported {
-			return fail(errors.New("PostgreSQL access repository does not support browser-session authority evidence"))
-		}
-		executionGrants, executionGrantsSupported := accessBundle.Repository.(executionGrantAuthorityReader)
-		if !executionGrantsSupported {
-			return fail(errors.New("PostgreSQL access repository does not support execution-grant authority evidence"))
-		}
-		authorityRevalidator = newAuthorityRevalidator(tokenEvidence, sessionEvidence, executionGrants, func(authCtx context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
-			return authorizeCurrentTypedPermission(authCtx, accessBundle.Module, runtimeHost, principalID, pair, environment)
-		}, func(authCtx context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
-			return authorizeCurrentTypedPermission(authCtx, accessBundle.Module, runtimeHost, principalID, pair, environment)
-		}, instanceID, string(environment))
-	}
-	var requiredAuthorityKinds map[string]struct{}
-	if production {
-		requiredAuthorityKinds = map[string]struct{}{"refresh_pipeline": {}}
+	authorityRevalidator, requiredAuthorityKinds, err := postgresJobAuthority(production, accessBundle.Repository, func(authCtx context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
+		return authorizeCurrentTypedPermission(authCtx, accessBundle.Module, runtimeHost, principalID, pair, environment)
+	}, instanceID, string(environment))
+	if err != nil {
+		return fail(err)
 	}
 	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: production, NodeID: nodeID, LeaseTimeout: cfg.RefreshJobLeaseTimeout, RiverJobTimeout: cfg.JobExecutionTimeout, Logger: slog.Default(), AuthorityRevalidator: authorityRevalidator, RequiredAuthorityKinds: requiredAuthorityKinds, Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
 	if err != nil {

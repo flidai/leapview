@@ -78,6 +78,19 @@ function goInputs(root, options, toolchain) {
   return { scope: 'go-list-selected-source-native-and-embed-files', complete: rows.every(pkg => !pkg.Error && !pkg.DepsErrors?.length),
     probeArgv: argv, files: [...paths].sort().map(fileInput) }
 }
+
+// Reuse the receipt's selected Go/native/embed identity for prebuilt studies.
+// HEAD alone cannot identify ignored generated files compiled into a binary.
+export function fingerprintGoBuildInputs(root, supplied = {}) {
+  root = resolve(root)
+  const unexpected = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: root, encoding: 'utf8' })
+    .split('\0').filter(path => path.endsWith('.go'))
+  if (unexpected.length) throw new Error(`unexpected untracked Go sources: ${unexpected.join(', ')}`)
+  const options = optionsFor(supplied), toolchain = goTool(root, options)
+  const inputs = goInputs(root, options, toolchain)
+  if (!inputs.complete) throw new Error('selected Go build inputs are incomplete; generate prerequisites first')
+  return { options, toolchain, inputs, limitation }
+}
 export async function runGoProcess(executable, argv, root, env, out, wallMS, graceMS = 1000) {
   const stdout = join(out, 'stdout.jsonl'), stderr = join(out, 'stderr.log')
   writeFileSync(stdout, '', { flag: 'wx' }); writeFileSync(stderr, '', { flag: 'wx' })

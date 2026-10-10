@@ -257,17 +257,17 @@ func PathLocationHasOptions(value *projectcontracts.PathSourceLocation) (bool, e
 		if variant == nil {
 			return false, fmt.Errorf("path source text variant is nil")
 		}
-		return variant.Options != nil, nil
+		return false, nil
 	case *projectcontracts.BlobPathSourceLocation:
 		if variant == nil {
 			return false, fmt.Errorf("path source blob variant is nil")
 		}
-		return variant.Options != nil, nil
+		return false, nil
 	case *projectcontracts.VortexPathSourceLocation:
 		if variant == nil {
 			return false, fmt.Errorf("path source vortex variant is nil")
 		}
-		return variant.Options != nil, nil
+		return false, nil
 	case *projectcontracts.DeltaPathSourceLocation:
 		if variant == nil {
 			return false, fmt.Errorf("path source delta variant is nil")

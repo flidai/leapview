@@ -1,4 +1,6 @@
-import { chromium, type Page } from '@playwright/test'
+import { chromium, type Page, type Request } from '@playwright/test'
+import type { VisualizationEnvelope } from '../web/generated/visualization'
+import { interactionCommandForRowIndex } from '../web/components/dashboard/visualization/interaction-command'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -257,7 +259,8 @@ export async function runPerformanceSuite(): Promise<void> {
 	const logCursor = await refreshLogCursor()
 	const dashboardURL = new URL(suite.dashboardPath, baseURL).toString()
   const browser = await chromium.launch()
-  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 },
+    ...(Bun.env.LEAPVIEW_QA_STORAGE_STATE ? { storageState: Bun.env.LEAPVIEW_QA_STORAGE_STATE } : {}) })
   const browserHealth = collectBrowserHealth(page)
   const samples: Sample[] = []
   let rapidToggle: RapidToggleResult | null = null
@@ -407,13 +410,9 @@ async function runInteraction(page: Page, visualId: string, datumOffset: number)
 
 type InteractionInput = {
   visualId: string
-  command: {
-    sourceKind: 'visual'
-    sourceId: string
-    interactionKind: string
+  command: NonNullable<ReturnType<typeof interactionCommandForRowIndex>> & {
     action: 'replace'
     toggle: false
-    mappings: Array<{ field: string; dataset?: string; grain?: string; value: string | number | boolean | null; label: string }>
   }
   targets: string[]
 }
@@ -440,45 +439,27 @@ type RapidToggleResult = PerformanceTraceResult & {
   queryCounts: number[]
 }
 
-async function interactionInput(page: Page, visualId: string, datumOffset: number): Promise<InteractionInput> {
-  return page.locator('lv-dashboard-page').evaluate((element: any, input) => {
-    const host = Array.from(element.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []).find((candidate: any) => candidate.envelope?.visualID === input.visualId) as any
-    const payload = host?.envelope
-    if (payload?.dataState?.kind !== 'inline') throw new Error(`visual ${input.visualId} is not inline`)
-    const dataset = payload.dataState.datasets[0]
-    const rows = dataset?.rows ?? []
-    if (rows.length === 0) throw new Error(`visual ${input.visualId} has no data`)
-    const values = rows[input.datumOffset % rows.length]
-    const datum = Object.fromEntries((dataset.columns ?? []).map((column: string, index: number) => [column, values[index]]))
-    const interaction = payload.spec.interactions.find((candidate: any) => candidate.kind === 'select')
-    const mappings = (interaction?.mappings ?? []).map((mapping: any) => {
-      const value = datum[mapping.source.field]
-      if (value === undefined || (typeof value === 'object' && value !== null)) throw new Error(`visual ${input.visualId} mapping ${mapping.targetFieldID} has no scalar value`)
-      const labelValue = mapping.label ? datum[mapping.label.field] : value
-      return {
-        field: mapping.targetFieldID,
-        ...(mapping.targetDatasetID !== undefined ? { dataset: mapping.targetDatasetID } : {}),
-        ...(mapping.grain !== undefined ? { grain: mapping.grain } : {}),
-        value,
-        label: labelValue === null ? '' : String(labelValue),
-      }
-    })
-    return {
-      visualId: input.visualId,
-      command: {
-        sourceKind: 'visual' as const,
-        sourceId: input.visualId,
-        interactionKind: payload.interaction?.kind || 'point_selection',
-        action: 'replace' as const,
-        toggle: false as const,
-        mappings,
-      },
-      targets: [...(payload.interaction?.targets ?? [])],
-    }
-  }, { visualId, datumOffset })
+export async function interactionInput(page: Page, visualId: string, datumOffset: number): Promise<InteractionInput> {
+  const payload = await page.locator('lv-dashboard-page').evaluate((element: any, id) => {
+    const host = Array.from(element.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])
+      .find((candidate: any) => candidate.envelope?.visualID === id) as any
+    return host?.envelope as VisualizationEnvelope | undefined
+  }, visualId)
+  if (!payload || payload.dataState.kind !== 'inline') throw new Error(`visual ${visualId} is not inline`)
+  const interaction = payload.spec.interactions.find((candidate) => candidate.kind === 'select')
+  const datasetID = interaction?.mappings[0]?.source.dataset
+  const dataset = payload.dataState.datasets.find((candidate) => candidate.id === datasetID)
+  if (!interaction?.id || !dataset || !dataset.rows.length || !Number.isSafeInteger(datumOffset) || datumOffset < 0) {
+    throw new Error(`visual ${visualId} has no valid mapped selection row`)
+  }
+  const command = interactionCommandForRowIndex(payload, dataset.id, datumOffset % dataset.rows.length)
+  if (!command) throw new Error(`visual ${visualId} selection row violates the compiled interaction contract`)
+  const targets = interaction.targets.filter((target) => target.effect === 'filter').map((target) => target.visualID)
+  if (!targets.length) throw new Error(`visual ${visualId} has no filter targets`)
+  return { visualId, command: { ...command, action: 'replace', toggle: false }, targets }
 }
 
-async function installPerformanceObserver(page: Page): Promise<void> {
+export async function installPerformanceObserver(page: Page): Promise<void> {
   await page.locator('lv-dashboard-page').evaluate((element: any) => {
     if ((window as any).__ldPerfObserver) return
     const observer: any = {
@@ -501,8 +482,8 @@ async function installPerformanceObserver(page: Page): Promise<void> {
             signature = visual ? JSON.stringify([
               componentStatus?.generation ?? null,
               Boolean(componentStatus?.loading),
-              visual.version ?? null,
-              visual.data ?? null,
+              visual.dataRevision ?? null,
+              visual.dataState ?? null,
             ]) : ''
           } else if (target.startsWith('table:')) {
             const table = signals.tables?.[target.slice(6)]
@@ -569,7 +550,7 @@ async function installPerformanceObserver(page: Page): Promise<void> {
         const targets = input.targets.map(keyFor).filter(Boolean)
         const allTargets = components.map((component: any) => component.table ? `table:${component.table}` : component.visual ? `visual:${component.visual}` : '').filter(Boolean)
         const criticalKPIs = input.targets
-          .filter((id: string) => signals.visuals?.[id]?.shape === 'single_value')
+          .filter((id: string) => signals.visuals?.[id]?.spec?.kind === 'kpi')
           .map((id: string) => `visual:${id}`)
         observer.active = {
           visualId: input.visualId,
@@ -721,7 +702,8 @@ async function waitForStatus(page: Page, predicate: (status: DashboardStatusSnap
   throw new Error(`timed out after ${timeoutMs}ms waiting for dashboard refresh state`)
 }
 
-function collectBrowserHealth(page: Page): { consoleErrors: string[]; failedNetworkResponses: string[]; expectedRapidSupersessionAborts: string[] } {
+export function collectBrowserHealth(page: Page, ignoreRequestFailure: (request: Request) => boolean = request =>
+  new URL(request.url()).pathname === '/updates'): { consoleErrors: string[]; failedNetworkResponses: string[]; expectedRapidSupersessionAborts: string[] } {
   const health = {
     consoleErrors: [] as string[],
     failedNetworkResponses: [] as string[],
@@ -736,7 +718,7 @@ function collectBrowserHealth(page: Page): { consoleErrors: string[]; failedNetw
     if (response.status() >= 400) health.failedNetworkResponses.push(`${response.status()} ${response.request().method()} ${response.url()}`)
   })
   page.on('requestfailed', (request) => {
-    if (new URL(request.url()).pathname === '/updates') return
+    if (ignoreRequestFailure(request)) return
     health.failedNetworkResponses.push(`${request.failure()?.errorText ?? 'request failed'} ${request.method()} ${request.url()}`)
   })
   return health

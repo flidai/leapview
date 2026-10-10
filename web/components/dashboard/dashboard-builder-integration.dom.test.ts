@@ -198,6 +198,7 @@ test('dashboard builder gates publishing on exact draft state and visible valida
 test('collapsing every pane retains the tool headers and saved library tabs retain their frame', async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 820 } })
   try {
+    await page.route('**/visuals/saved?*', route => route.fulfill({ contentType: 'text/html', body: `<script>parent.postMessage({type:'lv-saved-visual-library',library:{visuals:[{id:'saved-elsewhere',title:'Saved elsewhere',semanticModelId:'other-model'}]}},location.origin)</script>` }))
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const editor = page.locator('lv-dashboard-builder')
@@ -224,6 +225,7 @@ test('collapsing every pane retains the tool headers and saved library tabs reta
 test('embedded chat panels keep distinct click targets and default Data to fields', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 850 } })
   try {
+    await page.route('**/visuals/saved?*', route => route.fulfill({ contentType: 'text/html', body: `<script>parent.postMessage({type:'lv-saved-visual-library',library:{visuals:[{id:'saved-elsewhere',title:'Saved elsewhere',semanticModelId:'other-model'}]}},location.origin)</script>` }))
     await page.goto(`${baseURL}/embed-host`)
     const frame = page.frameLocator('iframe')
     const editor = frame.locator('lv-dashboard-builder')
@@ -893,5 +895,35 @@ test('embedded builder can explicitly close layout gaps without requesting field
     for (const row of new Set(command.placements.map((p:any) => p.placement.row))) {
       expect(command.placements.filter((p:any) => p.placement.row === row).reduce((width:number,p:any) => width + p.placement.columnSpan, 0)).toBe(12)
     }
+  } finally { await page.close() }
+})
+
+
+test('builder discovers saved visuals while hidden and returns to fields when the library empties', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/visuals/saved?*', route => route.fulfill({ contentType: 'text/html', body: '<p>Library fixture</p>' }))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const editor = page.locator('lv-dashboard-builder')
+    expect(await editor.getByRole('button', { name: 'Saved visuals', exact: true }).count()).toBe(0)
+    expect(await editor.getByRole('button', { name: 'Fields', exact: true }).count()).toBe(0)
+    expect(await editor.locator('#builder-saved-visuals').count()).toBe(1)
+    await editor.evaluate(async (element: any) => {
+      const frame = element.shadowRoot.querySelector('#builder-saved-visuals')
+      window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: frame.contentWindow, data: { type: 'lv-saved-visual-library', library: { visuals: [{ id: 'another-chat', semanticModelId: 'other-model', title: 'Saved elsewhere' }] } } }))
+      await element.updateComplete
+    })
+    await editor.getByRole('button', { name: 'Saved visuals', exact: true }).click()
+    expect(await editor.locator('#builder-saved-visuals').isVisible()).toBe(true)
+    await editor.evaluate(async (element: any) => {
+      const frame = element.shadowRoot.querySelector('#builder-saved-visuals')
+      window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: frame.contentWindow, data: { type: 'lv-saved-visual-library', library: { visuals: [] } } }))
+      await element.updateComplete
+    })
+    expect(await editor.getByRole('button', { name: 'Saved visuals', exact: true }).count()).toBe(0)
+    expect(await editor.getByRole('searchbox', { name: 'Search fields' }).isVisible()).toBe(true)
+    expect(await editor.locator('#builder-saved-visuals').count()).toBe(1)
+    expect(await editor.locator('#builder-saved-visuals').isVisible()).toBe(false)
   } finally { await page.close() }
 })

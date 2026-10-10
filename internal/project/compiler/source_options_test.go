@@ -21,7 +21,7 @@ func pathBase(format string) projectcontracts.PathSourceLocationBase {
 func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testing.T) {
 	trueValue, falseValue := true, false
 	semicolon, pipe, quote, singleQuote, escape, backslash := ";", "|", `"`, "'", `\\`, "NA"
-	jsonExplicit, jsonDefault, sheet, gzip, version, snapshot := "array", "newline_delimited", "Data", "gzip", "v2", "42"
+	jsonExplicit, jsonDefault, sheet, version, snapshot, defaultSnapshot := "array", "newline_delimited", "Data", "2", "42", "43"
 
 	tests := []struct {
 		name     string
@@ -81,36 +81,33 @@ func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testin
 		{
 			name:     "text",
 			format:   "text",
-			location: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: pathBase("text"), Format: "text", Options: &projectcontracts.TextReaderOptions{Delimiter: &semicolon}},
-			defaults: &projectcontracts.ReaderDefaults{Text: &projectcontracts.TextReaderOptions{Delimiter: &pipe, Quote: &singleQuote, Header: &trueValue}},
+			location: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: pathBase("text"), Format: "text"},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
 				v := got.Value.(*projectcontracts.TextPathSourceLocation)
-				if *v.Options.Delimiter != semicolon || *v.Options.Quote != singleQuote || *v.Options.Header != true {
-					t.Fatalf("text options = %#v", v.Options)
+				if v.Format != "text" {
+					t.Fatalf("text location = %#v", v)
 				}
 			},
 		},
 		{
 			name:     "blob",
 			format:   "blob",
-			location: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: pathBase("blob"), Format: "blob", Options: &projectcontracts.BlobReaderOptions{}},
-			defaults: &projectcontracts.ReaderDefaults{Blob: &projectcontracts.BlobReaderOptions{Compression: &gzip}},
+			location: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: pathBase("blob"), Format: "blob"},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
 				v := got.Value.(*projectcontracts.BlobPathSourceLocation)
-				if *v.Options.Compression != gzip {
-					t.Fatalf("blob options = %#v", v.Options)
+				if v.Format != "blob" {
+					t.Fatalf("blob location = %#v", v)
 				}
 			},
 		},
 		{
 			name:     "vortex",
 			format:   "vortex",
-			location: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: pathBase("vortex"), Format: "vortex", Options: &projectcontracts.VortexReaderOptions{Version: &version}},
-			defaults: &projectcontracts.ReaderDefaults{Vortex: &projectcontracts.VortexReaderOptions{Version: &quote}},
+			location: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: pathBase("vortex"), Format: "vortex"},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
 				v := got.Value.(*projectcontracts.VortexPathSourceLocation)
-				if *v.Options.Version != version {
-					t.Fatalf("vortex options = %#v", v.Options)
+				if v.Format != "vortex" {
+					t.Fatalf("vortex location = %#v", v)
 				}
 			},
 		},
@@ -130,7 +127,7 @@ func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testin
 			name:     "iceberg",
 			format:   "iceberg",
 			location: &projectcontracts.IcebergPathSourceLocation{PathSourceLocationBase: pathBase("iceberg"), Format: "iceberg", Options: &projectcontracts.IcebergReaderOptions{Snapshot: &snapshot}},
-			defaults: &projectcontracts.ReaderDefaults{Iceberg: &projectcontracts.IcebergReaderOptions{Snapshot: &quote}},
+			defaults: &projectcontracts.ReaderDefaults{Iceberg: &projectcontracts.IcebergReaderOptions{Snapshot: &defaultSnapshot}},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
 				v := got.Value.(*projectcontracts.IcebergPathSourceLocation)
 				if *v.Options.Snapshot != snapshot {
@@ -176,8 +173,8 @@ func TestResolveEffectivePathLocationUsesGeneratedDefaultsForEveryFormat(t *test
 		{"json", "json", &projectcontracts.JSONPathSourceLocation{PathSourceLocationBase: pathBase("json"), Format: "json"}, &projectcontracts.JSONPathSourceLocation{PathSourceLocationBase: pathBase("json"), Format: "json", Options: projectcontracts.DefaultJSONReaderOptions()}},
 		{"parquet", "parquet", &projectcontracts.ParquetPathSourceLocation{PathSourceLocationBase: pathBase("parquet"), Format: "parquet"}, &projectcontracts.ParquetPathSourceLocation{PathSourceLocationBase: pathBase("parquet"), Format: "parquet", Options: projectcontracts.DefaultParquetReaderOptions()}},
 		{"excel", "excel", &projectcontracts.ExcelPathSourceLocation{PathSourceLocationBase: pathBase("excel"), Format: "excel"}, &projectcontracts.ExcelPathSourceLocation{PathSourceLocationBase: pathBase("excel"), Format: "excel", Options: projectcontracts.DefaultExcelReaderOptions()}},
-		{"text", "text", &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: pathBase("text"), Format: "text"}, &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: pathBase("text"), Format: "text", Options: projectcontracts.DefaultTextReaderOptions()}},
-		{"blob", "blob", &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: pathBase("blob"), Format: "blob"}, &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: pathBase("blob"), Format: "blob", Options: projectcontracts.DefaultBlobReaderOptions()}},
+		{"text", "text", &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: pathBase("text"), Format: "text"}, &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: pathBase("text"), Format: "text"}},
+		{"blob", "blob", &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: pathBase("blob"), Format: "blob"}, &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: pathBase("blob"), Format: "blob"}},
 		{"vortex", "vortex", &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: pathBase("vortex"), Format: "vortex"}, &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: pathBase("vortex"), Format: "vortex"}},
 		{"delta", "delta", &projectcontracts.DeltaPathSourceLocation{PathSourceLocationBase: pathBase("delta"), Format: "delta"}, &projectcontracts.DeltaPathSourceLocation{PathSourceLocationBase: pathBase("delta"), Format: "delta"}},
 		{"iceberg", "iceberg", &projectcontracts.IcebergPathSourceLocation{PathSourceLocationBase: pathBase("iceberg"), Format: "iceberg"}, &projectcontracts.IcebergPathSourceLocation{PathSourceLocationBase: pathBase("iceberg"), Format: "iceberg"}},

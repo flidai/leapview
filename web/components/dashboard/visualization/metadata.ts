@@ -78,3 +78,10 @@ function homogeneousComparable(values: readonly (string | number | boolean)[]): 
 function isScalar(value: unknown): value is string | number | boolean {
   return typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))
 }
+
+export function visualizationSharedHeader(envelope?: VisualizationEnvelope): 'chart' | 'map' | 'visualization' | undefined {
+  const kind = envelope?.spec.kind
+  if (!kind || kind === 'kpi' || kind === 'table' || kind === 'matrix' || kind === 'pivot') return undefined
+  if (kind === 'geographic') return 'map'
+  return 'chart'
+}

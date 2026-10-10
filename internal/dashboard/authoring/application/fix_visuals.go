@@ -104,6 +104,18 @@ func missingVisualFields(doc document.DashboardDocument, pageID string, model *s
 			continue
 		}
 		counts := visualFieldCounts(visual)
+		if query, ok := visual.Query.Value.(*document.PivotDashboardQuery); ok && visual.Type == document.DashboardVisualTypePivot {
+			// Pivot axes each need a field. Several existing rows do not fill
+			// the column axis; retain them and let assignment complete that axis.
+			axes := 0
+			if len(query.Rows) > 0 {
+				axes++
+			}
+			if len(query.Columns) > 0 {
+				axes++
+			}
+			counts[authoring.FieldRoleDimension] = axes
+		}
 		var missing []authoring.FieldRole
 		limits := authoring.CanonicalVisualRoleLimits(visual.Type)
 		// Cartesian renderers need an X/category binding as well as a measure.
@@ -147,11 +159,12 @@ func missingVisualFields(doc document.DashboardDocument, pageID string, model *s
 					return !temporalVisualDimension(roleCandidates[i], model.Dimensions[roleCandidates[i]]) && temporalVisualDimension(roleCandidates[j], model.Dimensions[roleCandidates[j]])
 				})
 			}
+			// Bound compatible branches, not rejected catalog fields: unrelated
+			// datasets must not exhaust the budget before a usable field is reached.
 			for _, id := range roleCandidates {
 				if attempts >= 256 {
 					break
 				}
-				attempts++
 				if role == authoring.FieldRoleMetric && slices.Contains(bindings.Metrics, id) || role == authoring.FieldRoleDimension && slices.Contains(bindings.Dimensions, id) {
 					continue
 				}
@@ -175,6 +188,7 @@ func missingVisualFields(doc document.DashboardDocument, pageID string, model *s
 				if _, err := dashboardcompiler.LowerDashboardQueryBinding(partialQuery, model, doc.Spec.SemanticModel); err != nil {
 					continue
 				}
+				attempts++
 				if completed, resolved, ok := search(candidate, index+1, append(append([]authoring.AssignFieldPayload{}, fields...), assignment)); ok {
 					return completed, resolved, true
 				}

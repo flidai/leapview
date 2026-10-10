@@ -2,6 +2,7 @@ package application
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -9,6 +10,51 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/document"
 )
+
+func TestFixVisualsFindsCompatibleFieldsBeyondLargeUnrelatedCatalog(t *testing.T) {
+	doc, model := fixVisualFixture()
+	doc.Spec.Pages[0].Components = doc.Spec.Pages[0].Components[1:]
+	metric := "revenue"
+	doc.Spec.Visuals["empty"].Query.Value.(*document.AggregateDashboardQuery).Metrics = []document.DashboardMetricSelection{{String: &metric}}
+	for index := range 300 {
+		model.Dimensions[fmt.Sprintf("aaa_scenario_%03d", index)] = model.Dimensions["aaa_scenario"]
+	}
+	fields, err := missingVisualFields(doc, "overview", model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 1 || fields[0].FieldID != "country" {
+		t.Fatalf("compatible category remains missing: %#v", fields)
+	}
+}
+
+func TestFixVisualsCompletesMissingPivotAxisWithoutReplacingRows(t *testing.T) {
+	doc, model := fixVisualFixture()
+	for _, id := range []string{"region", "segment"} {
+		model.Dimensions[id] = model.Dimensions["country"]
+	}
+	country, region, metric := "country", "region", "revenue"
+	visual := doc.Spec.Visuals["empty"]
+	visual.Type = document.DashboardVisualTypePivot
+	visual.Query = document.DashboardQuery{Value: &document.PivotDashboardQuery{Type: "pivot", Rows: []document.DashboardDimensionSelection{{String: &country}, {String: &region}}, Metrics: []document.DashboardMetricSelection{{String: &metric}}}}
+	visual.Presentation = document.DashboardPresentation{Value: &document.TableDashboardPresentation{Type: "table", RowHeight: 32, ShowHeader: true}}
+	doc.Spec.Visuals["empty"] = visual
+	fields, err := missingVisualFields(doc, "overview", model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 1 || fields[0].FieldID != "segment" {
+		t.Fatalf("pivot column remains missing: %#v", fields)
+	}
+	fixed, err := authoring.WithAssignedVisualFields(doc, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := fixed.Spec.Visuals["empty"].Query.Value.(*document.PivotDashboardQuery)
+	if len(query.Rows) != 2 || len(query.Columns) != 1 || !previewableVisual(fixed, "empty", model) {
+		t.Fatalf("pivot rows or column not preserved: %#v", query)
+	}
+}
 
 func fixVisualFixture() (document.DashboardDocument, *semanticmodel.Model) {
 	dimension, metric := "country", "revenue"

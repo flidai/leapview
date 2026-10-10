@@ -153,7 +153,7 @@ func compileSourceRootSemanticModelCountFixture(count int) map[string]string {
 	files := map[string]string{
 		"connections/warehouse.yaml": compileSourceRootConnectionYAML(),
 		"sources/orders.yaml":        compileSourceRootSourceYAML("orders", "warehouse"),
-		"models/orders.yaml":          compileSourceRootModelYAML("orders_model", "SELECT id FROM source.orders"),
+		"models/orders.yaml":         compileSourceRootModelYAML("orders_model", "SELECT id FROM source.orders"),
 	}
 	for index := 0; index < count; index++ {
 		name := fmt.Sprintf("sales_%03d", index)
@@ -283,7 +283,7 @@ func checkCompileSourceRootBenchmarkLimits(files map[string]string) error {
 	return nil
 }
 
-func writeCompileSourceRootBenchmarkFixture(b *testing.B, files map[string]string) string {
+func writeCompileSourceRootBenchmarkFixture(b testing.TB, files map[string]string) string {
 	b.Helper()
 	root := filepath.Join(b.TempDir(), "source-root")
 	for name, body := range files {
@@ -298,7 +298,7 @@ func writeCompileSourceRootBenchmarkFixture(b *testing.B, files map[string]strin
 	return root
 }
 
-func preflightCompileSourceRootBenchmarkFixture(b *testing.B, root string, tc compileSourceRootBenchmarkCase) projectartifact.SourceBundle {
+func preflightCompileSourceRootBenchmarkFixture(b testing.TB, root string, tc compileSourceRootBenchmarkCase) projectartifact.SourceBundle {
 	b.Helper()
 	bundle, err := Compile(root)
 	if err != nil {

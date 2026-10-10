@@ -294,6 +294,8 @@ export const visualizationHostStyles = css`
   .visual-options .menu svg { flex: 0 0 auto; width: var(--base-size-16); height: var(--base-size-16); }
   .visual-options .menu button:disabled { cursor: default; opacity: var(--opacity-disabled); }
   .announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .retry-action { width: auto; min-height: 32px; padding: 0 12px; white-space: nowrap; }
+
   .error { position: absolute; inset: 0; display: grid; place-items: center; color: var(--lv-fg-danger); padding: 1rem; text-align: center; background: var(--lv-bg-panel); }
   .fallback { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
