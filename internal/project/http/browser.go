@@ -194,11 +194,6 @@ type CreatorCommandInvocation struct {
 	Revision       int64
 }
 
-// DataExplorerAgentBootstrap and DataExplorerAgentCommandBindings are the neutral
-// agent projections accepted by the project's browser composition surface.
-type DataExplorerAgentBootstrap = projectui.DataExplorerAgentBootstrap
-type DataExplorerAgentCommandBindings = projectui.DataExplorerAgentCommandBindings
-
 type BrowserHandler struct {
 	// Agent state and subscriptions are feature-owned projections supplied by app composition.
 	AgentBootstrap     func(*stdhttp.Request) projectui.DataExplorerAgentBootstrap
@@ -571,13 +566,6 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}
 	}
 	writeDocument(w, projectui.DataExplorerPageWithAgentAndSavedExplorationsAndDashboard(catalog, page, explorer, h.dataExplorerAgentBootstrap(r), h.AgentCommands, savedState, dashboard, h.csrf(r), h.layout(r)))
-}
-
-func (h *BrowserHandler) dataExplorerAgentBootstrap(r *stdhttp.Request) projectui.DataExplorerAgentBootstrap {
-	if h.AgentBootstrap == nil {
-		return projectui.DataExplorerAgentBootstrap{}
-	}
-	return h.AgentBootstrap(r)
 }
 
 func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -992,27 +980,13 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}
 		defer unsubscribe()
 	}
-	// Subscribe before reading the agent bootstrap. Embedded turns stream their
-	// transcript on the command response; the canonical stream also carries async
-	// conversation/title changes for this authenticated browser and principal.
-	var agentWake <-chan pagestream.SignalPatch
-	explorerClientID := ""
-	if route == "data" && r.URL.Query().Get("surface") == "explore" && h.AgentSubscribe != nil {
-		var err error
-		explorerClientID, err = h.ClientIDs.Ensure(w, r)
-		if err != nil {
-			stdhttp.Error(w, "page-stream client identity is unavailable", stdhttp.StatusServiceUnavailable)
-			return
-		}
-		var unsubscribe func()
-		agentWake, unsubscribe, err = h.AgentSubscribe(r, explorerClientID)
-		if err != nil {
-			stdhttp.Error(w, "agent updates are unavailable", stdhttp.StatusServiceUnavailable)
-			return
-		}
-		if unsubscribe != nil {
-			defer unsubscribe()
-		}
+	// Subscribe before the bootstrap projection to retain concurrent agent changes.
+	explorerAgent, ok := h.subscribeDataExplorerAgent(w, r)
+	if !ok {
+		return
+	}
+	if explorerAgent.unsubscribe != nil {
+		defer explorerAgent.unsubscribe()
 	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
 	var dataExplorerBootstrapCommand *projectsignals.DataExplorerCommand
@@ -1084,7 +1058,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	// serving generation activated while this SSE request remains open.
 	r = streamRequest
 	if dataExplorerBootstrapCommand != nil {
-		if explorerClientID == "" {
+		if explorerAgent.clientID == "" {
 			if _, err := h.ClientIDs.Ensure(w, r); err != nil {
 				return
 			}
@@ -1107,8 +1081,8 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if err != nil {
 			return
 		}
-		if agentWake != nil {
-			_ = stream.ForwardUpdates(r.Context(), agentWake)
+		if explorerAgent.updates != nil {
+			_ = stream.ForwardUpdates(r.Context(), explorerAgent.updates)
 		} else {
 			stream.Wait(r.Context())
 		}
