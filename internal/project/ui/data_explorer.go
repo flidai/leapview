@@ -84,10 +84,6 @@ func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPag
 	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
 }
 
-func DataExplorerPageWithSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
-	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, dashboard, csrfToken, providers...)
-}
-
 // DataExplorerPageWithAgentAndSavedExplorationsAndDashboard composes the agent
 // projection with exploration authoring features without importing the agent domain.
 func DataExplorerPageWithAgentAndSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
