@@ -176,6 +176,10 @@
         {
           default = application;
           leapview = application;
+          managed-recovery-test-tools = import ./nix/managed-recovery-test-tools.nix {
+            application = developmentBuild;
+            inherit revision dirty;
+          };
           leapview-image = image;
           leapview-linux = portable;
           leapview-compose = composeApplication;

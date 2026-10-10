@@ -7,12 +7,30 @@ on:
       - deploy/managed/**
       - .github/workflows/managed-scaffold.yml
       - Taskfile.yml
+      - flake.nix
+      - flake.lock
+      - nix/managed-recovery-test-tools.nix
+      - nix/application.nix
+      - nix/dependencies.nix
+      - scripts/qualify_managed_coordinator_ci.sh
+      - internal/app/**
+      - go.mod
+      - go.sum
   push:
     branches: [main]
     paths:
       - deploy/managed/**
       - .github/workflows/managed-scaffold.yml
       - Taskfile.yml
+      - flake.nix
+      - flake.lock
+      - nix/managed-recovery-test-tools.nix
+      - nix/application.nix
+      - nix/dependencies.nix
+      - scripts/qualify_managed_coordinator_ci.sh
+      - internal/app/**
+      - go.mod
+      - go.sum
   workflow_dispatch:
     inputs:
       boot_test:
@@ -92,6 +110,23 @@ jobs:
       - name: Exercise managed-host updates, rollback, reboot and coordinated recovery components
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
         run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+  installed-coordinator:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Exercise private installed coordinator, replay and independent admission
+        run: nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh
+      # Raw exports/provider errors include disposable private credentials and
+      # must not be uploaded. The script prints only bounded component evidence.
   fresh-install:
     if: ${{ github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.boot_test }}
     runs-on: ubuntu-24.04

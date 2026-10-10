@@ -58,6 +58,27 @@ test('managed replacement qualification cannot silently omit native providers in
   }
 })
 
+test('installed managed coordinator is a private component in a separate bounded hosted gate', () => {
+  const workflow = parse(readFileSync('.github/workflows/managed-scaffold.yml', 'utf8'))
+  expect(workflow.jobs.hosts['timeout-minutes']).toBe(60)
+  const job = workflow.jobs['installed-coordinator']
+  expect(job['runs-on']).toBe('ubuntu-24.04')
+  expect(job['timeout-minutes']).toBe(60)
+  expect(job.steps.some((step: any) => step.run === 'nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh')).toBe(true)
+  expect(job.steps.some((step: any) => step.uses?.startsWith('actions/upload-artifact@'))).toBe(false)
+  for (const event of ['pull_request', 'push']) {
+    expect(workflow.on[event].paths).toContain('scripts/qualify_managed_coordinator_ci.sh')
+    expect(workflow.on[event].paths).toContain('internal/app/**')
+  }
+  const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
+  expect(tasks['managed:hosts:coordinator-test'].cmds).toContain('nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh')
+  const runner = readFileSync('scripts/qualify_managed_coordinator_ci.sh', 'utf8')
+  expect(runner).toContain('#managed-coordinator-test.driver')
+  expect(runner).toContain("-test.run '^TestManagedRecoveryInstalledPublicationExport$'")
+  expect(runner).toContain('nix-store --export "${tool_paths[@]}"')
+  expect(runner).toContain('umask 077')
+})
+
 test('Nix source-generation inputs select their consumer builds', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   for (const input of ['scripts/generate_build_sources.sh', 'scripts/time_build_phase.sh']) {

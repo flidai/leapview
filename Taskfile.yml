@@ -1778,6 +1778,11 @@ tasks:
     cmds:
       - nix build path:./deploy/managed/nixos#fresh-install-bios path:./deploy/managed/nixos#fresh-install-uefi --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
 
+  managed:hosts:coordinator-test:
+    desc: Exercise actual installed coordinator restore, completed retry and independent admission using a private production-publication fixture
+    cmds:
+      - nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh
+
   managed:hosts:postgres-promotion-test:
     desc: Exercise actual installed PostgreSQL promotion module, private TLS and exact reboot retry in disposable guests
     cmds:

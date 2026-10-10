@@ -1,0 +1,13 @@
+{
+  "scope": "intended-image-only-for-disposable-component",
+  "producerRun": "https://github.com/flidai/leapview/actions/runs/38016533303/attempts/1",
+  "bindingArtifact": "managed-admission-38016533303-1-amd64/binding.json",
+  "artifact": {
+    "image": "ghcr.io/flidai/leapview@sha256:d02f76b0d7f79741281c333cb82885531603a6921ea5e2fe7f0522163ac431f3",
+    "sourceRevision": "f8c2edc45f2609f14d270d26a5ef9d93ae977796",
+    "version": "0.3.0-alpha.1",
+    "platform": "linux/amd64",
+    "distribution": "oci"
+  },
+  "releaseAdmissionQualified": false
+}

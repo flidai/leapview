@@ -444,3 +444,44 @@ full managed-profile acceptance. Its fixture frontier is explicitly separate
 from the canonical RecoverySet authority enforced by the Go coordinator. D09 and
 D13 remain open until their remaining real-provider/application acceptance
 evidence is retained and reviewed.
+
+### Disposable installed coordinator component
+
+`task managed:hosts:coordinator-test` builds the production controller and a
+focused actual-publication fixture executable, then runs the pinned NixOS test
+driver outside the build sandbox. The fixture completes the real first-source
+HTTP publication and durable activation-job acknowledgement before privately
+exporting its physical PostgreSQL snapshot, encrypted instance keyring, native
+DuckLake closure and immutable Restic snapshots. Its content manifest covers
+every exported file. The export and public executable hashes are independent
+provenance; no private bytes enter the Nix store.
+
+The disposable original installs that exact snapshot, captures an actual
+module-owned pgBackRest backup/WAL target, and invokes production
+`PrepareRecovery` to retain the canonical frontier and retention hold. A third
+disposable PostgreSQL cluster provides the independent authority. Production
+CLI commands initialize that authority, enroll the prepared frontier, establish
+a real original-host SSH fence, and qualify fresh replacement restoration,
+completed acknowledgement replay and independent admission. The replacement
+uses `recoveryRestore = true`, the actual fixed module helper and a recovery
+owner outside the PostgreSQL group. Reboot admission must leave PostgreSQL
+stopped. Wrong original-machine/frontier substitutions cannot produce a
+qualification receipt or materialize PGDATA.
+
+The `installed-coordinator` managed scaffold CI job has its own 60-minute
+budget. It retains raw failure diagnostics only in private disposable fixture
+files and uploads no private fixture artifacts. A failed local run reports the
+owned mode0700 directory for diagnosis; a successful run removes it.
+
+The intended linux/amd64 image reference is pinned to the real retained
+`managed-admission-38016533303-1-amd64/binding.json` from release run
+[38016533303](https://github.com/flidai/leapview/actions/runs/38016533303).
+This component **does not execute that image**. Its intended image/source
+identity is reported separately from the actual fixture/controller producer
+hashes and source identities. It reuses the authenticated cached DuckDB engine
+for the fixture rather than proving the rebuilt-engine release gate.
+`activationQualified`, `releaseAdmissionQualified`, and
+`fullManagedProfileQualified` remain false. Customer provider credentials,
+protected immutable-candidate deployment, actual managed host inventory,
+application readiness/acknowledgement reconciliation and the full two-host
+qualification remain required before D13 can close.
