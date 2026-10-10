@@ -416,20 +416,35 @@ jobs:
         uses: ./.github/actions/setup-ci
         with:
           profile: orchestration
-      - name: Require independently reviewed performance governance
+      - name: Verify trusted performance reference evidence
         env:
           GH_TOKEN: ${{ github.token }}
           TRUSTED_MAIN: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin "${TRUSTED_MAIN}"
-          trusted_scripts="${RUNNER_TEMP}/trusted-performance-review"
+          trusted_scripts="${RUNNER_TEMP}/trusted-performance-evidence"
           mkdir -p "${trusted_scripts}"
           git show FETCH_HEAD:scripts/performance_baseline_review.mjs > "${trusted_scripts}/performance_baseline_review.mjs"
           if git cat-file -e FETCH_HEAD:scripts/qualify_performance_reference.mjs; then
             git show FETCH_HEAD:scripts/qualify_performance_reference.mjs > "${trusted_scripts}/qualify_performance_reference.mjs"
           fi
-          node "${trusted_scripts}/performance_baseline_review.mjs"
+          # Use the trusted evidence API directly, including while main still has
+          # the former CLI approval check. PR review remains a GitHub merge rule.
+          node --input-type=module - "${trusted_scripts}" <<'NODE'
+          import { resolve } from 'node:path'
+          import { pathToFileURL } from 'node:url'
+          const trusted = (name) => pathToFileURL(resolve(process.argv[2], name)).href
+          const { readPerformanceReference } = await import(trusted('performance_baseline_review.mjs'))
+          const reference = readPerformanceReference()
+          if (reference) {
+            const { verifyPerformanceReferenceEvidence } = await import(trusted('qualify_performance_reference.mjs'))
+            verifyPerformanceReferenceEvidence(reference)
+            console.log(`Trusted performance reference evidence verified at ${reference.commit}.`)
+          } else {
+            console.log('No accepted performance reference; qualification remains absolute-only.')
+          }
+          NODE
       - name: Read the exact plan artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

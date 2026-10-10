@@ -5,6 +5,9 @@ Inventory against main `c5aea6cc2768cffa504fc3000a3d235a098da1af`,
 hosting profile. Run `rg -n 'setup-ci|setup-go|setup-node|setup-bun|apt-get' .github`
 when adding or removing a caller.
 
+Updated on 10 October 2026 to remove the retired Kamal trial publisher from the
+active caller inventory; its fixtures and archived admission evidence remain.
+
 | Caller | Tool owner | Contract and remaining boundary |
 | --- | --- | --- |
 | `scripts/develop.sh` | Locked root flake on x86_64 Linux | Existing Task ordering; other platforms execute their conventional tools |
@@ -20,7 +23,7 @@ when adding or removing a caller.
 | `release.yml` | Explicit `toolchain: conventional` | Published CLI/application archives and exact-image qualification retain existing platform/loader baselines pending independent Stage 2 adoption |
 | `desktop-preview-candidate` action, `desktop-preview-release.yml`, `electron-security-proof.yml` | Conventional native Go/Bun/Electron builders | Retain Linux packaging and supported macOS/Windows paths until desktop artifact qualification |
 | `oci-admission` action | Existing conventional Go verifier | Independent protected final-artifact admission; no Nix output adoption implied |
-| `ci-health.yml`, `localdocker-macos.yml`, `site-kamal-trial.yml`, `public-site-smoke.yml` | Existing purpose-specific setup | Preserve health reporting, non-Linux tests and separately qualified site operations |
+| `ci-health.yml`, `localdocker-macos.yml`, `public-site-smoke.yml` | Existing purpose-specific setup | Preserve health reporting, non-Linux tests and separately qualified site operations |
 | `managed-scaffold.yml` | Locked managed-host flake, pinned OpenTofu installer and Ruby container | Separate host closure/activation/network checks, mocked infrastructure and Kamal template contracts; the root development shell does not replace these role-specific inputs |
 | `hetzner-deploy.yml`, `site-infrastructure.yml` | Existing pinned Terraform installer | Retain infrastructure state ownership and provider validation independently of application tools |
 | Terraform setup in `setup-ci` | Existing pinned Terraform 1.13.5 installer and provider cache | Required by existing deployment validation; do not replace infrastructure state ownership during a tools change |

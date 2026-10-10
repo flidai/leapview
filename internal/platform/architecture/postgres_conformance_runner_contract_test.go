@@ -147,6 +147,9 @@ func TestPostgreSQLConformanceRunnerFailsClosedOnEmptyInventory(t *testing.T) {
 	if !strings.Contains(result.output, "PostgreSQL conformance inventory is empty") {
 		t.Fatalf("empty inventory error = %q", result.output)
 	}
+	if _, err := os.Stat(filepath.Join(fixture.root, "image-ready")); !os.IsNotExist(err) {
+		t.Fatalf("empty inventory invoked image preparation: %v", err)
+	}
 	if _, err := os.Stat(fixture.stubArgs); err == nil {
 		t.Fatal("empty inventory invoked the Go runner")
 	} else if !os.IsNotExist(err) {
@@ -165,6 +168,21 @@ func TestPostgreSQLConformanceRunnerPropagatesGoErrors(t *testing.T) {
 	exitErr, ok := result.err.(*exec.ExitError)
 	if !ok || exitErr.ExitCode() != 37 {
 		t.Fatalf("Go test error = %v, want exit code 37", result.err)
+	}
+}
+
+func TestPostgreSQLConformanceRunnerPropagatesImageErrors(t *testing.T) {
+	t.Setenv("STUB_IMAGE_EXIT", "41")
+	fixture := newPostgreSQLConformanceFixture(t, map[string]string{
+		"internal/pg/shared/shared_test.go": "package shared\n\nfunc TestShared(t *testing.T) { " + postgresSharedStart + " }\n",
+	})
+	result := fixture.run(t, 0)
+	exitErr, ok := result.err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 41 {
+		t.Fatalf("image preparation error = %v, want exit code 41", result.err)
+	}
+	if _, err := os.Stat(fixture.stubBuild); !os.IsNotExist(err) {
+		t.Fatalf("Go build ran after image preparation failed: %v", err)
 	}
 }
 
@@ -233,13 +251,23 @@ func newPostgreSQLConformanceFixture(t *testing.T, testFiles map[string]string) 
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/flidai/leapview\n\ngo 1.26.8\n"), 0o644); err != nil {
 		t.Fatalf("write fixture go.mod: %v", err)
 	}
-	source, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "postgres-conformance-tests.sh"))
-	if err != nil {
-		t.Fatalf("read PostgreSQL conformance runner: %v", err)
-	}
 	script := filepath.Join(root, "scripts", "postgres-conformance-tests.sh")
-	if err := os.WriteFile(script, source, 0o755); err != nil {
-		t.Fatalf("write fixture PostgreSQL conformance runner: %v", err)
+	for _, relative := range []string{
+		"scripts/postgres-conformance-tests.sh",
+		"scripts/prepare_ci_fixture_images.sh",
+		"internal/platform/postgres/postgrestest/harness.go",
+	} {
+		source, err := os.ReadFile(filepath.Join(repoRoot(t), relative))
+		if err != nil {
+			t.Fatalf("read conformance fixture input %s: %v", relative, err)
+		}
+		target := filepath.Join(root, relative)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, source, 0o644); err != nil {
+			t.Fatalf("write conformance fixture input %s: %v", relative, err)
+		}
 	}
 	for relative, body := range testFiles {
 		path := filepath.Join(root, filepath.FromSlash(relative))
@@ -263,9 +291,18 @@ func newPostgreSQLConformanceFixture(t *testing.T, testFiles map[string]string) 
 		t.Fatalf("create fixture bin directory: %v", err)
 	}
 	stub := filepath.Join(stubDir, "go")
-	stubSource := "#!/usr/bin/env bash\nset -eu\nif [[ \"$1\" == build ]]; then printf '%s\\n' \"$@\" > \"$STUB_BUILD\"; exit 0; fi\nprintf '%s\\n' \"$@\" > \"$STUB_ARGS\"\nprintf '%s' \"${LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED-}\" > \"$STUB_REQUIRED\"\nexit \"${STUB_EXIT:-0}\"\n"
+	stubSource := "#!/usr/bin/env bash\nset -eu\ntest -f \"$STUB_IMAGE_READY\"\nif [[ \"$1\" == build ]]; then printf '%s\\n' \"$@\" > \"$STUB_BUILD\"; exit 0; fi\nprintf '%s\\n' \"$@\" > \"$STUB_ARGS\"\nprintf '%s' \"${LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED-}\" > \"$STUB_REQUIRED\"\nexit \"${STUB_EXIT:-0}\"\n"
 	if err := os.WriteFile(stub, []byte(stubSource), 0o755); err != nil {
 		t.Fatalf("write fixture Go stub: %v", err)
+	}
+	dockerStub := `#!/usr/bin/env bash
+set -eu
+if [[ "${STUB_IMAGE_EXIT:-0}" != 0 ]]; then exit "$STUB_IMAGE_EXIT"; fi
+printf 'sha256:%064d\n' 0
+touch "$STUB_IMAGE_READY"
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "docker"), []byte(dockerStub), 0o755); err != nil {
+		t.Fatalf("write fixture Docker stub: %v", err)
 	}
 	return postgresConformanceFixture{
 		root:        root,
@@ -285,6 +322,7 @@ func (f postgresConformanceFixture) run(t *testing.T, exitCode int) postgresConf
 		"STUB_ARGS="+f.stubArgs,
 		"STUB_BUILD="+f.stubBuild,
 		"STUB_REQUIRED="+f.stubRequire,
+		"STUB_IMAGE_READY="+filepath.Join(f.root, "image-ready"),
 		"STUB_EXIT="+strconv.Itoa(exitCode),
 	)
 	output, err := cmd.CombinedOutput()
