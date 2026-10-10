@@ -1,65 +1,14 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
+import { expect, test } from 'bun:test'
+import { expect as browserExpect } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
+import { hostBrowserFixture } from './host-browser.test-fixture'
 
-let server: Server
-let baseURL = ''
-let browser: Browser
-const projectRoot = process.cwd()
-const fixtureRoot = join(projectRoot, '.tmp/visualization-host-test')
-
-function testDocument(): string {
-  // Exercise the real host and adapters without requiring dashboard/Datastar
-  // bootstrap. Route-level behavior stays covered by the dashboard suites.
-  return `<!doctype html><html><body>
-    <script type="module">
-      import '/visualization-host-under-test.js';
-      const envelopes = ${JSON.stringify(testVisualizationEnvelopes())};
-      const sources = Object.fromEntries(Object.entries(envelopes).map(([id, envelope]) => [id, { envelope }]));
-      const eager = document.createElement('lv-visualization-host');
-      eager.envelope = envelopes.orders_kpi;
-      document.body.append(eager);
-      sources.orders_kpi = eager;
-      window.__lvSourceHosts = sources;
-    </script>
-  </body></html>`
-}
-
-beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : fixtureRoot
-    const file = normalize(join(fileRoot, url.pathname))
-    if (!file.startsWith(fileRoot)) { response.writeHead(404); response.end('not found'); return }
-    try {
-      response.setHeader('content-type', file.endsWith('.css') ? 'text/css' : 'text/javascript')
-      response.end(await readFile(file))
-    } catch { response.writeHead(404); response.end('not found') }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('test server did not bind')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
-})
-
-afterAll(async () => {
-  await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-}, 15_000)
+const fixture = hostBrowserFixture()
 
 test('standalone chart hosts keep the canvas renderer outside the builder', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
     const surface = await page.evaluate(async () => {
       const host = document.createElement('lv-visualization-host') as any
@@ -74,9 +23,9 @@ test('standalone chart hosts keep the canvas renderer outside the builder', asyn
 })
 
 test('compact KPI cards align their titles regardless of comparison details', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
     const offsets = await page.evaluate(async () => {
       const source = (window as any).__lvSourceHosts.orders_kpi.envelope
@@ -102,9 +51,9 @@ test('compact KPI cards align their titles regardless of comparison details', as
 })
 
 test('wide compact KPI values and notes fit the contracted minimum height', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
     await page.addStyleTag({ content: ':root { --base-size-4:4px; --base-size-8:8px; --base-size-12:12px; --base-size-16:16px; --base-size-32:32px; --text-title-size-small:20px; --text-title-size-medium:24px; --text-display-size:48px; --lv-type-caption:12px/16px sans-serif; --lv-type-body-compact:14px/20px sans-serif; }' })
     for (const width of [320, 720, 1320]) {
@@ -133,7 +82,7 @@ test('wide compact KPI values and notes fit the contracted minimum height', asyn
 })
 
 test('deferred hosts retain the latest valid envelope and mount once on eligibility', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => {
       const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }> = []
@@ -153,7 +102,7 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
     const state = await page.evaluate(async () => {
@@ -261,7 +210,7 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
 })
 
 test('visualization hosts suspend queued resize work and apply only the latest size on resume', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 })
   try {
     await page.addInitScript(() => {
       const observers: any[] = []
@@ -280,7 +229,7 @@ test('visualization hosts suspend queued resize work and apply only the latest s
       Object.defineProperty(window, 'ResizeObserver', { configurable: true, value: ControlledResizeObserver })
       Object.defineProperty(window, '__lvResizeObservers', { configurable: true, value: observers })
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
     const result = await page.evaluate(async () => {
@@ -342,9 +291,9 @@ test('visualization hosts suspend queued resize work and apply only the latest s
 })
 
 test('mounted deferred hosts retain current renderer, shell, and actions after stale signals', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => (window as any).__lvSourceHosts)
     const result = await page.evaluate(async () => {
       const host = document.createElement('lv-visualization-host') as any
@@ -392,9 +341,9 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
 })
 
 test('Explore appears only when a trusted dashboard link is supplied', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => (window as any).__lvSourceHosts)
     const state = await page.evaluate(async () => {
       const host = document.createElement('lv-visualization-host') as any
@@ -414,9 +363,9 @@ test('Explore appears only when a trusted dashboard link is supplied', async () 
 })
 
 test('visual option popovers are exclusive, keyboard navigable, and dismiss on Escape or outside input', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
     // Standalone hosts need the layout tokens normally supplied by the page shell.
     await page.addStyleTag({ content: ':root { --zIndex-sticky: 100; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-16: 16px; --base-size-24: 24px; } lv-visualization-host { display: block; width: 360px; height: 160px; margin: 24px; }' })
@@ -470,9 +419,9 @@ test('visual option popovers are exclusive, keyboard navigable, and dismiss on E
 })
 
 test('queued signals are announced only after their own renderer apply completes', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => (window as any).__lvSourceHosts)
     const result = await page.evaluate(async () => {
       const host = document.createElement('lv-visualization-host') as any
@@ -523,7 +472,7 @@ test('queued signals are announced only after their own renderer apply completes
 })
 
 test('snapshot explicitly mounts a deferred host without an intersection callback', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => {
       const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean }> = []
@@ -539,7 +488,7 @@ test('snapshot explicitly mounts a deferred host without an intersection callbac
       Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
     const state = await page.evaluate(async () => {
@@ -564,7 +513,7 @@ test('snapshot explicitly mounts a deferred host without an intersection callbac
 })
 
 test('eligibility before data waits for the later valid envelope', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => {
       const observers: Array<{ callback: IntersectionObserverCallback; target?: Element }> = []
@@ -580,7 +529,7 @@ test('eligibility before data waits for the later valid envelope', async () => {
       Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
     const mounted = await page.evaluate(async () => {
@@ -621,9 +570,9 @@ test('eligibility before data waits for the later valid envelope', async () => {
 })
 
 test('eager invalid and unknown-renderer envelopes remain visible errors', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
     const errors = await page.evaluate(async () => {
@@ -655,7 +604,7 @@ test('eager invalid and unknown-renderer envelopes remain visible errors', async
 })
 
 test('pending renderer loads reject stale mount promises after detach and reattach', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   const startedAt = Date.now()
   const lifecycle: Array<{ elapsedMs: number; phase: string; event: string; detail?: unknown }> = []
   let phase = 'page-created'
@@ -674,7 +623,7 @@ test('pending renderer loads reject stale mount promises after detach and reatta
   const diagnosticPathKind = (value: string): string => {
     try {
       const url = new URL(value)
-      if (url.origin !== baseURL) return 'external'
+      if (url.origin !== fixture.baseURL) return 'external'
       if (url.pathname === '/') return 'document'
       if (url.pathname.startsWith('/chunks/echarts-')) return 'echarts-renderer-chunk'
       if (url.pathname.startsWith('/static/vendor/')) return 'vendor-asset'
@@ -689,7 +638,7 @@ test('pending renderer loads reject stale mount promises after detach and reatta
   page.on('crash', () => record('page-crash'))
   page.on('requestfailed', (request) => record('request-failed', { resourceType: request.resourceType(), method: request.method(), path: diagnosticPathKind(request.url()) }))
   const onBrowserDisconnected = () => record('browser-disconnected')
-  browser.on('disconnected', onBrowserDisconnected)
+  fixture.browser.on('disconnected', onBrowserDisconnected)
   let releaseRenderer!: () => void
   let rendererRequested!: () => void
   const rendererBlocked = new Promise<void>((resolve) => { releaseRenderer = resolve })
@@ -703,7 +652,7 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       await route.continue()
     })
     mark('navigation-started')
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     mark('host-bootstrap-wait')
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
@@ -792,12 +741,12 @@ test('pending renderer loads reject stale mount promises after detach and reatta
   } finally {
     releaseRenderer?.()
     await page.close()
-    browser.off('disconnected', onBrowserDisconnected)
+    fixture.browser.off('disconnected', onBrowserDisconnected)
   }
 })
 
 test('existing and authoring hosts stay eager by default, including with no intersection', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => {
       const observers: unknown[] = []
@@ -809,7 +758,7 @@ test('existing and authoring hosts stay eager by default, including with no inte
       Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: FailingIntersectionObserver })
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
     const state = await page.evaluate(async () => {
@@ -836,7 +785,7 @@ test('existing and authoring hosts stay eager by default, including with no inte
 })
 
 test('a deferred host can be switched back to eager mounting without leaking its observer', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => {
       const observers: Array<{ target?: Element; disconnected: boolean }> = []
@@ -852,7 +801,7 @@ test('a deferred host can be switched back to eager mounting without leaking its
       Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: DeferredIntersectionObserver })
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: observers })
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
     const state = await page.evaluate(async () => {
@@ -881,7 +830,7 @@ test('a deferred host can be switched back to eager mounting without leaking its
 })
 
 test('dashboard hosts fall back to eager mounting when nested scroll margins are unsupported', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => {
       const records: Array<{ disconnected: boolean }> = []
@@ -894,7 +843,7 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
       Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: LegacyIntersectionObserver })
       Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: records })
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
     const state = await page.evaluate(async () => {
       const source = (window as any).__lvSourceHosts.orders_kpi
@@ -926,7 +875,7 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
 
 for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
   test(`deferred hosts fall back to eager mounting when IntersectionObserver ${failureMode}`, async () => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
     let releaseRendererChunk = () => {}
     let rendererChunkRequested: Promise<void> | undefined
     try {
@@ -954,7 +903,7 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
         }
         Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: FailingIntersectionObserver })
       }, failureMode)
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
       if (rendererChunkRequested) await rendererChunkRequested
 
@@ -985,9 +934,9 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
 
 for (const variant of ['chart', 'headerless chart', 'table']) {
   test(`expanded ${variant} hides Expand and restores it when returned to the dashboard`, async () => {
-    const page = await browser.newPage()
+    const page = await fixture.browser.newPage()
     try {
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => (window as any).__lvSourceHosts)
       await page.evaluate(async variant => {
         const host = document.createElement('lv-visualization-host') as any
@@ -1026,9 +975,9 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
 }
 
 test('narrow chart cards keep long titles and renderer geometry within the card', async () => {
-  const page = await browser.newPage({ viewport: { width: 320, height: 844 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 320, height: 844 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
     const widths = await page.evaluate(async () => {
       const host = document.createElement('lv-visualization-host') as any
@@ -1045,18 +994,18 @@ test('narrow chart cards keep long titles and renderer geometry within the card'
 })
 
 test('lazy validation leaves empty hosts unloaded and retains the last valid queued envelope', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   const requests: string[] = []
   let release!: () => void
   const blocked = new Promise<void>((resolve) => { release = resolve })
   try {
-    await page.route(baseURL + '/', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><body><lv-visualization-host></lv-visualization-host><script type="module">import '/visualization-host-under-test.js'; window.__envelopes = ${JSON.stringify(testVisualizationEnvelopes())};</script>` }))
+    await page.route(fixture.baseURL + '/', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><body><lv-visualization-host></lv-visualization-host><script type="module">import '/visualization-host-under-test.js'; window.__envelopes = ${JSON.stringify(testVisualizationEnvelopes())};</script>` }))
     await page.route('**/chunks/validate-*.js', async (route) => {
       requests.push(route.request().url())
       await blocked
       await route.continue()
     })
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__envelopes)
     expect(requests).toHaveLength(0)
     const pending = await page.evaluate(async () => {
@@ -1095,9 +1044,9 @@ test('lazy validation leaves empty hosts unloaded and retains the last valid que
 })
 
 test('table menus receive and clear the authorized Explorer link after renderer mount', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => (window as any).__lvSourceHosts)
     const state = await page.evaluate(async () => {
       const host = document.createElement('lv-visualization-host') as any
@@ -1128,9 +1077,9 @@ test('table menus receive and clear the authorized Explorer link after renderer 
 
 for (const rows of [5, 250]) {
   test(`content-sized table fits ${rows} rows with bounded internal scrolling`, async () => {
-    const page = await browser.newPage()
+    const page = await fixture.browser.newPage()
     try {
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => (window as any).__lvSourceHosts)
       await page.evaluate(async rows => {
         const container = document.createElement('div')
@@ -1163,9 +1112,9 @@ for (const rows of [5, 250]) {
 }
 
 test('table numeric headers and values align right while labels stay left', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => (window as any).__lvSourceHosts)
     await page.evaluate(async () => {
       const host = document.createElement('lv-visualization-host') as any

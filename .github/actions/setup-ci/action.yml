@@ -2,6 +2,10 @@ name: Set up LeapView CI
 description: Uses locked Nix tools on x86_64 Linux and restores bounded validation caches.
 
 inputs:
+  postgres:
+    description: Preload the pinned PostgreSQL image for database conformance shards.
+    required: false
+    default: "false"
   profile:
     description: validation retains the complete development toolchain; orchestration provides only locked Go and scripting tools on x86_64 Linux.
     required: false
@@ -53,6 +57,8 @@ runs:
     - name: Configure hosted Docker pulls
       if: inputs.profile == 'validation' && runner.os == 'Linux' && runner.environment == 'github-hosted'
       uses: ./.github/actions/setup-docker
+      with:
+        postgres: ${{ inputs.postgres }}
 
     - name: Install locked Nix
       if: inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'

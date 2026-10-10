@@ -1,5 +1,11 @@
 name: Configure hosted Docker pulls
-description: Prefer Google's Docker Hub cache and verify the pinned Testcontainers reaper on GitHub-hosted Linux runners.
+description: Prefer Google's Docker Hub cache and preload pinned PostgreSQL and Testcontainers reaper images on GitHub-hosted Linux runners.
+
+inputs:
+  postgres:
+    description: Preload the pinned PostgreSQL conformance image before concurrent database test shards.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -9,7 +15,7 @@ runs:
       shell: bash
       run: python3 scripts/mask_ci_docker_credentials.py
 
-    - name: Configure Docker mirror and pinned reaper before starting containers
+    - name: Configure Docker mirror and pinned test images before starting containers
       if: runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash
-      run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py
+      run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py ${{ inputs.postgres == 'true' && '--postgres' || '' }}

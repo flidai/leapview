@@ -20,6 +20,7 @@ on:
       - 'scripts/tests/test_orchestration_cache.py'
       - '.github/workflows/orchestration-cache.yml'
       - 'scripts/nix_ci_contract.test.ts'
+      - 'scripts/ci_docker_contract.test.ts'
       - 'scripts/configure_ci_docker_mirror.py'
       - 'scripts/mask_ci_docker_credentials.py'
       - 'scripts/tests/test_ci_docker_credentials.py'
