@@ -5,11 +5,25 @@ import { createDataExplorerDOMFixture } from './data-explorer.test-fixture'
 let fixture: Awaited<ReturnType<typeof createDataExplorerDOMFixture>>
 let baseURL = ''
 let browser: Browser
+let inspectorModule = ''
+let appCSS = ''
 
 beforeAll(async () => {
   fixture = await createDataExplorerDOMFixture()
   baseURL = fixture.baseURL
   browser = fixture.browser
+  const inspectorBuild = await Bun.build({
+    entrypoints: ['web/components/inspector/datastar-inspector.ts'], target: 'browser', format: 'esm',
+  })
+  if (!inspectorBuild.success) throw new Error('Inspector fixture build failed')
+  inspectorModule = await inspectorBuild.outputs[0].text()
+  const cssPath = '.tmp/data-explorer-test/agent-inspector-app.css'
+  const cssBuild = Bun.spawn(['./node_modules/.bin/tailwindcss', '-i', './static/app.input.css', '-o', cssPath], {
+    stdout: 'ignore', stderr: 'pipe',
+  })
+  const cssErrors = await new Response(cssBuild.stderr).text()
+  if (await cssBuild.exited) throw new Error(`Inspector CSS fixture build failed: ${cssErrors}`)
+  appCSS = await Bun.file(cssPath).text()
 })
 
 afterAll(async () => {
@@ -410,3 +424,80 @@ test('overlapping exploration and agent commands both recover from an ambiguous 
     expect(await drawer.getByText('The server rejected the governed context.', { exact: true }).count()).toBe(1)
   } finally { await page.close() }
 })
+
+for (const width of [375, 768, 1440]) {
+  test(`Explorer agent keeps the actual inspector clear of Send at ${width}px and restores it when unavailable`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    try {
+      await page.goto(baseURL)
+      await page.addStyleTag({ content: appCSS })
+      await page.addScriptTag({ type: 'module', content: inspectorModule })
+      await page.waitForFunction(() => customElements.get('datastar-inspector'))
+      await page.evaluate(async () => {
+        const modulePath = '/static/vendor/datastar-1.0.2.js?v=dev'
+        const { mergePatch } = await import(modulePath) as any
+        mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+          agent: { conversations: [], activeConversationId: '', transcript: [],
+            status: { enabled: true, running: false }, composer: { value: '', disabled: false } },
+          agentContext: { surface: 'data', modelId: 'semantic:sales', datasetId: 'orders', references: [],
+            exploration: { schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders',
+              dimensions: [], metrics: [], filters: [], sort: [], limit: 100 } },
+        })
+        const explorer = document.createElement('lv-data-explorer') as any
+        explorer.style.height = '100dvh'
+        explorer.addEventListener('lv-chat-submit', (event: CustomEvent) => {
+          (window as any).__inspectorAgentSubmission = event.detail.input
+        })
+        document.body.append(explorer, document.createElement('datastar-inspector'))
+        await explorer.updateComplete
+      })
+      const explorer = page.locator('lv-data-explorer')
+      const inspector = page.locator('datastar-inspector')
+      const inspectorVisible = () => inspector.evaluate((element) => getComputedStyle(element).display !== 'none')
+      expect(await inspectorVisible()).toBe(true)
+      await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).click()
+      const drawer = explorer.locator('lv-chat-drawer')
+      const composer = drawer.locator('lv-chat-composer')
+      await composer.locator('textarea').fill('Preserved Explorer draft')
+      expect(await inspectorVisible()).toBe(false)
+      expect(await explorer.getAttribute('data-agent-open')).toBe('')
+      expect(await composer.locator('textarea').inputValue()).toBe('Preserved Explorer draft')
+      const send = composer.getByRole('button', { name: 'Send', exact: true })
+      await send.click({ timeout: 2_000 })
+      expect(await page.evaluate(() => (window as any).__inspectorAgentSubmission)).toBe('Preserved Explorer draft')
+      const context = await drawer.evaluate((element: any) => element.context)
+      expect(context.modelId).toBe('semantic:sales')
+      expect(context.datasetId).toBe('orders')
+      await page.evaluate(async () => {
+        const modulePath = '/static/vendor/datastar-1.0.2.js?v=dev'
+        const { mergePatch } = await import(modulePath) as any
+        mergePatch({ agent: { status: { enabled: false } } })
+        await (document.querySelector('lv-data-explorer') as any).updateComplete
+      })
+      expect(await inspectorVisible()).toBe(true)
+      expect(await explorer.getAttribute('data-agent-open')).toBeNull()
+      await page.evaluate(async () => {
+        const modulePath = '/static/vendor/datastar-1.0.2.js?v=dev'
+        const { mergePatch } = await import(modulePath) as any
+        mergePatch({ agent: { status: { enabled: true } } })
+        await (document.querySelector('lv-data-explorer') as any).updateComplete
+      })
+      expect(await inspectorVisible()).toBe(false)
+      await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+      expect(await inspectorVisible()).toBe(true)
+      expect(await explorer.getAttribute('data-agent-open')).toBeNull()
+      await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).click()
+      expect(await inspectorVisible()).toBe(false)
+      await page.evaluate(async () => {
+        const modulePath = '/static/vendor/datastar-1.0.2.js?v=dev'
+        const { mergePatch } = await import(modulePath) as any
+        mergePatch({ agent: null })
+        await (document.querySelector('lv-data-explorer') as any).updateComplete
+      })
+      expect(await inspectorVisible()).toBe(true)
+      expect(await explorer.getAttribute('data-agent-open')).toBeNull()
+    } finally {
+      await page.close()
+    }
+  }, 15_000)
+}

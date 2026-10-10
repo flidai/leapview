@@ -681,6 +681,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   updated(): void {
+    const agent = this.signal<ChatSignal | null>('agent', null)
+    this.toggleAttribute('data-agent-open', this.agentDrawerOpen && Boolean(agent?.status.enabled))
     const observedExploreRequestSeq = this.dataExplorer.explore?.command?.requestSeq ?? 0
     if (observedExploreRequestSeq > this.latestExploreRequestSeq) this.latestExploreRequestSeq = observedExploreRequestSeq
     const exploreCommand = this.dataExplorer.explore?.command
@@ -719,7 +721,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.optimisticExplore = null
       if (!this.embedded) this.replaceDataExplorerURL(this.dataExplorer.command)
     }
-    const agent = this.signal<ChatSignal | null>('agent', null)
     if (this.agentSubmission && (this.agentTurnAccepted(agent)
       || Boolean(agent?.status.error && agent.status.error !== this.agentSubmission.error))) this.clearAgentSubmission()
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''

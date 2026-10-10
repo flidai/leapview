@@ -697,7 +697,8 @@
 
 /* Keep the development inspector launcher out of chat composers. */
 body:has(lv-chat-page) datastar-inspector,
-body:has(lv-dashboard-page[data-agent-open]) datastar-inspector {
+body:has(lv-dashboard-page[data-agent-open]) datastar-inspector,
+body:has(lv-data-explorer[data-agent-open]) datastar-inspector {
   display: none;
 }
 
