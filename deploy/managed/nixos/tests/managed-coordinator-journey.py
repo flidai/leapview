@@ -81,13 +81,16 @@ for machine in (source, authority, replacement):
     machine.wait_for_unit("sshd.service", timeout=300)
     machine.succeed("install -d -m 0700 /root/.ssh; install -d -m 0700 -o " + owner
                     + " -g " + owner + " /home/" + owner)
-    machine.copy_from_host(str(private.parent / "public-tools.nar"), state + "/public-tools.nar")
-    execute(machine, "nix-store --import < " + state + "/public-tools.nar", "public-tools-import", timeout=180)
-    assert read(machine, "/etc/machine-id").strip() != "0" * 32
     if machine is not authority:
+        machine.wait_for_unit("growpart.service", timeout=300)
         machine.succeed("test -L /nix/var/nix/profiles/system")
         assert machine.succeed("readlink -f /nix/var/nix/profiles/system").strip() == machine.succeed(
             "readlink -f /run/current-system").strip()
+        block_size, blocks = map(int, machine.succeed("stat -f -c '%S %b' /").split())
+        assert block_size * blocks > 6 * 1024**3, "installed root filesystem did not grow to the fixture disk"
+    machine.copy_from_host(str(private.parent / "public-tools.nar"), state + "/public-tools.nar")
+    execute(machine, "nix-store --import < " + state + "/public-tools.nar", "public-tools-import", timeout=180)
+    assert read(machine, "/etc/machine-id").strip() != "0" * 32
 
 with subtest("immutable actual-publication export installs only on disposable original"):
     source.succeed("test ! -e /var/lib/postgresql/18")
@@ -179,7 +182,7 @@ with subtest("actual installed backup frontier has real source preparation and i
             assert enrollment["request"][key] == original
 
 with subtest("separate recovery owner reaches actual fixed restore seam and retained native readback"):
-    replacement.succeed("install -m 0600 -o root -g root " + fixture_ssh_key + " /root/.ssh/id_ed25519")
+    put(replacement, "/root/.ssh/id_ed25519", Path(fixture_ssh_key).read_bytes())
     host_key = read(source, "/etc/ssh/ssh_host_ed25519_key.pub").strip()
     put(replacement, "/root/.ssh/known_hosts", "192.168.1.2 " + host_key + "\n")
     execute(replacement, "scp -rq -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o IdentityAgent=none "
