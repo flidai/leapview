@@ -54,21 +54,25 @@ test('Nix source-generation inputs select their consumer builds', () => {
   }
 })
 
-test('PostgreSQL conformance prepares its pinned image before parallel workers', () => {
+test('external conformance prepares pinned fixture images before container work', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
-  for (const input of ['scripts/prepare_postgres_image.sh', 'scripts/tests/test_prepare_postgres_image.py',
+  for (const input of ['scripts/prepare_ci_fixture_images.sh', 'scripts/tests/test_prepare_ci_fixture_images.py',
     'scripts/postgres-conformance-tests.sh', 'scripts/postgres-app-shards.sh',
     'internal/platform/postgres/postgrestest/harness.go',
-    'internal/platform/postgres/postgrestest/cmd/packageexec/main.go']) {
+    'internal/platform/postgres/postgrestest/cmd/packageexec/main.go',
+    'internal/platform/testminio/Dockerfile']) {
     expect(workflow.on.pull_request.paths.some((pattern: string) => new Bun.Glob(pattern).match(input))).toBe(true)
   }
   expect(readFileSync('Taskfile.yml', 'utf8')).toContain(
-    'python3 -m unittest discover -s scripts/tests -p test_prepare_postgres_image.py')
+    'python3 -m unittest discover -s scripts/tests -p test_prepare_ci_fixture_images.py')
   const runner = readFileSync('scripts/postgres-conformance-tests.sh', 'utf8')
-  expect(runner.indexOf('bash "$root/scripts/prepare_postgres_image.sh"')).toBeLessThan(
+  expect(runner.indexOf('bash "$root/scripts/prepare_ci_fixture_images.sh"')).toBeLessThan(
     runner.indexOf('bash "$root/scripts/postgres-app-shards.sh"'))
-  expect(runner.indexOf('bash "$root/scripts/prepare_postgres_image.sh"')).toBeLessThan(
+  expect(runner.indexOf('bash "$root/scripts/prepare_ci_fixture_images.sh"')).toBeLessThan(
     runner.indexOf('go test -exec'))
+  const external = parse(readFileSync('Taskfile.yml', 'utf8')).tasks['test:go:external'].cmds
+  expect(external.indexOf('bash scripts/prepare_ci_fixture_images.sh minio')).toBeLessThan(
+    external.indexOf('go test -tags integration ./internal/platform/testminio -count=1'))
 })
 
 test('orchestration archive manifest checks run in the CI contract lane', () => {
