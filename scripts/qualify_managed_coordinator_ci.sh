@@ -6,7 +6,9 @@ umask 077
 # production controller. It never deploys a protected image/customer host.
 : "${LEAPVIEW_TEST_MANAGED_RESTIC:?locked managed-recovery shell required}"
 : "${LEAPVIEW_TEST_MANAGED_POSTGRES_BIN:?locked managed-recovery shell required}"
-fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/leapview-managed-coordinator.XXXXXX")
+# The VM driver puts AF_UNIX sockets below runtime/vm-state-<machine>.
+# GitHub's nested Nix TMPDIR can exceed the kernel's socket path limit.
+fixture_root=$(mktemp -d /tmp/lv-coordinator.XXXXXX)
 cleanup() {
   outcome=$?
   if [[ $outcome == 0 ]]; then

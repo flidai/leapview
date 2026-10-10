@@ -2,7 +2,11 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 import tempfile
 import unittest
 from urllib.parse import parse_qs, urlsplit
@@ -13,6 +17,30 @@ spec.loader.exec_module(fixture)
 
 
 class CoordinatorFixtureTest(unittest.TestCase):
+    def test_runner_socket_setup_survives_long_ci_temporary_directory(self):
+        runner = Path(__file__).resolve().parents[4] / "scripts/qualify_managed_coordinator_ci.sh"
+        setup, _ = runner.read_text().split("# Build public artifacts before capturing", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            nested = Path(directory) / ("github-nix-shell-" + "x" * 60)
+            nested.mkdir()
+            # Bind the actual AF_UNIX socket suffix used by the pinned VM driver.
+            probe = '''
+mkdir -m 0700 "$fixture_root/runtime" "$fixture_root/runtime/vm-state-replacement"
+export COORDINATOR_SOCKET_PROBE="$fixture_root/runtime/vm-state-replacement/monitor"
+''' + shlex.quote(sys.executable) + ''' - <<'PY'
+import os, socket, stat
+from pathlib import Path
+path = Path(os.environ["COORDINATOR_SOCKET_PROBE"])
+assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o700
+with socket.socket(socket.AF_UNIX) as server:
+    server.bind(str(path))
+PY
+'''
+            env = dict(os.environ, TMPDIR=str(nested), LEAPVIEW_TEST_MANAGED_RESTIC="fixture",
+                       LEAPVIEW_TEST_MANAGED_POSTGRES_BIN="fixture")
+            result = subprocess.run(["bash", "-c", setup + probe], env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

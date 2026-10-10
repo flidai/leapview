@@ -77,6 +77,9 @@ test('installed managed coordinator is a private component in a separate bounded
   expect(runner).toContain("-test.run '^TestManagedRecoveryInstalledPublicationExport$'")
   expect(runner).toContain('nix-store --export "${tool_paths[@]}"')
   expect(runner).toContain('umask 077')
+  const transport = spawnSync('python3', ['deploy/managed/nixos/tests/managed_coordinator_fixture_test.py'], { encoding: 'utf8' })
+  if (transport.status !== 0) throw new Error(transport.stdout + transport.stderr)
+  expect(transport.status).toBe(0)
 })
 
 test('Nix source-generation inputs select their consumer builds', () => {
