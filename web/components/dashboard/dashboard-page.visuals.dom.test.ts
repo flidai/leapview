@@ -874,3 +874,62 @@ test('table data updates preserve desktop canvas positions', async () => {
     expect(results.mobileHeight).not.toBe('')
   } finally { await page.close() }
 })
+
+for (const width of [375, 1440]) {
+  test(`report table resize grips remain fully clickable inside headers at ${width}px`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 560 } })
+    try {
+      await page.goto(baseURL)
+      await page.addStyleTag({ content: await readFile('static/app.css', 'utf8') })
+      await page.waitForFunction(() => customElements.get('lv-report-table'))
+      await page.evaluate(async () => {
+        document.documentElement.dataset.colorMode = 'light'
+        document.documentElement.dataset.lightTheme = 'light'
+        const table = document.createElement('lv-report-table') as any
+        table.id = 'pointer-resize-table'
+        table.tableId = 'pointer-resize'
+        table.style.cssText = 'display:block;width:min(360px,calc(100vw - 40px));height:280px'
+        const sort = { key: 'category', direction: 'asc' }
+        table.table = { ...table.table, sort, resetVersion: 1,
+          columns: [{ key: 'category', label: 'Category', width: 180 }, { key: 'revenue', label: 'Revenue', width: 180, format: 'decimal' }],
+          availableRows: 1, cardinality: { kind: 'exact', value: 1 },
+          blocks: { a: { start: 0, requestSeq: 0, resetVersion: 1, sort, rows: [{ category: 'health_beauty', revenue: '1441993.05' }] } },
+        }
+        document.body.prepend(table)
+        await table.updateComplete
+      })
+      const table = page.locator('#pointer-resize-table')
+      for (const label of ['Category', 'Revenue']) {
+        await table.evaluate((element: any, lastColumn) => {
+          const scrollport = element.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+          const lastHeader = element.shadowRoot.querySelector('.header-cell:last-child') as HTMLElement
+          scrollport.scrollLeft = lastColumn
+            ? Math.max(0, scrollport.scrollLeft + lastHeader.getBoundingClientRect().right - scrollport.getBoundingClientRect().right + 8)
+            : 0
+        }, label === 'Revenue')
+        const resizer = table.getByRole('separator', { name: `Resize ${label} column`, exact: true })
+        const geometry = await resizer.evaluate(element => {
+          const grip = element.getBoundingClientRect(), header = element.parentElement!.getBoundingClientRect()
+          const root = element.getRootNode() as ShadowRoot
+          return { left: grip.left, right: grip.right, headerLeft: header.left, headerRight: header.right,
+            centerHitsGrip: root.elementFromPoint(grip.x + grip.width / 2, grip.y + grip.height / 2) === element }
+        })
+        expect(geometry.left).toBeGreaterThanOrEqual(geometry.headerLeft)
+        expect(geometry.right).toBeLessThanOrEqual(geometry.headerRight)
+        expect(geometry.centerHitsGrip).toBe(true)
+        const bounds = (await resizer.boundingBox())!
+        await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(bounds.x + bounds.width / 2 + 40, bounds.y + bounds.height / 2, { steps: 5 })
+        await page.mouse.up()
+        expect(await resizer.getAttribute('aria-valuenow')).toBe('220')
+        await resizer.focus()
+        await page.keyboard.press('ArrowRight')
+        expect(await resizer.getAttribute('aria-valuenow')).toBe('236')
+      }
+      expect(await table.locator('.header-button').count()).toBe(2)
+      expect(await table.getByText('health_beauty', { exact: true }).count()).toBe(1)
+      expect(await table.getByText('1441993.05', { exact: true }).count()).toBe(1)
+    } finally { await page.close() }
+  })
+}

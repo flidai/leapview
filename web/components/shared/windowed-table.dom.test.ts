@@ -358,6 +358,68 @@ test('windowed table resizes columns and emits width state', async () => {
   }
 })
 
+for (const width of [375, 1440]) {
+  test(`windowed table resize grips remain fully clickable inside headers at ${width}px`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 560 } })
+    try {
+      await page.goto(baseURL)
+      await page.evaluate(() => { document.documentElement.dataset.colorMode = 'light'; document.documentElement.dataset.lightTheme = 'light' })
+      await page.addStyleTag({ content: await readFile('static/app.css', 'utf8') })
+      await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+      await page.evaluate(async () => {
+        const element = document.createElement('lv-windowed-table') as any
+        element.style.width = 'calc(100vw - 40px)'
+        element.table = { fillWidth: false,
+          columns: [{ key: 'category', label: 'Category', width: 180 }, { key: 'revenue', label: 'Revenue', width: 180 }],
+          totalRows: 1, availableRows: 1,
+          blocks: { a: { start: 0, rows: [{ category: 'health_beauty', revenue: '1441993.05' }] } },
+        }
+        ;(window as any).pointerWidthEvents = []
+        element.addEventListener('lv-windowed-table-column-widths', (event: CustomEvent) => (window as any).pointerWidthEvents.push(event.detail.columnWidths))
+        document.body.append(element)
+        await element.updateComplete
+      })
+      for (const label of ['Category', 'Revenue']) {
+        const resizer = page.getByRole('separator', { name: `Resize ${label} column`, exact: true })
+        await page.locator('lv-windowed-table').evaluate(async (element: any, lastColumn) => {
+          const scrollport = element.shadowRoot.querySelector('.scrollport') as HTMLElement
+          const lastHeader = element.shadowRoot.querySelector('.header-cell:last-child') as HTMLElement
+          scrollport.scrollLeft = lastColumn
+            ? Math.max(0, scrollport.scrollLeft + lastHeader.getBoundingClientRect().right - scrollport.getBoundingClientRect().right + 8)
+            : 0
+          await new Promise(resolve => requestAnimationFrame(resolve))
+        }, label === 'Revenue')
+        const geometry = await resizer.evaluate(element => {
+          const grip = element.getBoundingClientRect()
+          const header = element.parentElement!.getBoundingClientRect()
+          const root = element.getRootNode() as ShadowRoot
+          return { left: grip.left, right: grip.right, headerLeft: header.left, headerRight: header.right,
+            centerHitsGrip: root.elementFromPoint(grip.x + grip.width / 2, grip.y + grip.height / 2) === element,
+            centerHit: root.elementFromPoint(grip.x + grip.width / 2, grip.y + grip.height / 2)?.outerHTML }
+        })
+        if (!geometry.centerHitsGrip) console.log({ width, label, geometry })
+        expect(geometry.left).toBeGreaterThanOrEqual(geometry.headerLeft)
+        expect(geometry.right).toBeLessThanOrEqual(geometry.headerRight)
+        expect(geometry.centerHitsGrip).toBe(true)
+        const bounds = (await resizer.boundingBox())!
+        await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(bounds.x + bounds.width / 2 + 40, bounds.y + bounds.height / 2, { steps: 5 })
+        await page.mouse.up()
+        expect(await resizer.getAttribute('aria-valuetext')).toBe('220 pixels')
+        await resizer.focus()
+        await page.keyboard.press('ArrowRight')
+        expect(await resizer.getAttribute('aria-valuetext')).toBe('236 pixels')
+      }
+      const events = await page.evaluate(() => (window as any).pointerWidthEvents)
+      expect(events).toHaveLength(4)
+      expect(events.at(-1)).toEqual({ category: 236, revenue: 236 })
+      expect(await page.locator('.header-cell .header-label').allTextContents()).toEqual(['Category', 'Revenue'])
+      expect((await page.locator('.cell').allTextContents()).map(value => value.trim())).toEqual(['health_beauty', '1441993.05'])
+    } finally { await page.close() }
+  })
+}
+
 test('windowed table column resizing is keyboard accessible and publishes clamped widths', async () => {
   const page = await browser.newPage()
   try {

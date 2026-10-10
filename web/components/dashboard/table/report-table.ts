@@ -739,7 +739,7 @@ export class ReportTable extends LitElement {
     .column-resizer {
       position: absolute;
       inset-block: 5px;
-      right: -3px;
+      right: 0;
       z-index: calc(var(--zIndex-default) + 3);
       width: 6px;
       cursor: col-resize;
