@@ -378,6 +378,86 @@ def verify_release_run(run, workflow, artifact, *, protected_revision, source_ro
     return binding
 
 
+def select_conventional_receipt_artifact(artifacts, authorization):
+    """Select original builder receipts from the already authorized release attempt."""
+    _validate_release_authorization(authorization)
+    name = f"compose-controller-build-identities-{authorization['releaseRunId']}-{authorization['releaseRunAttempt']}"
+    matches = [item for item in artifacts if item.get("name") == name]
+    if len(matches) != 1:
+        raise QualificationError("expected one original conventional controller receipt artifact")
+    artifact = matches[0]
+    run = artifact.get("workflow_run") or {}
+    if (type(artifact.get("id")) is not int or artifact["id"] <= 0
+            or artifact.get("expired") is not False
+            or run.get("id") != authorization["releaseRunId"]
+            or run.get("head_branch") != "main"
+            or run.get("head_sha") != authorization["sourceRevision"]):
+        raise QualificationError("conventional controller receipt artifact differs from the authorized release")
+    _digest(artifact.get("digest"), "original conventional controller receipt artifact digest")
+    return artifact
+
+
+def extract_conventional_bundles(release_zip, receipt_zip, receipt_artifact, authorization,
+                                source_root, output_dir, *, metadata_reader=None):
+    """Preserve original release archives and builder receipts; never rebuild either."""
+    artifact = select_conventional_receipt_artifact([receipt_artifact], authorization)
+    extract_release_handoff(release_zip, authorization["releaseArtifactDigest"],
+                            release_authorization=authorization)
+    receipt_data = _read_regular(receipt_zip, "original controller receipt ZIP", 1024 * 1024)
+    if _digest_bytes(receipt_data) != artifact["digest"]:
+        raise QualificationError("original controller receipt ZIP differs from its immutable API digest")
+    receipts = {}
+    with zipfile.ZipFile(io.BytesIO(receipt_data)) as archive:
+        for info in archive.infolist():
+            name, directory = _zip_member_name(info)
+            if directory or name not in {"linux-amd64.json", "linux-arm64.json"} or name in receipts:
+                raise QualificationError("original controller receipt ZIP has an unexpected inventory")
+            receipts[name] = _zip_bytes(archive, info, name, compose_bundle.MAX_IDENTITY_BYTES)
+    if set(receipts) != {"linux-amd64.json", "linux-arm64.json"}:
+        raise QualificationError("original controller receipt ZIP is missing a Linux platform")
+    output = Path(output_dir)
+    if output.exists() or output.is_symlink():
+        raise QualificationError("conventional bundle output directory must be new")
+    output.mkdir(parents=True, mode=0o700)
+    path, descriptor, signature = _open_regular(release_zip, "original release ZIP", MAX_ARTIFACT_ZIP_BYTES)
+    try:
+        with os.fdopen(os.dup(descriptor), "rb") as stream:
+            if "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest() != authorization["releaseArtifactDigest"]:
+                raise QualificationError("original release ZIP changed before extraction")
+            stream.seek(0)
+            with zipfile.ZipFile(stream) as archive:
+                for arch in ("amd64", "arm64"):
+                    target = output / arch
+                    target.mkdir(mode=0o700)
+                    package = f"leapview-compose-candidate-{authorization['releaseRunId']}-{authorization['releaseRunAttempt']}-linux-{arch}"
+                    for name in (package + ".tar.gz", package + ".tar.gz.sha256"):
+                        member = archive.getinfo("dist/" + name)
+                        _write_new(target / name, _zip_bytes(archive, member, name, MAX_ARTIFACT_MEMBER_BYTES))
+                    for name in ("release-identity.json", "image-reference.txt", "assembled-image-admission.json"):
+                        data = _zip_bytes(archive, archive.getinfo(name), name, MAX_ADMISSION_BYTES)
+                        _write_new(target / ("release-artifact-admission.json" if name == "assembled-image-admission.json" else name), data)
+                    _write_new(target / "controller-build-identity.json", receipts[f"linux-{arch}.json"])
+                    _write_json_new(target / "release-run-binding.json", authorization)
+                    identity = _load_json_argument(target / "release-identity.json", "release identity")
+                    binding = verify_bundle(target / (package + ".tar.gz"), target / (package + ".tar.gz.sha256"),
+                        target / "controller-build-identity.json", source_root, target / "release-identity.json",
+                        platform="linux/" + arch, source_revision=authorization["sourceRevision"],
+                        image=identity["image"], metadata_reader=metadata_reader)
+                    _write_json_new(target / "bundle-binding.json", binding)
+                    _write_json_new(target / "bundle-producer.json", {
+                        "schemaVersion": 1, "producer": "conventional", "releaseAdmission": False,
+                        "nixQualification": False, "releaseArtifactId": authorization["releaseArtifactId"],
+                        "releaseArtifactDigest": authorization["releaseArtifactDigest"],
+                        "receiptArtifactId": artifact["id"], "receiptArtifactDigest": artifact["digest"],
+                        "releaseRunId": authorization["releaseRunId"],
+                        "releaseRunAttempt": authorization["releaseRunAttempt"],
+                        "bundle": binding,
+                    })
+        _assert_unchanged(path, descriptor, signature, "original release ZIP")
+    finally:
+        os.close(descriptor)
+
+
 def _zip_member_name(info):
     name = info.filename
     if not isinstance(name, str) or not name or "\\" in name or name.startswith("/"):
