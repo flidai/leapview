@@ -598,6 +598,7 @@ tasks:
       - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p test_dashboard_design_trials.py
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - node --test scripts/browser_test_diagnostics.test.mjs
       - node --test desktop/scripts/lifecycle-probe-policy.test.mjs desktop/scripts/lifecycle-probe-cdp.test.mjs
       - node --test scripts/run_performance_comparison.test.mjs
       - bun test scripts/performance_comparison_workflow.test.ts
