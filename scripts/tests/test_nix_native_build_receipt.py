@@ -14,6 +14,7 @@ from test_nix_native_database_receipt import database_fixture
 from test_nix_native_excel_receipt import excel_fixture
 from test_nix_native_avro_receipt import avro_fixture
 from test_nix_native_delta_receipt import delta_fixture
+from test_nix_native_iceberg_receipt import fixture as iceberg_fixture
 from test_nix_native_azure_receipt import fixture as azure_fixture
 from test_nix_native_vortex_receipt import vortex_fixture
 
@@ -316,6 +317,33 @@ class BuildReceipts(unittest.TestCase):
         receipt.create_component('delta', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
         return root, evidence
 
+    def iceberg(self, http):
+        root = self.root / 'iceberg'
+        (root / 'lib').mkdir(parents=True)
+        for name in receipt.iceberg.ARCHIVES:
+            (root / name).write_bytes(b'!<arch>\niceberg')
+        evidence = self.root / 'iceberg-evidence'
+        evidence.mkdir()
+        files = iceberg_fixture(receipt.sources(REPO, 'iceberg'))
+        links = receipt.decode_json(files['http-link.json'])
+        for name, value in links.items():
+            value['sha256'] = receipt.digest(http / name)
+        files['http-link.json'] = json.dumps(links).encode()
+        for name, data in files.items():
+            (evidence / name).write_bytes(data)
+        (root / 'share/leapview').mkdir(parents=True)
+        receipt.create_component('iceberg', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
+        return root, evidence
+
+    def test_iceberg_actual_archive_substitution_is_rejected(self):
+        http, _ = self.http()
+        root, _ = self.iceberg(http)
+        directory = root / 'share/leapview/native-build'
+        receipt.verify_component(directory, 'iceberg', 'linux/amd64', REPO, root)
+        (root / 'lib/libaws-cpp-sdk-core.a').write_bytes(b'!<arch>\nsubstituted AWS core')
+        with self.assertRaisesRegex(ValueError, 'substitution'):
+            receipt.verify_component(directory, 'iceberg', 'linux/amd64', REPO, root)
+
     def azure(self, http):
         root = self.root / 'azure'
         (root / 'lib').mkdir(parents=True)
@@ -342,6 +370,7 @@ class BuildReceipts(unittest.TestCase):
         avro, _ = self.avro(http)
         delta, _ = self.delta()
         azure, _ = self.azure(http)
+        iceberg, _ = self.iceberg(http)
         vortex, _ = self.vortex()
         lance = self.root / 'lance'
         (lance / 'lib').mkdir(parents=True)
@@ -350,7 +379,7 @@ class BuildReceipts(unittest.TestCase):
         receipt.create_component('lance', 'linux/amd64', REPO, self.evidence, lance, lance / 'share/leapview/native-build')
         duckdb = self.root / 'duckdb'
         (duckdb / 'lib').mkdir(parents=True)
-        for name in ('duckdb_static', 'lance_extension', 'sqlite_scanner_extension', 'ducklake_extension', 'httpfs_extension', 'quack_extension', 'postgres_scanner_extension', 'mysql_scanner_extension', 'excel_extension', 'avro_extension', 'delta_extension', 'azure_extension', 'vortex_extension', 'dummy_static_extension_loader'):
+        for name in ('duckdb_static', 'lance_extension', 'sqlite_scanner_extension', 'ducklake_extension', 'httpfs_extension', 'quack_extension', 'postgres_scanner_extension', 'mysql_scanner_extension', 'excel_extension', 'avro_extension', 'delta_extension', 'azure_extension', 'vortex_extension', 'iceberg_extension', 'dummy_static_extension_loader'):
             (duckdb / f'lib/lib{name}.a').write_bytes(b'!<arch>\n' + name.encode())
         evidence = self.root / 'cmake'
         evidence.mkdir()
@@ -393,6 +422,10 @@ class BuildReceipts(unittest.TestCase):
             commands.append({'file': '/store/' + name + '/src/' + name + '_connection.cpp', 'command': 'c++ -c connector.cpp'})
             selection.write_text(selection.read_text() + 'duckdb_extension_load(' + name + '_scanner SOURCE_DIR /store/' + name + ' EXTENSION_VERSION ' + receipt.sources(REPO, 'database')['wrappers'][name]['revision'] + ')\n')
         receipt.write(evidence / 'compile-commands.json', commands)
+        receipt.write(evidence / 'iceberg-link.json', {name: {'archive': str(iceberg / name), 'sha256': receipt.digest(iceberg / name)} for name in receipt.iceberg.ARCHIVES})
+        cache.write_text(cache.read_text() + 'ICEBERG_AWS_LIBRARIES:STRING=' + ';'.join(str(iceberg / name) for name in sorted(receipt.iceberg.ARCHIVES)) + '\nICEBERG_HTTP_LIBRARIES:STRING=' + ';'.join(str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)) + '\nICEBERG_ROARING_LIBRARY:STRING=' + str(croaring / 'lib/libroaring.a') + '\nICEBERG_INCLUDE_DIRS:STRING=/selected/aws/include;/selected/curl/include\n')
+        selection.write_text(selection.read_text() + 'duckdb_extension_load(iceberg SOURCE_DIR /store/iceberg EXTENSION_VERSION ' + receipt.sources(REPO, 'iceberg')['wrapper']['revision'] + ')\n')
+        commands += [{'file': '/store/iceberg/' + name, 'command': 'c++ -I/selected/aws/include -I/selected/curl/include -c source.cpp'} for name in ('src/iceberg_extension.cpp', 'src/catalog/rest/storage/authorization/sigv4.cpp')]
         vortex_policy = receipt.sources(REPO, 'vortex')
         receipt.write(evidence / 'vortex-link.json', {'archive': str(vortex / 'lib/libvortex_duckdb.a'), 'sha256': receipt.digest(vortex / 'lib/libvortex_duckdb.a'), 'headers': {name: receipt.digest(vortex / name) for name in vortex_policy['headers']}, 'engineHeaders': vortex_policy['engine']['selectedFiles']})
         receipt.write(evidence / 'vortex-engine-source.json', vortex_policy['engine']['selectedFiles'])
@@ -409,20 +442,20 @@ class BuildReceipts(unittest.TestCase):
         receipt.write(evidence / 'sqlite-source.json', {name: sqlite[name + 'SHA256'].removeprefix('sha256:') for name in ('sqlite3.c', 'sqlite3.h')})
         (duckdb / 'share/leapview').mkdir(parents=True)
         receipt.create_component('duckdb', 'linux/amd64', REPO, evidence, duckdb, duckdb / 'share/leapview/native-build')
-        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)] + [str(delta / 'lib/libdelta_kernel_ffi.a')] + [str(azure / name) for name in sorted(receipt.azure.ARCHIVES)] + [str(vortex / 'lib/libvortex_duckdb.a')]
+        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)] + [str(delta / 'lib/libdelta_kernel_ffi.a')] + [str(azure / name) for name in sorted(receipt.azure.ARCHIVES)] + [str(vortex / 'lib/libvortex_duckdb.a')] + [str(iceberg / name) for name in sorted(receipt.iceberg.ARCHIVES)]
         inputs = self.root / 'link-inputs'
         inputs.write_text('\n'.join(selected) + '\n')
         app_evidence = self.root / 'app-evidence'
         app_evidence.mkdir()
         (app_evidence / 'link-flags.txt').write_text(' '.join(['-Wl,--start-group', *selected, '-Wl,--end-group', '-lstdc++', '-ldl', '-lm']))
         (app_evidence / 'go.txt').write_text('go version go1.26 linux/amd64\n')
-        (app_evidence / 'tags.txt').write_text('duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta,leapview_static_azure,leapview_static_vortex\n')
+        (app_evidence / 'tags.txt').write_text('duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta,leapview_static_azure,leapview_static_vortex,leapview_static_iceberg\n')
         binaries = self.root / 'bin'
         binaries.mkdir()
         for name in ('leapview', 'leapviewctl'):
             (binaries / name).write_bytes(b'\x7fELF\x02\x01' + b'\0' * 12 + bytes([62, 0]) + name.encode())
         destination = self.root / 'application'
-        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro, delta, azure, vortex)
+        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro, delta, azure, vortex, iceberg)
         return destination, binaries
 
     def test_vortex_missing_receipt_and_generated_header_rejected(self):
@@ -455,6 +488,21 @@ class BuildReceipts(unittest.TestCase):
         (root / 'lib/libdelta_kernel_ffi.a').write_bytes(b'!<arch>\nsubstituted')
         with self.assertRaisesRegex(ValueError, 'substitution'):
             receipt.verify_component(directory / 'delta', 'delta', 'linux/amd64', REPO, root)
+
+    def test_iceberg_missing_receipt_and_selected_dependencies_rejected(self):
+        directory, binaries = self.application()
+        path = directory / 'iceberg/receipt.json'
+        old = path.read_bytes(); path.unlink()
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            receipt.verify_application(directory, REPO, 'linux/amd64', 'a' * 40, binaries)
+        path.write_bytes(old)
+        cache = self.root / 'cmake/cmake-cache.txt'
+        old_cache = cache.read_text()
+        for name in ('ICEBERG_HTTP_LIBRARIES', 'ICEBERG_AWS_LIBRARIES', 'ICEBERG_ROARING_LIBRARY'):
+            cache.write_text(old_cache.replace(name + ':STRING=', name + ':STRING=/unselected;'))
+            with self.subTest(selection=name), self.assertRaisesRegex(ValueError, 'Iceberg selected'):
+                receipt.check_cmake(self.root / 'cmake', REPO, 'linux/amd64')
+        cache.write_text(old_cache)
 
     def test_azure_missing_receipt_archive_and_shared_http_substitution_rejected(self):
         directory, binaries = self.application()

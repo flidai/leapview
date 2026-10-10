@@ -1,0 +1,60 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -130,31 +130,11 @@
+-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+-    find_package(CURL REQUIRED)
+-    find_package(AWSSDK REQUIRED COMPONENTS core sso sts)
+-    include_directories(${CURL_INCLUDE_DIRS})
+-endif()
+-
+-# Roaring is installed via vcpkg and used here
+-find_package(roaring CONFIG REQUIRED)
+-
+-# Reset the TARGET_NAME, the AWS find_package build could bleed into our build -
+-# overriding `TARGET_NAME`
+-set(TARGET_NAME iceberg)
+-
+-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+-    # AWS SDK FROM vcpkg
+-    target_include_directories(${EXTENSION_NAME}
+-                            PUBLIC $<BUILD_INTERFACE:${AWSSDK_INCLUDE_DIRS}>)
+-    target_link_libraries(${EXTENSION_NAME} PUBLIC ${AWSSDK_LINK_LIBRARIES})
+-    target_include_directories(${TARGET_NAME}_loadable_extension
+-                            PRIVATE $<BUILD_INTERFACE:${AWSSDK_INCLUDE_DIRS}>)
+-    target_link_libraries(${TARGET_NAME}_loadable_extension
+-                        ${AWSSDK_LINK_LIBRARIES})
+-
+-    # Link dependencies into extension
+-    target_link_libraries(${EXTENSION_NAME} PUBLIC ${CURL_LIBRARIES})
+-    target_link_libraries(${TARGET_NAME}_loadable_extension ${CURL_LIBRARIES})
+-endif()
+-
+-# Link Roaring library
+-target_link_libraries(${EXTENSION_NAME} PUBLIC roaring::roaring roaring::roaring-headers roaring::roaring-headers-cpp)
+-target_link_libraries(${TARGET_NAME}_loadable_extension roaring::roaring roaring::roaring-headers roaring::roaring-headers-cpp)
++# One controlled native closure shared with the engine's HTTP/CRoaring builds.
++foreach(required ICEBERG_AWS_LIBRARIES ICEBERG_HTTP_LIBRARIES ICEBERG_ROARING_LIBRARY ICEBERG_INCLUDE_DIRS)
++  if(NOT DEFINED ${required})
++    message(FATAL_ERROR "Missing selected Iceberg input: ${required}")
++  endif()
++endforeach()
++foreach(target ${EXTENSION_NAME} ${TARGET_NAME}_loadable_extension)
++  target_include_directories(${target} PRIVATE ${ICEBERG_INCLUDE_DIRS})
++  target_link_libraries(${target} -Wl,--start-group ${ICEBERG_AWS_LIBRARIES}
++    ${ICEBERG_HTTP_LIBRARIES} ${ICEBERG_ROARING_LIBRARY} -Wl,--end-group)
++endforeach()
+--- a/src/include/iceberg_extension.hpp
++++ b/src/include/iceberg_extension.hpp
+@@ -10,0 +11,1 @@
++	std::string Version() const override;
+--- a/src/iceberg_extension.cpp
++++ b/src/iceberg_extension.cpp
+@@ -136,0 +137,8 @@
++std::string IcebergExtension::Version() const {
++#ifdef EXT_VERSION_ICEBERG
++	return EXT_VERSION_ICEBERG;
++#else
++	return "";
++#endif
++}
++

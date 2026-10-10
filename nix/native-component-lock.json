@@ -1867,6 +1867,21 @@
       "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
       "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
       "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "iceberg",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-iceberg",
+        "revision": "757264559e745be697e9306e144e8889eb1dc024",
+        "sourceNARHash": "sha256-oLEwhFmVTlnF8gsedQVi4ARNIPKjaLkcDUUwM+hTUlU=",
+        "patchSHA256": "b056a81a4a90a10e70399a2fae1eafed3002dda35feb33721ffe7d0e4a6252af"
+      },
+      "nativeDependencyLock": "nix/iceberg-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:d7fd6ff5305ba029f9043abc75c0142f8ba2f0f01f01bd867d111d6d459e980a",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
     }
   ]
 }

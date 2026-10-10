@@ -23,11 +23,12 @@ import nix_native_avro_receipt as avro
 import nix_native_delta_receipt as delta
 import nix_native_azure_receipt as azure
 import nix_native_vortex_receipt as vortex
+import nix_native_iceberg_receipt as iceberg
 
 PLATFORMS = {'linux/amd64': 'x86_64-unknown-linux-gnu', 'linux/arm64': 'aarch64-unknown-linux-gnu'}
 COMMON_RECIPES = (
     'flake.lock', 'nix/native-receipts.nix', 'nix/native-component-lock.json',
-    'internal/extension/builtin.go', 'scripts/nix_native_build_receipt.py', 'scripts/nix_native_database_receipt.py', 'scripts/nix_native_excel_receipt.py', 'scripts/nix_native_avro_receipt.py', 'scripts/nix_native_delta_receipt.py', 'scripts/nix_native_azure_receipt.py', 'scripts/nix_native_vortex_receipt.py',
+    'internal/extension/builtin.go', 'scripts/nix_native_build_receipt.py', 'scripts/nix_native_database_receipt.py', 'scripts/nix_native_excel_receipt.py', 'scripts/nix_native_avro_receipt.py', 'scripts/nix_native_delta_receipt.py', 'scripts/nix_native_azure_receipt.py', 'scripts/nix_native_vortex_receipt.py', 'scripts/nix_native_iceberg_receipt.py',
 )
 LANCE_RECIPES = (
     'nix/lance.nix', 'nix/lance-Cargo.lock', 'nix/quick-xml-backport-lock.json',
@@ -38,9 +39,9 @@ CROARING_RECIPES = ('nix/ducklake.nix', 'nix/ducklake-source-lock.json')
 HTTP_RECIPES = ('nix/http.nix', 'nix/check-extension-version.py', 'nix/http-source-lock.json', 'nix/httpfs-static-dependencies.patch', 'nix/quack-engine-includes.patch')
 HTTP_LIBRARIES = ('curl', 'openssl', 'nghttp2', 'zlib')
 HTTP_ARCHIVES = {'lib/libcurl.a', 'lib/libssl.a', 'lib/libcrypto.a', 'lib/libnghttp2.a', 'lib/libz.a'}
-BUILD_TAGS = 'duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta,leapview_static_azure,leapview_static_vortex'
-COMPONENTS = ('duckdb', 'lance', 'croaring', 'http', 'database', 'excel', 'avro', 'delta', 'azure', 'vortex')
-DUCKDB_RECIPES = ('nix/duckdb.nix', 'nix/sqlite.nix') + CROARING_RECIPES + HTTP_RECIPES + database.RECIPES + excel.RECIPES + avro.RECIPES + delta.RECIPES + azure.RECIPES + vortex.RECIPES
+BUILD_TAGS = 'duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta,leapview_static_azure,leapview_static_vortex,leapview_static_iceberg'
+COMPONENTS = ('duckdb', 'lance', 'croaring', 'http', 'database', 'excel', 'avro', 'delta', 'azure', 'vortex', 'iceberg')
+DUCKDB_RECIPES = ('nix/duckdb.nix', 'nix/sqlite.nix') + CROARING_RECIPES + HTTP_RECIPES + database.RECIPES + excel.RECIPES + avro.RECIPES + delta.RECIPES + azure.RECIPES + vortex.RECIPES + iceberg.RECIPES
 RECIPE_FILES = COMMON_RECIPES + LANCE_RECIPES + DUCKDB_RECIPES + (
     'nix/application.nix', 'nix/patched-runtime.nix', 'nix/glibc-CVE-2026-19499.patch', 'nix/portable.nix',
     'nix/ca-root.sh', 'nix/check-http-default-ca.sh',
@@ -52,9 +53,10 @@ EVIDENCE = {
     'delta': delta.EVIDENCE,
     'azure': azure.EVIDENCE,
     'vortex': vortex.EVIDENCE,
+    'iceberg': iceberg.EVIDENCE,
     'http': {name + '-' + kind for name in HTTP_LIBRARIES for kind in ('compiler.txt', 'source.json', 'config.txt', 'build.txt')} | {'curl-options.txt', 'nghttp2-options.txt'},
     'lance': {'compiler.txt', 'cargo.txt', 'cargo.jsonl', 'patches.json'},
-    'duckdb': {'compiler.txt', 'cmake-cache.txt', 'compile-commands.json', 'extensions.cmake', 'sqlite-source.json', 'croaring-link.json', 'http-link.json', 'database-link.json', 'excel-link.json', 'avro-link.json', 'delta-link.json', 'azure-link.json', 'vortex-link.json', 'vortex-engine-source.json'},
+    'duckdb': {'compiler.txt', 'cmake-cache.txt', 'compile-commands.json', 'extensions.cmake', 'sqlite-source.json', 'croaring-link.json', 'http-link.json', 'database-link.json', 'excel-link.json', 'avro-link.json', 'delta-link.json', 'azure-link.json', 'vortex-link.json', 'vortex-engine-source.json', 'iceberg-link.json'},
     'croaring': {'compiler.txt', 'cmake-cache.txt', 'compile-commands.json', 'source.json'},
 }
 LIMIT = 64 * 1024 * 1024
@@ -143,7 +145,7 @@ def load(path):
 def recipes(repo, component='application'):
     names = RECIPE_FILES
     if component in EVIDENCE:
-        names = COMMON_RECIPES + {'lance': LANCE_RECIPES, 'duckdb': DUCKDB_RECIPES, 'croaring': CROARING_RECIPES, 'http': HTTP_RECIPES, 'database': database.RECIPES + HTTP_RECIPES, 'excel': excel.RECIPES + HTTP_RECIPES, 'avro': avro.RECIPES + HTTP_RECIPES, 'delta': delta.RECIPES, 'azure': azure.RECIPES + HTTP_RECIPES, 'vortex': vortex.RECIPES}[component]
+        names = COMMON_RECIPES + {'lance': LANCE_RECIPES, 'duckdb': DUCKDB_RECIPES, 'croaring': CROARING_RECIPES, 'http': HTTP_RECIPES, 'database': database.RECIPES + HTTP_RECIPES, 'excel': excel.RECIPES + HTTP_RECIPES, 'avro': avro.RECIPES + HTTP_RECIPES, 'delta': delta.RECIPES, 'azure': azure.RECIPES + HTTP_RECIPES, 'vortex': vortex.RECIPES, 'iceberg': iceberg.RECIPES + HTTP_RECIPES}[component]
     return {name: digest(repo / name) for name in names}
 
 
@@ -163,6 +165,8 @@ def capture_patches(repo, vendor, destination):
 
 def sources(repo, component):
     policy = load(repo / 'nix/native-component-lock.json')
+    if component == 'iceberg':
+        return load(repo / 'nix/iceberg-source-lock.json')
     if component == 'vortex':
         return load(repo / 'nix/vortex-source-lock.json')
     if component == 'delta':
@@ -193,6 +197,7 @@ def sources(repo, component):
             'delta': load(repo / 'nix/delta-source-lock.json')['wrapper'],
             'azure': load(repo / 'nix/azure-source-lock.json')['wrapper'],
             'vortex': load(repo / 'nix/vortex-source-lock.json')['wrapper'],
+            'iceberg': load(repo / 'nix/iceberg-source-lock.json')['wrapper'],
             'ducklake': load(repo / 'nix/ducklake-source-lock.json')['ducklake'],
             'sqlite': {key: sqlite[key] for key in ('wrapper', 'amalgamation')}}
 
@@ -345,6 +350,7 @@ def check_cmake(evidence, repo, platform):
             raise ValueError('compiled HTTP wrapper selection missing: ' + name)
     database.check_engine(evidence, sources(repo, 'database'), cache, commands, selection, evidence_read)
     excel.check_engine(evidence, sources(repo, 'excel'), cache, commands, selection, evidence_read)
+    iceberg.check_engine(evidence, sources(repo, 'iceberg'), cache, commands, selection, evidence_read)
     vortex.check_engine(evidence, sources(repo, 'vortex'), cache, commands, selection, evidence_read)
     delta.check_engine(evidence, sources(repo, 'delta'), cache, commands, selection, evidence_read)
     avro.check_engine(evidence, sources(repo, 'avro'), cache, commands, selection, evidence_read)
@@ -365,6 +371,10 @@ def check_cmake(evidence, repo, platform):
 def output_hashes(component, root):
     if component == 'lance':
         paths = [root / 'lib/liblance_duckdb_ffi.a']
+    elif component == 'iceberg':
+        paths = [root / name for name in sorted(iceberg.ARCHIVES)]
+        if list((root / 'lib').glob('*.so*')):
+            raise ValueError('Iceberg AWS dependencies must be static outputs')
     elif component == 'azure':
         paths = [root / name for name in sorted(azure.ARCHIVES)]
         if any(root.rglob('*.so*')):
@@ -400,7 +410,7 @@ def output_hashes(component, root):
     else:
         paths = sorted((root / 'lib').glob('*.a'))
         names = {p.name for p in paths}
-        if not {'libduckdb_static.a', 'liblance_extension.a', 'libsqlite_scanner_extension.a', 'libducklake_extension.a', 'libhttpfs_extension.a', 'libquack_extension.a', 'libpostgres_scanner_extension.a', 'libmysql_scanner_extension.a', 'libexcel_extension.a', 'libavro_extension.a', 'libdelta_extension.a', 'libazure_extension.a', 'libvortex_extension.a'} <= names:
+        if not {'libduckdb_static.a', 'liblance_extension.a', 'libsqlite_scanner_extension.a', 'libducklake_extension.a', 'libhttpfs_extension.a', 'libquack_extension.a', 'libpostgres_scanner_extension.a', 'libmysql_scanner_extension.a', 'libexcel_extension.a', 'libavro_extension.a', 'libdelta_extension.a', 'libazure_extension.a', 'libvortex_extension.a', 'libiceberg_extension.a'} <= names:
             raise ValueError('source-built DuckDB/Lance/SQLite/DuckLake archive output missing')
     for path in paths:
         regular(path)
@@ -426,6 +436,8 @@ def component_value(component, platform, repo, evidence, outputs):
         value['compiledCargo'] = vortex.check(evidence, sources(repo, component), platform, tomllib.loads(read(repo / 'nix/vortex-Cargo.lock').decode()), evidence_read)
     elif component == 'delta':
         value['compiledCargo'] = delta.check(evidence, sources(repo, component), platform, tomllib.loads(read(repo / 'nix/delta-Cargo.lock').decode()), evidence_read)
+    elif component == 'iceberg':
+        iceberg.check(evidence, sources(repo, component), platform, evidence_read)
     elif component == 'azure':
         azure.check(evidence, sources(repo, component), platform, evidence_read)
     elif component == 'avro':
@@ -475,6 +487,8 @@ def verify_component(directory, component, platform, repo, output_root=None):
         raise ValueError('unexpected Delta native outputs')
     if component == 'delta' and output_root is not None and delta.header_hashes(output_root / 'include', read) != decode_json(evidence_read(directory / 'evidence/headers.json')):
         raise ValueError('Delta output headers differ')
+    if component == 'iceberg' and set(outputs) != iceberg.ARCHIVES:
+        raise ValueError('Iceberg selected AWS archive output differs')
     if component == 'azure' and set(outputs) != azure.ARCHIVES:
         raise ValueError('unexpected Azure native outputs')
     if component == 'avro' and set(outputs) != avro.ARCHIVES:
@@ -489,7 +503,7 @@ def verify_component(directory, component, platform, repo, output_root=None):
         raise ValueError('unexpected Lance outputs')
     if component == 'croaring' and set(outputs) != {'lib/libroaring.a'}:
         raise ValueError('unexpected CRoaring outputs')
-    if component == 'duckdb' and not {'lib/libduckdb_static.a', 'lib/liblance_extension.a', 'lib/libsqlite_scanner_extension.a', 'lib/libducklake_extension.a', 'lib/libhttpfs_extension.a', 'lib/libquack_extension.a', 'lib/libpostgres_scanner_extension.a', 'lib/libmysql_scanner_extension.a', 'lib/libexcel_extension.a', 'lib/libavro_extension.a', 'lib/libdelta_extension.a', 'lib/libazure_extension.a', 'lib/libvortex_extension.a'} <= outputs.keys():
+    if component == 'duckdb' and not {'lib/libduckdb_static.a', 'lib/liblance_extension.a', 'lib/libsqlite_scanner_extension.a', 'lib/libducklake_extension.a', 'lib/libhttpfs_extension.a', 'lib/libquack_extension.a', 'lib/libpostgres_scanner_extension.a', 'lib/libmysql_scanner_extension.a', 'lib/libexcel_extension.a', 'lib/libavro_extension.a', 'lib/libdelta_extension.a', 'lib/libazure_extension.a', 'lib/libvortex_extension.a', 'lib/libiceberg_extension.a'} <= outputs.keys():
         raise ValueError('missing source-built native outputs')
     if output_root is not None and outputs != output_hashes(component, output_root):
         raise ValueError('native output substitution')
@@ -499,12 +513,12 @@ def verify_component(directory, component, platform, repo, output_root=None):
     return value
 
 
-def compose(repo, platform, revision, duckdb, lance, binaries, link_inputs, evidence, destination, croaring, http, database_root, excel_root, avro_root, delta_root, azure_root, vortex_root):
+def compose(repo, platform, revision, duckdb, lance, binaries, link_inputs, evidence, destination, croaring, http, database_root, excel_root, avro_root, delta_root, azure_root, vortex_root, iceberg_root):
     if not re.fullmatch('[0-9a-f]{40}', revision):
         raise ValueError('application source revision required')
     components = {}
     expected_inputs = {}
-    for name, root in (('duckdb', duckdb), ('lance', lance), ('croaring', croaring), ('http', http), ('database', database_root), ('excel', excel_root), ('avro', avro_root), ('delta', delta_root), ('azure', azure_root), ('vortex', vortex_root)):
+    for name, root in (('duckdb', duckdb), ('lance', lance), ('croaring', croaring), ('http', http), ('database', database_root), ('excel', excel_root), ('avro', avro_root), ('delta', delta_root), ('azure', azure_root), ('vortex', vortex_root), ('iceberg', iceberg_root)):
         directory = root / 'share/leapview/native-build'
         value = verify_component(directory, name, platform, repo, root)
         components[name] = value
@@ -521,6 +535,10 @@ def compose(repo, platform, revision, duckdb, lance, binaries, link_inputs, evid
         raise ValueError('Excel compiled and application-selected dependencies differ')
     if decode_json(evidence_read(duckdb / 'share/leapview/native-build/evidence/avro-link.json')) != {name: {'archive': str(avro_root / name), 'sha256': sha} for name, sha in components['avro']['outputs'].items()}:
         raise ValueError('Avro compiled and application-selected dependencies differ')
+    if decode_json(evidence_read(duckdb / 'share/leapview/native-build/evidence/iceberg-link.json')) != {name: {'archive': str(iceberg_root / name), 'sha256': sha} for name, sha in components['iceberg']['outputs'].items()}:
+        raise ValueError('Iceberg selected AWS archive composition differs')
+    if {name: v['sha256'] for name, v in decode_json(evidence_read(iceberg_root / 'share/leapview/native-build/evidence/http-link.json')).items()} != components['http']['outputs']:
+        raise ValueError('Iceberg and application-selected HTTP bytes differ')
     vortex_link = vortex.binding(evidence_read(duckdb / 'share/leapview/native-build/evidence/vortex-link.json'), sources(repo, 'vortex'))
     if vortex_link != {'archive': str(vortex_root / 'lib/libvortex_duckdb.a'), 'sha256': components['vortex']['outputs']['lib/libvortex_duckdb.a'], 'headers': {name: digest(vortex_root / name) for name in sources(repo, 'vortex')['headers']}, 'engineHeaders': sources(repo, 'vortex')['engine']['selectedFiles']}:
         raise ValueError('Vortex selected FFI/header composition differs')
@@ -548,7 +566,7 @@ def compose(repo, platform, revision, duckdb, lance, binaries, link_inputs, evid
     if read(evidence / 'tags.txt').decode().strip() != BUILD_TAGS:
         raise ValueError('application static extension build tags differ')
     destination.mkdir()
-    for name, root in (('duckdb', duckdb), ('lance', lance), ('croaring', croaring), ('http', http), ('database', database_root), ('excel', excel_root), ('avro', avro_root), ('delta', delta_root), ('azure', azure_root), ('vortex', vortex_root)):
+    for name, root in (('duckdb', duckdb), ('lance', lance), ('croaring', croaring), ('http', http), ('database', database_root), ('excel', excel_root), ('avro', avro_root), ('delta', delta_root), ('azure', azure_root), ('vortex', vortex_root), ('iceberg', iceberg_root)):
         shutil.copytree(root / 'share/leapview/native-build', destination / name)
     retain_evidence(evidence, destination / 'application-evidence')
     value = {'schemaVersion': 1, 'scope': SCOPE, 'platform': platform, 'revision': revision,
@@ -601,6 +619,10 @@ def verify_application(directory, repo, platform, revision, binaries):
         raise ValueError('database compiled and application-selected dependencies differ')
     if {name: v['sha256'] for name, v in decode_json(evidence_read(directory / 'duckdb/evidence/excel-link.json')).items()} != value['linkInputs']['excel']:
         raise ValueError('Excel compiled and application-selected dependencies differ')
+    if {name: v['sha256'] for name, v in decode_json(evidence_read(directory / 'duckdb/evidence/iceberg-link.json')).items()} != value['linkInputs']['iceberg']:
+        raise ValueError('Iceberg retained AWS archive composition differs')
+    if {name: v['sha256'] for name, v in decode_json(evidence_read(directory / 'iceberg/evidence/http-link.json')).items()} != value['linkInputs']['http']:
+        raise ValueError('Iceberg retained HTTP archive composition differs')
     vortex_link = vortex.binding(evidence_read(directory / 'duckdb/evidence/vortex-link.json'), sources(repo, 'vortex'))
     if vortex_link['sha256'] != value['linkInputs']['vortex']['lib/libvortex_duckdb.a'] or vortex_link['headers'] != vortex.headers(evidence_read(directory / 'vortex/evidence/headers.json'), sources(repo, 'vortex')):
         raise ValueError('Vortex retained FFI/header composition differs')
@@ -747,7 +769,7 @@ def main():
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--platform', choices=PLATFORMS, required=True)
     parser.add_argument('--component', choices=EVIDENCE)
-    for flag in ('evidence', 'output-root', 'destination', 'duckdb', 'lance', 'croaring', 'http', 'database', 'excel', 'avro', 'delta', 'azure', 'vortex', 'binaries', 'link-inputs', 'input-receipt', 'tool-version', 'replacements'):
+    for flag in ('evidence', 'output-root', 'destination', 'duckdb', 'lance', 'croaring', 'http', 'database', 'excel', 'avro', 'delta', 'azure', 'vortex', 'iceberg', 'binaries', 'link-inputs', 'input-receipt', 'tool-version', 'replacements'):
         parser.add_argument('--' + flag, type=Path)
     parser.add_argument('--library', choices=HTTP_LIBRARIES + database.LIBRARIES)
     parser.add_argument('--revision')
@@ -755,7 +777,7 @@ def main():
     args = parser.parse_args()
     required = {
         'component': ('component', 'evidence', 'output_root', 'destination'),
-        'compose': ('revision', 'duckdb', 'lance', 'croaring', 'http', 'database', 'excel', 'avro', 'delta', 'azure', 'vortex', 'binaries', 'link_inputs', 'evidence', 'destination'),
+        'compose': ('revision', 'duckdb', 'lance', 'croaring', 'http', 'database', 'excel', 'avro', 'delta', 'azure', 'vortex', 'iceberg', 'binaries', 'link_inputs', 'evidence', 'destination'),
         'verify': ('revision', 'binaries', 'destination'),
         'verify-runtime': ('revision', 'binaries', 'destination'),
         'verify-portable': ('revision', 'binaries', 'destination'),
@@ -792,7 +814,7 @@ def main():
     if args.command == 'component':
         result = create_component(args.component, args.platform, args.repo, args.evidence, args.output_root, args.destination)
     elif args.command == 'compose':
-        result = compose(args.repo, args.platform, args.revision, args.duckdb, args.lance, args.binaries, args.link_inputs, args.evidence, args.destination, args.croaring, args.http, args.database, args.excel, args.avro, args.delta, args.azure, args.vortex)
+        result = compose(args.repo, args.platform, args.revision, args.duckdb, args.lance, args.binaries, args.link_inputs, args.evidence, args.destination, args.croaring, args.http, args.database, args.excel, args.avro, args.delta, args.azure, args.vortex, args.iceberg)
     elif args.command == 'portable':
         result = portable(args.input_receipt, args.repo, args.platform, args.revision, args.binaries, args.output_root, args.destination, args.interpreter, args.tool_version)
     elif args.command == 'runtime':

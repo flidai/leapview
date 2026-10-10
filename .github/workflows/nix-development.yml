@@ -285,6 +285,10 @@ jobs:
           "$tools/libexec/database-connectors.test" -test.v -test.timeout=2m \
             -test.run '^TestNativeVortexSourceReadAndFreshSession$' \
             > .tmp/native-application/vortex-source.log 2>&1
+          (cd internal/analytics/duckdb
+            "$tools/libexec/database-connectors.test" -test.v -test.timeout=2m \
+              -test.run '^TestNativeIcebergSnapshotsAndFreshSession$') \
+            > .tmp/native-application/iceberg-source.log 2>&1
           "$tools/libexec/postgres-ducklake.test" -test.v -test.timeout=10m \
             -test.run '^TestPostgresDuckLakeRuntimeLifecycle$' \
             > .tmp/native-application/postgres-ducklake.log 2>&1
@@ -299,6 +303,7 @@ jobs:
           grep -Eq '^--- PASS: TestNativeDeltaSnapshotsAndFreshSession \(' .tmp/native-application/delta-source.log
           grep -Eq '^--- PASS: TestNativeAzureStaticReadAndRecovery \(' .tmp/native-application/azure-source.log
           grep -Eq '^--- PASS: TestNativeVortexSourceReadAndFreshSession \(' .tmp/native-application/vortex-source.log
+          grep -Eq '^--- PASS: TestNativeIcebergSnapshotsAndFreshSession \(' .tmp/native-application/iceberg-source.log
           # The packaged application has a separate runtime dependency rewrite.
           # Realize that cached output explicitly instead of guessing it from
           # the tools-only build's output selection.
@@ -331,6 +336,8 @@ jobs:
               'databaseConnectorTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
               'excelSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
               'excelSourceLogSHA256': hashlib.sha256((root / 'excel-source.log').read_bytes()).hexdigest(),
+              'icebergSourceLogSHA256': hashlib.sha256((root / 'iceberg-source.log').read_bytes()).hexdigest(),
+              'icebergSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
               'vortexSourceLogSHA256': hashlib.sha256((root / 'vortex-source.log').read_bytes()).hexdigest(),
               'vortexSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
               'deltaSourceLogSHA256': hashlib.sha256((root / 'delta-source.log').read_bytes()).hexdigest(),

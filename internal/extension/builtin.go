@@ -28,6 +28,11 @@ func CompiledBuiltin(name, platform string) (BuiltinDescriptor, bool) {
 	if platform != "linux_amd64" && platform != "linux_arm64" {
 		return BuiltinDescriptor{}, false
 	}
+	if staticIcebergEnabled && name == "iceberg" {
+		return BuiltinDescriptor{Name: "iceberg", DuckDBVersion: "v1.5.4", Platform: platform,
+			EngineRevision: "08e34c447bae34eaee3723cac61f2878b6bdf787",
+			SourceRevision: "757264559e745be697e9306e144e8889eb1dc024", NativeDependencyLockSHA256: "d7fd6ff5305ba029f9043abc75c0142f8ba2f0f01f01bd867d111d6d459e980a"}, true
+	}
 	if staticVortexEnabled && name == "vortex" {
 		return BuiltinDescriptor{Name: "vortex", DuckDBVersion: "v1.5.4", Platform: platform,
 			EngineRevision: "08e34c447bae34eaee3723cac61f2878b6bdf787",
@@ -109,7 +114,7 @@ func (b BuiltinDescriptor) Digest() string {
 }
 
 func (b BuiltinDescriptor) Provenance() string {
-	if b.Name == "ducklake" || b.Name == "httpfs" || b.Name == "quack" || b.Name == "postgres" || b.Name == "mysql" || b.Name == "excel" || b.Name == "avro" || b.Name == "delta" || b.Name == "azure" || b.Name == "vortex" {
+	if b.Name == "ducklake" || b.Name == "httpfs" || b.Name == "quack" || b.Name == "postgres" || b.Name == "mysql" || b.Name == "excel" || b.Name == "avro" || b.Name == "delta" || b.Name == "azure" || b.Name == "vortex" || b.Name == "iceberg" {
 		return "compiled:" + b.EngineRevision + ":" + b.SourceRevision + ":" + b.NativeDependencyLockSHA256
 	}
 	if b.Name == "sqlite" {

@@ -33,7 +33,7 @@ test('selected Excel workload executes and retains non-skipped native evidence',
   expect(build.run).toContain("'excelSourceLogSHA256'")
   const application = readFileSync('nix/application.nix', 'utf8')
   expect(application).toContain('--excel ${duckdb.excel.archives}')
-  expect(application).toContain('$excelLibraries $avroLibraries $azureLibraries ${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a ${duckdb.vortex.rust}/lib/libvortex_duckdb.a -Wl,--end-group')
+  expect(application).toContain('$excelLibraries $avroLibraries $azureLibraries $icebergLibraries ${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a ${duckdb.vortex.rust}/lib/libvortex_duckdb.a -Wl,--end-group')
   const recipe = readFileSync('nix/duckdb.nix', 'utf8')
   expect(recipe).toContain('duckdb_extension_load(excel SOURCE_DIR ${excel.source} INCLUDE_DIR ${excel.source}/src/excel/include EXTENSION_VERSION ${excel.revision})')
   expect(recipe).toContain('"EXPAT_LIBRARY" "${excel.archives}/lib/libexpat.a"')
@@ -144,4 +144,20 @@ test('Vortex qualifies the exact compiled bridge through canonical path reads', 
   expect(recipe).toContain('duckdb_extension_load(vortex SOURCE_DIR ${vortex.source} EXTENSION_VERSION ${vortex.revision})')
   expect(recipe).toContain('"VORTEX_FFI_LIBRARY" "${vortex.rust}/lib/libvortex_duckdb.a"')
   expect(recipe).toContain('"VORTEX_FFI_INCLUDE_DIR" "${vortex.rust}/include"')
+})
+
+
+test('Iceberg qualification preserves snapshot fixtures, exact linked binary and plain DuckDB CMake signature', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain('(cd internal/analytics/duckdb')
+  expect(build.run).toContain("-test.run '^TestNativeIcebergSnapshotsAndFreshSession$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeIcebergSnapshotsAndFreshSession \\('")
+  expect(build.run).toContain("'icebergSourceTestSHA256'")
+  expect(build.run).toContain("'icebergSourceLogSHA256'")
+  expect(readFileSync('nix/application.nix', 'utf8')).toContain('--iceberg ${duckdb.iceberg.archives}')
+  const patch = readFileSync('nix/iceberg-static-dependencies.patch', 'utf8')
+  // Pinned DuckDB's build_loadable_extension already uses the plain signature.
+  expect(patch).toContain('+  target_link_libraries(${target} -Wl,--start-group')
+  expect(patch).not.toContain('+  target_link_libraries(${target} PRIVATE')
 })

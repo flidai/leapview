@@ -13,6 +13,7 @@ let
   delta = import ./delta.nix { inherit pkgs; };
   azure = import ./azure.nix { inherit pkgs http; };
   vortex = import ./vortex.nix { inherit pkgs; };
+  iceberg = import ./iceberg.nix { inherit pkgs http; };
   ducklake = import ./ducklake.nix { inherit pkgs; };
   revision = "08e34c447bae34eaee3723cac61f2878b6bdf787";
   registry = builtins.readFile ../internal/extension/builtin.go;
@@ -32,6 +33,7 @@ let
     duckdb_extension_load(delta SOURCE_DIR ${delta.source} EXTENSION_VERSION ${delta.revision})
     duckdb_extension_load(avro SOURCE_DIR ${avro.source} EXTENSION_VERSION ${avro.revision})
     duckdb_extension_load(azure SOURCE_DIR ${azure.source} EXTENSION_VERSION ${azure.revision})
+    duckdb_extension_load(iceberg SOURCE_DIR ${iceberg.source} EXTENSION_VERSION ${iceberg.revision})
     duckdb_extension_load(icu)
     duckdb_extension_load(json)
     duckdb_extension_load(parquet)
@@ -116,6 +118,20 @@ pkgs.duckdb.overrideAttrs (old: {
         map (name: "${azure.libraries.${name}.dev}/include") (builtins.attrNames azure.libraries)
       )
     ))
+    (pkgs.lib.cmakeFeature "ICEBERG_AWS_LIBRARIES" (
+      pkgs.lib.concatStringsSep ";" (map (name: "${iceberg.archives}/lib/${name}") iceberg.archiveNames)
+    ))
+    (pkgs.lib.cmakeFeature "ICEBERG_HTTP_LIBRARIES" "${http.archives}/lib/libcrypto.a;${http.archives}/lib/libcurl.a;${http.archives}/lib/libnghttp2.a;${http.archives}/lib/libssl.a;${http.archives}/lib/libz.a")
+    (pkgs.lib.cmakeFeature "ICEBERG_ROARING_LIBRARY" "${ducklake.croaring}/lib/libroaring.a")
+    (pkgs.lib.cmakeFeature "ICEBERG_INCLUDE_DIRS" (
+      pkgs.lib.concatStringsSep ";" (
+        iceberg.includeDirectories
+        ++ [
+          "${http.libraries.curl.dev}/include"
+          "${ducklake.croaring}/include"
+        ]
+      )
+    ))
     (pkgs.lib.cmakeFeature "roaring_DIR" "${ducklake.croaring}/lib/cmake/roaring")
   ];
   postBuild = (old.postBuild or "") + ''
@@ -154,6 +170,11 @@ pkgs.duckdb.overrideAttrs (old: {
     root = pathlib.Path(sys.argv[1])
     pathlib.Path(sys.argv[2]).write_text(json.dumps({str(p.relative_to(root)): {'archive': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted((root / 'lib').glob('*.a'))}, sort_keys=True) + '\n')
     PYAZURE
+    ${pkgs.python3}/bin/python3 - ${iceberg.archives} "$TMPDIR/native-evidence/iceberg-link.json" <<'PYICEBERG'
+    import hashlib, json, pathlib, sys
+    root = pathlib.Path(sys.argv[1])
+    pathlib.Path(sys.argv[2]).write_text(json.dumps({str(p.relative_to(root)): {'archive': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted((root / 'lib').glob('*.a'))}, sort_keys=True) + '\n')
+    PYICEBERG
     cp ${extensions} "$TMPDIR/native-evidence/extensions.cmake"
     ${pkgs.python3}/bin/python3 - ${sqlite.source} "$TMPDIR/native-evidence/sqlite-source.json" <<'PY'
     import hashlib, json, pathlib, sys
@@ -185,6 +206,7 @@ pkgs.duckdb.overrideAttrs (old: {
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'azure' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${azure.revision}';" | grep -q 1
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'vortex' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${vortex.revision}';" | grep -q 1
     "$out/bin/duckdb" -c "COPY (SELECT 42 AS retained_value) TO '$TMPDIR/native.vortex' (FORMAT vortex); SELECT retained_value FROM read_vortex('$TMPDIR/native.vortex');" | grep -q 42
+    "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'iceberg' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${iceberg.revision}';" | grep -q 1
     "$out/bin/duckdb" -c "SELECT version();" | grep -q v1.5.4
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'sqlite_scanner' AND installed AND install_mode = 'STATICALLY_LINKED' AND install_path = '(BUILT-IN)';" | grep -q 1
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'ducklake' AND installed AND install_mode = 'STATICALLY_LINKED' AND install_path = '(BUILT-IN)';" | grep -q 1
@@ -201,6 +223,7 @@ pkgs.duckdb.overrideAttrs (old: {
       delta
       azure
       vortex
+      iceberg
       revision
       ;
   };

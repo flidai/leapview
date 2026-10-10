@@ -14,6 +14,7 @@ let
     "scripts/nix_native_delta_receipt.py"
     "scripts/nix_native_azure_receipt.py"
     "scripts/nix_native_vortex_receipt.py"
+    "scripts/nix_native_iceberg_receipt.py"
   ];
   lance = [
     "nix/lance.nix"
@@ -99,6 +100,15 @@ let
     "scripts/nix_native_vortex_receipt.py"
     "scripts/nix_native_delta_receipt.py"
   ];
+  iceberg = [
+    "nix/iceberg.nix"
+    "nix/iceberg-source-lock.json"
+    "nix/iceberg-selected-curl.patch"
+    "nix/iceberg-static-dependencies.patch"
+    "nix/check-extension-version.py"
+    "nix/check-iceberg-static-libraries.cpp"
+    "scripts/nix_native_iceberg_receipt.py"
+  ];
   duckdb = [
     "nix/duckdb.nix"
     "nix/sqlite.nix"
@@ -111,7 +121,8 @@ let
   ++ avro
   ++ delta
   ++ azure
-  ++ vortex;
+  ++ vortex
+  ++ iceberg;
   croaring = [
     "nix/ducklake.nix"
     "nix/ducklake-source-lock.json"
@@ -121,6 +132,8 @@ let
     ++ (
       if component == "lance" then
         lance
+      else if component == "iceberg" then
+        iceberg ++ http
       else if component == "vortex" then
         vortex
       else if component == "delta" then

@@ -591,3 +591,30 @@ binary and log hashes. Actual selected Rust compilation, rebuilt-engine runtime
 and two-architecture publisher qualification must pass before this candidate is
 claimed proven. Remaining signed components, engine vendored identities and fresh
 complete native security assessment still block whole-application admission.
+
+## Controlled Iceberg candidate
+
+The Iceberg candidate selects wrapper `757264559e745be697e9306e144e8889eb1dc024`
+and 14 locked AWS library sources. The SDK builds only core, SSO and STS; static
+CRT dependencies retain their upstream checks. The SDK and final application
+share the existing selected CURL, OpenSSL, zlib and nghttp2 archives. Iceberg also
+uses the selected CRoaring archive and the separately admitted Avro extension.
+No VCPKG fetch or alternate shared AWS/HTTP dependency is allowed by the recipe.
+
+Each library retains selected source hashes, compiler identity, CMake feature
+selection and actual compile commands. An aggregate consumer exercises SigV4
+payload/session-token signing, HTTP-client creation, SSO JSON and STS XML, then
+checks dynamic dependencies. Receipts bind all 16 actual AWS archives, shared HTTP
+bytes, final engine selections and application link inputs. Encoded evidence
+avoids retaining compiler/store paths in the runtime closure. These records prove
+build composition, not exhaustive archive-member or final binary closure.
+
+The manual native lane runs the canonical Iceberg fixture against its exact
+linked test binary: latest and explicit snapshots agree, a missing snapshot is
+rejected, valid reads recover, and fresh sessions repeat the checks. It preserves
+the required fixture working directory and retains binary/log hashes. The signed
+control and selected-library prototype pass independently; the final selected
+aggregate, rebuilt engine and both-architecture publisher still require actual
+qualification. Spatial remains a signed source-replacement gap, alongside engine
+vendored identities and the complete native security assessment. Whole-application
+admission remains closed.
