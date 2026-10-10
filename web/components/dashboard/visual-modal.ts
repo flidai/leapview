@@ -5,6 +5,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 import { mountVisualFocus, restoreVisualFocus, visualSourceFromEvent, type VisualFocusMount } from './visual-modal-focus'
 import { visualDataActionNotice, visualDataSummary, visualDataToDelimited } from './visual-modal-actions'
 import '../shared/record-table'
+import type { VisualizationHost } from './visualization/host'
 
 type VisualActionName = 'focus' | 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'
 
@@ -86,6 +87,8 @@ export class VisualModal extends LitElement {
     }
 
     .focus-dialog {
+      --report-canvas-inverse-scale: 1;
+      --builder-canvas-scale: 1;
       width: min(1420px, calc(100% - 56px));
       height: min(920px, calc(100dvh - 56px));
       max-height: calc(100dvh - 56px);
@@ -94,16 +97,13 @@ export class VisualModal extends LitElement {
       background: var(--lv-chart-surface);
     }
 
-    .focus-dialog.focus-table-dialog {
+    .focus-dialog.table-focus {
+      top: 50%;
+      bottom: auto;
+      transform: translateY(-50%);
       height: auto;
       min-height: 0;
-    }
-
-    :host([tabular-focus]) .focus-slot,
-    :host([tabular-focus]) ::slotted([slot='focus-visual']) {
-      height: auto;
-      --lv-visual-height: auto;
-      --lv-table-max-body-height: max(80px, calc(100dvh - 180px));
+      max-height: min(920px, calc(100dvh - 56px));
     }
 
     header {
@@ -198,6 +198,15 @@ export class VisualModal extends LitElement {
       width: 100%;
       height: 100%;
       min-height: 0;
+      --lv-visual-height: 100%;
+      --lv-table-max-body-height: none;
+    }
+
+    :host([tabular-focus]) .focus-slot,
+    :host([tabular-focus]) ::slotted([slot='focus-visual']) {
+      height: auto;
+      --lv-visual-height: auto;
+      --lv-table-max-height: min(918px, calc(100dvh - 58px));
     }
 
     .focus-chart,
@@ -295,13 +304,8 @@ export class VisualModal extends LitElement {
   }
 
   private renderFocusDialog(detail: VisualActionDetail) {
-    const isTable = detail.visualType === 'table'
-    const availableRows = detail.table?.availableRows
-    const rowHeight = detail.table?.rowHeight
-    const rows = typeof availableRows === 'number' && Number.isFinite(availableRows) ? Math.max(0, availableRows) : detail.rows.length
-    const height = Math.min(920, Math.max(360, 150 + rows * (typeof rowHeight === 'number' && rowHeight > 0 ? rowHeight : 34)))
     return html`
-      <dialog class=${`dialog focus-dialog${isTable ? ' focus-table-dialog' : ''}`} style=${isTable ? `height:min(${height}px, calc(100dvh - 56px))` : ''} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
+      <dialog class=${`dialog focus-dialog${detail.visualType === 'table' ? ' table-focus' : ''}`} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
           <div class="focus-slot"><slot name="focus-visual"></slot></div>
         ${this.renderNotice()}
       </dialog>
@@ -451,8 +455,12 @@ export class VisualModal extends LitElement {
 
   private mountFocusedVisual(source: HTMLElement): void {
     if (this.mode !== 'focus' || this.focusSource !== source || this.focusMount) return
-    this.focusMount = mountVisualFocus(source, this, { slot: 'focus-visual' })
-    if (!this.focusMount) return
+    const preview = (source as VisualizationHost).createFocusPreview?.()
+    this.focusMount = mountVisualFocus(source, this, { slot: 'focus-visual', preview })
+    if (!this.focusMount) {
+      preview?.dispose()
+      return
+    }
     const close = document.createElement('button')
     close.type = 'button'
     close.slot = 'focus-action'

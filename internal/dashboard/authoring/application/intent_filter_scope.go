@@ -69,13 +69,19 @@ func setCompatibleFilterScopeTargets(doc document.DashboardDocument, model *sema
 	}
 	allowed := make(map[string]bool)
 	resolved := targets
+	completeScope := len(targets) == len(doc.Spec.Visuals)
 	if patch.Scope == "page" {
 		resolved = nil
+		completeScope = true
 	}
 	for _, page := range doc.Spec.Pages {
 		for _, component := range page.Components {
 			visual, ok := component.Value.(*document.VisualDashboardPageComponent)
-			if !ok || !slices.Contains(targets, visual.Visual) {
+			if !ok {
+				continue
+			}
+			if !slices.Contains(targets, visual.Visual) {
+				completeScope = false
 				continue
 			}
 			base, err := component.Base()
@@ -91,6 +97,12 @@ func setCompatibleFilterScopeTargets(doc document.DashboardDocument, model *sema
 		}
 	}
 	if len(patch.Targets) == 0 {
+		// Keep whole-page/report intent when every consumer is compatible.
+		// Explicit targets are only needed to exclude incompatible consumers.
+		if completeScope {
+			patch.Targets = nil
+			return nil
+		}
 		patch.Targets = resolved
 	} else {
 		for _, target := range patch.Targets {

@@ -357,6 +357,7 @@ func SetPublicDashboardSecurityHeaders(header http.Header, presentation string, 
 		header.Set("X-Frame-Options", "DENY")
 	}
 	header.Set("Content-Security-Policy", apihttpmiddleware.ContentSecurityPolicy(apihttpmiddleware.ContentSecurityPolicyConfig{
+		ExternalImages:      true,
 		BaseURI:             "'none'",
 		FrameAncestors:      frameAncestors,
 		FormAction:          "'none'",

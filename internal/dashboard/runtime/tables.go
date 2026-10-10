@@ -334,7 +334,11 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		selectedIdentities[pivotRowIdentity(axisRow, table.Rows)] = struct{}{}
 	}
 	cellFilters := append([]reportdef.QueryFilter(nil), queryFilters...)
-	if len(selectedAxisRows) > 0 && pivotRowsCanUseTypedFilters(table.Rows) {
+	// A complete row axis at offset zero already includes every governed row.
+	// Restrict only windows; enumerating the full axis builds a redundant predicate
+	// for every row and dimension and can dominate planning for large matrices.
+	completeRowAxis := table.Offset == 0 && len(rawAxisRows) < int(rowFetchLimit)
+	if !completeRowAxis && len(selectedAxisRows) > 0 && pivotRowsCanUseTypedFilters(table.Rows) {
 		groups := make([]reportdef.QueryFilterGroup, 0, len(selectedAxisRows))
 		for _, axisRow := range selectedAxisRows {
 			group := reportdef.QueryFilterGroup{}

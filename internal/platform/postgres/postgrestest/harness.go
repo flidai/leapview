@@ -37,7 +37,7 @@ import (
 
 // PostgreSQL18Image is the pinned image used by every PostgreSQL conformance
 // lane.  Changing it requires re-qualifying the supported PostgreSQL major.
-const PostgreSQL18Image = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+const PostgreSQL18Image = "public.ecr.aws/docker/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
 
 // PackageServerURLEnv is set only by the PostgreSQL conformance package
 // runner. It supplies one disposable server to the tests in a Go test binary;

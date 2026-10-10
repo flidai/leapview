@@ -337,6 +337,18 @@
 }
 
 @layer base {
+  :root[data-color-mode="light"], [data-color-mode="light"] {
+    color-scheme: light;
+  }
+
+  :root[data-color-mode="dark"], [data-color-mode="dark"] {
+    color-scheme: dark;
+  }
+
+  :root[data-color-mode="auto"], [data-color-mode="auto"] {
+    color-scheme: light dark;
+  }
+
   :root {
     color-scheme: light dark;
     /* Product roles use complete Primer recipes; primitive scales stay in Primer's namespace. */

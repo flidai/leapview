@@ -85,7 +85,11 @@ export const chatPagePreviewStyles = css`
     .dashboard-destination { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: var(--lv-border-default); font: var(--lv-type-body-compact); }
     .dashboard-destination select { min-width: 0; max-width: 240px; padding: 5px 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); }
     .chat-pane-heading svg { width: 16px; height: 16px; }
-    .titlebar-actions { display: flex; align-items: center; gap: 8px; }
+    .titlebar-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+    @media (max-width: 640px) {
+      .conversation-titlebar { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+      .conversation-titlebar .titlebar-actions { justify-content: flex-start; }
+    }
     .chat-size-toggle {
       display: inline-flex; align-items: center; justify-content: center;
       width: 32px; height: 32px; flex-shrink: 0; padding: 6px;

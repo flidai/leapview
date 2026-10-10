@@ -132,7 +132,7 @@ test('closing a deeply scrolled focused table restores visible rows in the dashb
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    const table = page.locator('lv-report-table')
+    const table = page.locator('[data-visual-id="orders"] lv-visualization-host:not([data-visual-focus-preview]) lv-report-table')
     await table.waitFor()
     await table.evaluate(async (element: any) => {
       await element.updateComplete
@@ -149,7 +149,10 @@ test('closing a deeply scrolled focused table restores visible rows in the dashb
       await element.updateComplete
     })
     await table.evaluate((element: any) => element.runAction('focus'))
-    await table.locator('.table-scrollport').evaluate((viewport: HTMLElement) => {
+    const focusedTable = page.locator('lv-visual-modal > lv-visualization-host[slot="focus-visual"] lv-report-table')
+    await focusedTable.waitFor()
+    await page.locator('[data-visual-id="orders"] lv-visualization-host[data-visual-focus-preview] lv-report-table').waitFor()
+    await focusedTable.locator('.table-scrollport').evaluate((viewport: HTMLElement) => {
       viewport.scrollTop = 500 * 34
       viewport.dispatchEvent(new Event('scroll'))
     })

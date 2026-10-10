@@ -385,7 +385,9 @@ export const chatThreadStyles = css`
     }
 
     lv-visual-artifact:is([type='table'], [type='matrix'], [type='pivot']) {
-      height: 22rem;
+      height: auto;
+      --lv-visual-height: auto;
+      --lv-table-max-height: 22rem;
     }
 
     @keyframes working-pulse {

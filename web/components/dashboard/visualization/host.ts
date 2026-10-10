@@ -8,6 +8,7 @@ import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
+import type { VisualFocusPreview } from '../visual-modal-focus'
 import type { ReportTable } from '../table/report-table'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
@@ -62,7 +63,12 @@ export class VisualizationHost extends LitElement {
   private assignEnvelope(value: VisualizationEnvelope | undefined): void {
     const previous = this.envelopeValue
     if (Object.is(previous, value)) return
+    if (!value || !['table', 'matrix', 'pivot'].includes(value.spec.kind)) {
+      this.removeAttribute('data-table-fit')
+      this.style.removeProperty('--lv-table-content-height')
+    }
     this.envelopeValue = value
+    if (this.focusPreview) this.focusPreview.envelope = value
     this.requestUpdate('envelope', previous)
   }
 
@@ -122,6 +128,8 @@ export class VisualizationHost extends LitElement {
   private mountEpoch = 0
   private envelopeAssignmentGeneration = 0
   private pendingEnvelopeValidation?: Promise<void>
+  private focusPreview?: VisualizationHost
+  private focusPreviewSource?: VisualizationHost
   private optionsScrollRoots: Array<Document | ShadowRoot> = []
 
   static styles = [visualActionStyles, visualizationHostStyles]
@@ -133,6 +141,13 @@ export class VisualizationHost extends LitElement {
   connectedCallback(): void {
     super.connectedCallback()
     const generation = ++this.connectionGeneration
+    if (this.controller) {
+      queueMicrotask(() => {
+        if (generation !== this.connectionGeneration || !this.isConnected || !this.rendererContainer) return
+        this.controller?.resize(this.rendererContainer.clientWidth, this.rendererContainer.clientHeight, window.devicePixelRatio || 1)
+      })
+      return
+    }
     if (!this.hasUpdated || this.controller || this.mountObserver) return
     queueMicrotask(() => {
       if (generation === this.connectionGeneration && this.isConnected) {
@@ -264,6 +279,49 @@ export class VisualizationHost extends LitElement {
     return this.controller?.snapshot() ?? Promise.reject(new Error('visualization is not mounted'))
   }
 
+  /** Keep the dashboard tile populated while its live renderer is in focus. */
+  createFocusPreview(): VisualFocusPreview {
+    const preview = this.cloneNode(true) as VisualizationHost
+    preview.removeAttribute('id')
+    preview.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'))
+    preview.setAttribute('data-visual-focus-preview', '')
+    preview.setAttribute('aria-hidden', 'true')
+    preview.inert = true
+    preview.deferMount = false
+    preview.authoring = this.authoring
+    preview.actionsEnabled = this.actionsEnabled
+    preview.exploreHref = this.exploreHref
+    preview.focusPreviewSource = this
+    preview.envelope = this.envelope
+    // Rendering a windowed table can request blocks without user input.
+    // Only the live focused renderer may issue commands or resize the tile.
+    for (const name of ['lv-visualization-window-request', 'lv-visualization-size-change', 'lv-visualization-observation']) {
+      preview.addEventListener(name, event => event.stopPropagation())
+    }
+    this.focusPreview = preview
+    return {
+      element: preview,
+      dispose: () => {
+        preview.remove()
+        preview.focusPreviewSource = undefined
+        if (this.focusPreview === preview) this.focusPreview = undefined
+      },
+    }
+  }
+
+  private async syncFocusPreviewTable(): Promise<void> {
+    const source = this.focusPreviewSource
+    if (!source || !this.isConnected) return
+    await this.updateComplete
+    await this.waitForApply()
+    if (source !== this.focusPreviewSource || !this.isConnected) return
+    const table = this.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    const sourceTable = source.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    if (!table || !sourceTable) return
+    await sourceTable.updateComplete
+    if (source === this.focusPreviewSource && this.isConnected) table.syncFocusPreview(sourceTable)
+  }
+
   protected render() {
     const statusError = this.envelope?.status.kind === 'error' ? this.envelope.status.message ?? 'Visualization error' : ''
     const error = this.error || statusError
@@ -292,7 +350,7 @@ export class VisualizationHost extends LitElement {
         </header>
       ` : !this.actionsEnabled ? html`<div class="headerless-actions"><div class="visual-actions"><slot name="focus-action"></slot></div></div>` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
-        <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
+        <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation} @lv-table-size-change=${this.handleTableSizeChange}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
           <lv-loading-spinner size="medium" aria-hidden="true"></lv-loading-spinner>
           <span>${loadingLabel}</span>
@@ -378,6 +436,8 @@ export class VisualizationHost extends LitElement {
         this.error = ''
         this.presented = true
         this.announcement = visualizationChangeAnnouncement(previous, envelope)
+        void this.syncFocusPreviewTable()
+        void this.focusPreview?.syncFocusPreviewTable()
       }
     } catch (error) {
       if (generation === this.applyGeneration && envelope === this.envelope) this.error = error instanceof Error ? error.message : String(error)
@@ -392,6 +452,20 @@ export class VisualizationHost extends LitElement {
     if (kind === 'geographic') return 'map'
     return 'chart'
   }
+
+  private readonly handleTableSizeChange = (event: Event): void => {
+    const envelope = this.envelope
+    if (!envelope || !['table', 'matrix', 'pivot'].includes(envelope.spec.kind)) return
+    const { height, naturalHeight } = (event as CustomEvent<{ height: number; naturalHeight: number }>).detail
+    if (!Number.isFinite(height) || height < 0 || !Number.isFinite(naturalHeight) || naturalHeight < 0) return
+    event.stopPropagation()
+    this.setAttribute('data-table-fit', '')
+    this.style.setProperty('--lv-table-content-height', `${height}px`)
+    this.dispatchEvent(new CustomEvent('lv-visualization-size-change', {
+      bubbles: true, composed: true, detail: { visualID: envelope.visualID, height, naturalHeight },
+    }))
+  }
+
 
   private expand = (): void => {
     const envelope = this.envelope

@@ -17,7 +17,7 @@ import (
 // Pin the linux/amd64 manifest, matching the historical candidate platform.
 // The official CLI image supplies a static client; a host-side Nix executable
 // may require its wrapper, loader and libraries from /nix/store.
-const qualificationHistoricalDockerClientImage = "docker.io/library/docker:29.8.1-cli@sha256:6602978e2be3c20e530e33773b8cadcef5fe998a71a534ee24516f1176973cdf"
+const qualificationHistoricalDockerClientImage = "public.ecr.aws/docker/library/docker:29.8.1-cli@sha256:6602978e2be3c20e530e33773b8cadcef5fe998a71a534ee24516f1176973cdf"
 
 func qualificationHistoricalDockerClient(t *testing.T, ctx context.Context) string {
 	t.Helper()
