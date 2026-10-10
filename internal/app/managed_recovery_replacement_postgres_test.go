@@ -28,8 +28,7 @@ func (restored managedJourneyRestoredCluster) startReplacement(t *testing.T, ori
 	require.NoError(t, err)
 	port := listener.Addr().(*net.TCPAddr).Port
 	require.NoError(t, listener.Close())
-	socket := filepath.Join(filepath.Dir(restored.directory), "replacement-socket")
-	require.NoError(t, os.Mkdir(socket, 0700))
+	socket := managedJourneySocketDirectory(t)
 	configuration := fmt.Sprintf("listen_addresses='127.0.0.1'\nport=%d\nunix_socket_directories='%s'\nssl=on\nssl_min_protocol_version='TLSv1.2'\nssl_cert_file='%s'\nssl_key_file='%s'\narchive_mode=off\nshared_preload_libraries=''\nrecovery_target_lsn='%s'\nrecovery_target_timeline='%d'\nrecovery_target_action='promote'\nrestore_command='%s --config=%s --stanza=%s --pg1-path=%s archive-get %%f %%p'\n", port, socket, restored.certFile, restored.keyFile, restored.frontier.TargetLSN, restored.frontier.Timeline, restored.pgbackrest, restored.providerFile, restored.frontier.Stanza, restored.directory)
 	require.NoError(t, os.WriteFile(filepath.Join(restored.directory, "postgresql.conf"), []byte(configuration), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(restored.directory, "postgresql.auto.conf"), nil, 0600))

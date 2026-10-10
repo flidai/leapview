@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,11 +45,12 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 	require.NotZero(t, os.Geteuid(), "PostgreSQL must run as an unprivileged owner")
 	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
 	defer cancel()
-	base, err := os.MkdirTemp("", "lv-production-recovery-")
+	// Exercise retained data paths beyond sockaddr_un's limit. Local fixture
+	// sockets must remain independent of the provider's destination length.
+	base, err := os.MkdirTemp("", "lv-production-recovery-"+strings.Repeat("retained-", 12))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(base) })
-	source, socket := filepath.Join(base, "source"), filepath.Join(base, "socket")
-	require.NoError(t, os.Mkdir(socket, 0700))
+	source, socket := filepath.Join(base, "source"), managedJourneySocketDirectory(t)
 	run := func(program string, args ...string) []byte {
 		t.Helper()
 		command := exec.CommandContext(ctx, program, args...)
@@ -130,6 +132,17 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 		}
 	}
 	return managedJourneyRestoredCluster{filepath.Join(base, "replacement"), pgbin, pgbackrest, providerFile, caFile, certFile, keyFile, frontier, native}
+}
+
+func managedJourneySocketDirectory(t *testing.T) string {
+	t.Helper()
+	// TMPDIR may itself exceed PostgreSQL's Unix socket path limit on CI.
+	// MkdirTemp creates a private 0700 directory; process cleanup is registered
+	// later, so PostgreSQL stops before this directory is removed.
+	directory, err := os.MkdirTemp("/tmp", "lv-pg-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(directory)) })
+	return directory
 }
 
 func managedJourneyDigest(value []byte) string {
