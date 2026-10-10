@@ -3,6 +3,7 @@ import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { ArrowLeft, ChevronRight, Code2, Columns3, Database, Filter, Play, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
+  ChatSignal,
   DataExploreCommand,
   DataExploreFieldSignal,
   DataExploreFilterSignal,
@@ -138,6 +139,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private filterSuggestionRequestSeq = 0
   @state() private optimisticExplore: DataExploreCommand | null = null
   @state() private agentDrawerOpen = false
+  @state() private agentCommandError = ''
+  private agentSubmission: {
+    conversationId: string
+    messageIds: Set<string>
+    runId: string
+    error: string
+    pending: boolean
+  } | null = null
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
   @state() private browseVisibleColumns: { objectKey: string; keys: string[] } | null = null
@@ -613,9 +622,22 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   `, dataExplorerResultStyles, dataExplorerResponsiveStyles]
 
   private readonly handleDatastarFetch = (event: Event) => {
+    if (!ownsBrowserCommandFetch(this, event)) return
+    if (this.agentSubmission?.pending) {
+      const agent = this.signal<ChatSignal | null>('agent', null)
+      if (this.agentTurnAccepted(agent)) {
+        this.clearAgentSubmission()
+      } else {
+        const failure = browserCommandFailure(event, 'Sending your message')
+        if (failure) {
+          this.agentSubmission.pending = false
+          this.agentCommandError = `${failure.message} Your draft was kept; you can edit it and try again.`
+        }
+      }
+    }
     const action = this.exploreTransportAction
     const lifecycleActive = ['running', 'pending', 'stopped', 'uncertain'].includes(this.exploreExecutionState) || action !== null
-    if (!lifecycleActive || !ownsBrowserCommandFetch(this, event)) return
+    if (!lifecycleActive) return
     // Datastar identifies the handler element, not which of its overlapping
     // commands failed. Keep the outcome deliberately unknown until a current
     // semantic status arrives.
@@ -697,7 +719,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.optimisticExplore = null
       if (!this.embedded) this.replaceDataExplorerURL(this.dataExplorer.command)
     }
-    const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
+    const agent = this.signal<ChatSignal | null>('agent', null)
+    if (this.agentSubmission && (this.agentTurnAccepted(agent)
+      || Boolean(agent?.status.error && agent.status.error !== this.agentSubmission.error))) this.clearAgentSubmission()
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
     if (activeConversationId) {
       this.restoredAgentConversationId = activeConversationId
@@ -874,6 +898,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         </div>
         ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
           open
+          .commandError=${this.agentCommandError}
+          @lv-chat-submit=${this.handleAgentSubmit}
           .suggestions=${dataExplorerAgentSuggestions(explorer, this.optimisticExplore ?? explorer.explore.command, this.page?.context)}
           @lv-chat-drawer-close=${() => this.setAgentDrawerOpen(false)}
           @lv-chat-new=${this.handleAgentNew}
@@ -1190,7 +1216,36 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({ action: 'stop', mode: 'explore', runId: uncertain ? undefined : this.clientState.runID(), explore: stopCommand })
   }
 
+  private handleAgentSubmit = (event: CustomEvent<{ input: string }>) => {
+    if (!event.detail?.input?.trim()) return
+    const agent = this.signal<ChatSignal | null>('agent', null)
+    this.agentCommandError = ''
+    this.agentSubmission = {
+      conversationId: agent?.activeConversationId?.trim() ?? '',
+      messageIds: new Set((agent?.transcript ?? []).map(item => item.id?.trim() ?? '').filter(Boolean)),
+      runId: agent?.status.runId ?? '',
+      error: agent?.status.error ?? '',
+      pending: true,
+    }
+  }
+
+  private agentTurnAccepted(agent: ChatSignal | null): boolean {
+    const submission = this.agentSubmission
+    if (!agent || !submission) return false
+    return (agent.activeConversationId?.trim() ?? '') !== submission.conversationId
+      || Boolean(agent.status.running)
+      || Boolean(agent.status.runId && agent.status.runId !== submission.runId)
+      || (agent.transcript ?? []).some(item => (item.kind === 'user' || item.kind === 'assistant')
+        && Boolean(item.id?.trim()) && !submission.messageIds.has(item.id.trim()))
+  }
+
+  private clearAgentSubmission(): void {
+    this.agentSubmission = null
+    this.agentCommandError = ''
+  }
+
   private handleAgentNew = () => {
+    this.clearAgentSubmission()
     this.restoredAgentConversationId = ''
     this.agentRestoreDispatched = true
     this.agentStateController.newConversation()

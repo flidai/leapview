@@ -69,6 +69,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) embedded = false
   @property({ type: Boolean, reflect: true }) expanded = false
+  @property({ attribute: false }) commandError = ''
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
   @property({ attribute: false }) dashboardSavedVisualIds: string[] = []
   @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
@@ -239,7 +240,9 @@ class ChatDrawer extends DatastarLit(LitElement) {
     const agentEnabled = Boolean(agent.status?.enabled)
     const dataContextReady = !dataContext || Boolean(context?.exploration?.modelId?.trim())
     const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
-    const composer = html`<lv-chat-composer
+    const composer = html`
+      ${this.commandError ? html`<p class="reference-limit-status" role="alert">${this.commandError}</p>` : null}
+      <lv-chat-composer
       .value=${agent.composer.value ?? ''}
       .disabled=${this.pending || agent.composer.disabled || !agentEnabled || !dataContextReady}
       .pending=${this.pending}
