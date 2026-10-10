@@ -42,6 +42,13 @@ func TestActualConfinedNativePGReadback(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	// The retained base becomes read-only during confined restore; locks must
+	// be private to this fixture and creatable in the sandbox's private /tmp.
+	lockRoot, err := os.MkdirTemp("/tmp", "lv-pg-lock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(lockRoot) })
 	source, socket, repo := filepath.Join(base, "source"), filepath.Join(base, "socket"), filepath.Join(base, "repository")
 	if err := os.Mkdir(socket, 0700); err != nil {
 		t.Fatal(err)
@@ -67,7 +74,7 @@ func TestActualConfinedNativePGReadback(t *testing.T) {
 		return value
 	}
 	configFile := filepath.Join(base, "archive.conf")
-	provider := []byte(fmt.Sprintf("[global]\nrepo1-path=%s\nrepo1-retention-full=2\nstart-fast=y\nprocess-max=2\narchive-timeout=60\nlog-level-console=off\nlog-level-file=off\n[managed]\npg1-path=%s\npg1-port=%d\npg1-socket-path=%s\npg1-user=%s\n", repo, source, port, socket, owner.Username))
+	provider := []byte(fmt.Sprintf("[global]\nrepo1-path=%s\nlock-path=%s\nrepo1-retention-full=2\nstart-fast=y\nprocess-max=2\narchive-timeout=60\nlog-level-console=off\nlog-level-file=off\n[managed]\npg1-path=%s\npg1-port=%d\npg1-socket-path=%s\npg1-user=%s\n", repo, lockRoot, source, port, socket, owner.Username))
 	if err := os.WriteFile(configFile, provider, 0600); err != nil {
 		t.Fatal(err)
 	}
