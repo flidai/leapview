@@ -122,6 +122,9 @@ func New(config Config) (*Supply, error) {
 		if err := validateArtifact(artifact); err != nil {
 			return nil, err
 		}
+		if artifact.Identity.Builtin && config.VerifySignatureAtPath == nil {
+			return nil, fmt.Errorf("%w: builtin engine verifier is required", extension.ErrExtensionIntegrity)
+		}
 		identityKey, keyErr := artifact.Identity.Canonical()
 		if keyErr != nil {
 			return nil, keyErr
@@ -241,17 +244,31 @@ func validateArtifact(artifact Artifact) error {
 	if err := artifact.Identity.Validate(); err != nil {
 		return err
 	}
+	if artifact.Identity.Builtin {
+		if err := extension.ValidateBuiltinIdentity(artifact.Identity); err != nil {
+			return err
+		}
+		builtin, _ := extension.CompiledBuiltin(artifact.Identity.Name, artifact.Identity.Platform)
+		if err := extension.VerifyBuiltinDescriptor(artifact.Identity, builtin.Bytes(), artifact.Provenance, artifact.Signature); err != nil {
+			return err
+		}
+	}
 	if len(artifact.Origins) == 0 {
 		return fmt.Errorf("%w: artifact %q has no configured origins", extension.ErrInvalidManifest, artifact.Identity.Name)
 	}
 	if strings.TrimSpace(artifact.Provenance) == "" || strings.TrimSpace(artifact.Signature) == "" {
 		return fmt.Errorf("%w: artifact %q is missing signature or provenance", extension.ErrExtensionUnsigned, artifact.Identity.Name)
 	}
-	if err := validateReference(artifact.Provenance, "provenance"); err != nil {
-		return err
-	}
-	if err := validateReference(artifact.Signature, "signature"); err != nil {
-		return err
+	// The closed builtin registry above authenticates its exact compiled-input
+	// and package-anchor references. File-backed artifacts retain the ordinary
+	// vendor signature/provenance format and verification path.
+	if !artifact.Identity.Builtin {
+		if err := validateReference(artifact.Provenance, "provenance"); err != nil {
+			return err
+		}
+		if err := validateReference(artifact.Signature, "signature"); err != nil {
+			return err
+		}
 	}
 	seen := map[string]struct{}{}
 	for _, origin := range artifact.Origins {
@@ -365,7 +382,8 @@ func (s *Supply) AdmitExtension(ctx context.Context, name string) (extension.Adm
 	}
 	identity := artifact.Identity
 	admitted := extension.AdmittedExtension{
-		Name: name, Identity: identityKey(identity), Version: identity.ExtensionVersion,
+		Builtin: identity.Builtin,
+		Name:    name, Identity: identityKey(identity), Version: identity.ExtensionVersion,
 		ExtensionVersion: identity.ExtensionVersion, DuckDBVersion: identity.DuckDBVersion,
 		GOOS: identity.GOOS, GOARCH: identity.GOARCH, Platform: identity.Platform,
 		SupportProfile: identity.SupportProfile, Digest: identity.Digest, Path: path,

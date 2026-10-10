@@ -8,9 +8,25 @@
   purpose,
 }:
 let
+  receipts = import ./native-receipts.nix {
+    inherit pkgs;
+    component = "application";
+  };
   manifest = builtins.fromJSON (builtins.readFile ../package.json);
   canonicalVersion = pkgs.lib.trim (builtins.readFile ../VERSION);
   dependencies = import ./dependencies.nix { inherit pkgs toolchain src; };
+  duckdb = import ./duckdb.nix { inherit pkgs; };
+  httpCACheck = pkgs.writeShellApplication {
+    name = "check-http-default-ca";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.gnugrep
+      pkgs.gawk
+      pkgs.glibc.bin
+      pkgs.bash
+    ];
+    text = builtins.readFile ./check-http-default-ca.sh;
+  };
   buildVersion =
     if purpose == "compose" then
       canonicalVersion
@@ -48,6 +64,7 @@ pkgs.stdenv.mkDerivation {
   GOPROXY = "file://${dependencies.go}/download";
   GOFLAGS = "-mod=readonly";
   CGO_ENABLED = "1";
+  CGO_CFLAGS = "-I${duckdb.dev}/include";
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
   BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   dontConfigure = true;
@@ -92,11 +109,55 @@ pkgs.stdenv.mkDerivation {
     flags="-w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
       if dirty then "true" else "false"
     } -X ${buildInfo}.release=${if purpose == "compose" then "true" else "false"}"
-    go build -tags=duckdb_arrow -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview
-    go build -tags=duckdb_arrow -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapviewctl" ./cmd/leapviewctl
-    go build -tags=duckdb_arrow -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply
+    # Use source-built DuckDB with patched, statically linked Lance and SQLite.
+    # A link group retains dependency resolution without unsigned extension
+    # loading or a new extension signing-key custody requirement.
+    nativeLibraries=$(find ${duckdb.lib}/lib -maxdepth 1 -name '*.a' ! -name 'libdummy_static_extension_loader.a' -type f | LC_ALL=C sort)
+    httpLibraries=$(find ${duckdb.http.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
+    databaseLibraries=$(find ${duckdb.database.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
+    excelLibraries=$(find ${duckdb.excel.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
+    avroLibraries=$(find ${duckdb.avro.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
+    export CGO_LDFLAGS="-Wl,--start-group $nativeLibraries ${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a ${duckdb.ducklake.croaring}/lib/libroaring.a $httpLibraries $databaseLibraries $excelLibraries $avroLibraries -Wl,--end-group -lstdc++ -ldl -lm"
+    tags=duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro
+    mkdir -p "$TMPDIR/native-application-evidence"
+    printf '%s\n' "$nativeLibraries" '${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a' '${duckdb.ducklake.croaring}/lib/libroaring.a' "$httpLibraries" "$databaseLibraries" "$excelLibraries" "$avroLibraries" > "$TMPDIR/native-link-inputs"
+    printf '%s\n' "$CGO_LDFLAGS" > "$TMPDIR/native-application-evidence/link-flags.txt"
+    printf '%s\n' "$tags" > "$TMPDIR/native-application-evidence/tags.txt"
+    go version > "$TMPDIR/native-application-evidence/go.txt"
+    go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview
+    go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapviewctl" ./cmd/leapviewctl
+    go build -tags="$tags" -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply
     go build -trimpath -buildvcs=false -o "$tools/bin/mapassets" ./internal/app/tools/mapassets
+    # This test executable stays in the tools output, outside application/image
+    # runtime closures. The manual native lane runs it inside a real chroot.
+    mkdir -p "$tools/libexec"
+    go test -c -tags="$tags" -o "$tools/libexec/http-ca.test" ./internal/analytics/duckdbsession
+    # Docker-backed fixture execution belongs outside the Nix sandbox. Keep
+    # these exact linked test executables in tools, never in the runtime image.
+    go test -c -tags="$tags,integration" -o "$tools/libexec/database-connectors.test" ./internal/analytics/duckdb
+    go test -c -tags="$tags,integration" -o "$tools/libexec/postgres-ducklake.test" ./internal/analytics/ducklake
+    cp ${httpCACheck}/bin/check-http-default-ca ${./ca-root.sh} "$tools/libexec/"
     runHook postBuild
+  '';
+  postFixup = ''
+    ${receipts.command} compose --repo ${receipts.source} --platform ${receipts.platform} \
+      --revision ${revision} --duckdb ${duckdb.lib} --lance ${duckdb.lance.rust} \
+      --croaring ${duckdb.ducklake.croaring} --http ${duckdb.http.archives} --database ${duckdb.database.archives} --excel ${duckdb.excel.archives} --avro ${duckdb.avro.archives} \
+      --binaries "$out/bin" --link-inputs "$TMPDIR/native-link-inputs" \
+      --evidence "$TMPDIR/native-application-evidence" --destination "$out/share/leapview/native-build" > /dev/null
+    ${receipts.command} verify --repo ${receipts.source} --platform ${receipts.platform} \
+      --revision ${revision} --binaries "$out/bin" --destination "$out/share/leapview/native-build" > /dev/null
+  '';
+  doCheck = true;
+  checkPhase = ''
+    runHook preCheck
+    # Test the same engine archives and compile-time registry as the shipped
+    # binaries, including independent-session readback and linked SQLite ID.
+    go test -count=1 -tags="$tags" ./internal/extension \
+      ./internal/deployment/extensionsupply ./internal/analytics/duckdbsession
+    go test -count=1 -tags="$tags" -run '^TestAdmittedExtensionLoad' \
+      ./internal/analytics/ducklake
+    runHook postCheck
   '';
   installPhase = ''
     mkdir -p "$out/share/leapview"
@@ -124,6 +185,6 @@ pkgs.stdenv.mkDerivation {
     "$out/bin/leapview" version
     "$out/bin/leapviewctl" --help >/dev/null
   '';
-  passthru = { inherit dependencies; };
+  passthru = { inherit dependencies duckdb revision; };
   meta.mainProgram = "leapview";
 }

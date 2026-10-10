@@ -1,0 +1,21 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -28,16 +28,14 @@
+   find_library(ZLIB_LIBRARY libz.a REQUIRED)
+ endif()
+ 
+-find_library(SNAPPY_LIBRARY snappy REQUIRED)
++find_library(SNAPPY_LIBRARY libsnappy.a REQUIRED)
+ set(ALL_AVRO_LIBRARIES
+     ${AVRO_LIBRARY}
+-    ${JEMALLOC_LIBRARY}
+     ${JANSSON_LIBRARY}
+     ${LZMA_LIBRARY}
+     ${ZLIB_LIBRARY}
+     ${SNAPPY_LIBRARY}
+-    ${GMP_LIBRARY}
+-    ${MATH_LIBRARY})
++    m)
+ 
+ set(EXTENSION_NAME ${TARGET_NAME}_extension)
+ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)

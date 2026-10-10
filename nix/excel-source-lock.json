@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "wrapper": {
+    "revision": "f4c72b5ef04a03b3a78a95b5a2ee94ba93e3178d",
+    "sourceNARHash": "sha256-hyHTiTfRR+hXJ7hZKt/h/Hu1zNgEYEbMozIv6WZbnfA=",
+    "patchSHA256": "463e6f53fc45aa32d9d41604bd37469e86f1de8fee649ad175a183a90196d571"
+  },
+  "libraries": {
+    "expat": {
+      "version": "2.8.4",
+      "archiveSHA256": "656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "lib/xmlparse.c": "a0f45238a4f29fe188f38256edc04e8fd0eb3a43cc03de38cdb9640778089a92",
+        "lib/xmltok.c": "f2732a8e91fd901d75431d35edc421e1ff3893a275c4de1cc855b3d4deadfd37",
+        "lib/expat.h": "0e912e25375e213b6e4ff90d554e0a0e037e6f0c20dfa734d366e5bdff289f20"
+      }
+    },
+    "minizip": {
+      "version": "4.2.2",
+      "sourceNARHash": "sha256-yPDH9Far8I+tpNeIoXt6w2Aj1/LEYFjwaHyLZMavCCA=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "mz_zip.c": "0284ef2cb4cd55d134195df9c824fd8679f91e6e583499f0929b97f4527cc064",
+        "mz_strm_zlib.c": "09aba27912927281e36c38ee4afc7b77c1d7048b78570a805d894f8d71a12889",
+        "mz_zip_rw.c": "d4a9615b8f3463bdafbf92336d378b4cb326e5700e5e74cf275be9678ac2b2d8",
+        "CMakeLists.txt": "3e3d04d0494548e23a654fe93343a659e3f0334200a79ab9bcd7c98338ef0066"
+      }
+    }
+  },
+  "minizipFeatures": {
+    "BUILD_SHARED_LIBS": false,
+    "MZ_COMPAT": false,
+    "MZ_BZIP2": false,
+    "MZ_LZMA": false,
+    "MZ_PPMD": false,
+    "MZ_ZSTD": false,
+    "MZ_LIBCOMP": false,
+    "MZ_FETCH_LIBS": false,
+    "MZ_FORCE_FETCH_LIBS": false,
+    "MZ_PKCRYPT": false,
+    "MZ_WZAES": false,
+    "MZ_OPENSSL": false,
+    "MZ_LIBBSD": false,
+    "MZ_ICONV": false,
+    "MZ_COMPRESS_ONLY": false,
+    "MZ_DECOMPRESS_ONLY": false,
+    "MZ_ZLIB": true,
+    "CMAKE_POSITION_INDEPENDENT_CODE": true
+  }
+}

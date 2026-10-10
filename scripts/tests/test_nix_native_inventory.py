@@ -12,6 +12,27 @@ import nix_native_inventory as native
 
 
 class NativeInventoryTests(unittest.TestCase):
+    def test_rebuilt_client_inventory_matches_selected_recipes(self):
+        policy = json.loads(native.POLICY_PATH.read_text())
+        replacements = {entry['name']: entry for entry in policy['sourceBuiltReplacements']}
+        for family in ('http', 'database'):
+            lock = native.ROOT / ('nix/' + family + '-source-lock.json')
+            selected = json.loads(lock.read_text())
+            for name, wrapper in selected['wrappers'].items():
+                with self.subTest(extension=name):
+                    entry = replacements[name]
+                    self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+                    self.assertEqual({key: entry['wrapper'][key] for key in wrapper}, wrapper)
+
+    def test_rebuilt_avro_inventory_matches_exact_custom_fork_policy(self):
+        lock = native.ROOT / 'nix/avro-source-lock.json'
+        selected = json.loads(lock.read_text())
+        policy = json.loads(native.POLICY_PATH.read_text())
+        entry = next(e for e in policy['sourceBuiltReplacements'] if e['name'] == 'avro')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(selected['libraries']['avro']['revision'], '8af400279c445a81b8552a7670d8c1ebd92ba34a')
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

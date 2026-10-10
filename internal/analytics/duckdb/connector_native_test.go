@@ -25,6 +25,7 @@ import (
 	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 )
 
 func openNativeConnectorDB(t *testing.T, extensions ...string) *sql.DB {
@@ -40,13 +41,16 @@ func openNativeConnectorDB(t *testing.T, extensions ...string) *sql.DB {
 			t.Fatal(err)
 		}
 	}
-	admission := newDuckDBTestExtensionAdmission(t, extensions...)
+	admission := extensionfixture.New(t, extensions...).Admission
 	for _, name := range extensions {
 		artifact, err := admission.AdmitExtension(t.Context(), name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.ExecContext(t.Context(), loadExtensionStatement(artifact.Path)); err != nil {
+		if err := validateAdmittedExtension(name, artifact); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(t.Context(), loadAdmittedExtensionStatement(artifact)); err != nil {
 			t.Fatalf("load %s: %v", name, err)
 		}
 	}

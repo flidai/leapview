@@ -68,3 +68,14 @@ condition = "AND"
 regexTarget = "line"
 regexes = ['''(?m)^const localRuntimeCredentialVersion = "93d623e3-8d75-41ea-b006-aed3375d0592"$''']
 paths = ['''(?:^|/)internal/analytics/module/local_runtime_credential_test\.go$''']
+
+[[allowlists]]
+description = "Exact non-secret SHA-256 source digests of the selected PostgreSQL authentication implementations"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = [
+  '''^\s*"src/interfaces/libpq/fe-auth-scram\.c": "3509ab9c61f2fe691f4b60cf43b68b71c50dd9a2e2524a31dba8aceec402f8f5",?$''',
+  '''^\s*"src/interfaces/libpq/fe-auth-oauth\.c": "e909c6c453e820e091de35825c0c4c563a5079dd67f62a76ab96a42611bd8be5",?$''',
+]
+paths = ['''(?:^|/)nix/database-source-lock\.json$''']

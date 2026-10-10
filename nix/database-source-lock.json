@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "databaseConnector": {
+    "revision": "43e79061e5d00411612fee98482586a0e7a756cd",
+    "sourceNARHash": "sha256-yCgZp+dSSwkqGYnPVXLbXIuYKet3g3Wx2J8dzBP6Zfk="
+  },
+  "wrappers": {
+    "postgres": {
+      "revision": "8f813f9b9c9e52a9074a050a0be60f49160a6baa",
+      "sourceNARHash": "sha256-aldLku7QXSC6bNAm5sbjwAw24E1Ly/S6p0hkLBB9T00=",
+      "patchSHA256": "36592b3350ad04069103335d62c84ffbcf20a1452ffa08a636a87e1c9a98668a"
+    },
+    "mysql": {
+      "revision": "37006e53a58ddc31eeb96ff95c21f3196e27fcf2",
+      "sourceNARHash": "sha256-WkAklbtNRGvnGAlakp0U2lI+V+owrZqiQTgZ/NAnknI=",
+      "patchSHA256": "2e7ef2e68a8e4bb27e701944b675954287e532b4e1241e80bbb698caa707f68d"
+    }
+  },
+  "libraries": {
+    "libpq": {
+      "version": "18.6",
+      "sourceNARHash": "sha256-ySffxlG7jlNyzx++BmIN+WuaQ9TMAJt/qER9wIjd6B8=",
+      "patchSHA256": [
+        "47c241c19e876b28da5eecbf4c73c7e92cbb3a9815961d74e8908d74af30a17e"
+      ],
+      "selectedFiles": {
+        "src/interfaces/libpq/fe-auth-scram.c": "3509ab9c61f2fe691f4b60cf43b68b71c50dd9a2e2524a31dba8aceec402f8f5",
+        "src/interfaces/libpq/fe-secure-openssl.c": "403810fe35520dd8117ff9400553795a42df494e04a59cb766ca911736187ee0",
+        "src/interfaces/libpq/fe-connect.c": "44a6e386cbfd67ebe768d6ef5493098119c2e6b4796239d53e5ed7b122b206a5",
+        "src/include/pg_config.h.in": "40ec66c722dee3ae0388495ed536d32ce0cf5f228e7e164d528a3248dc8d6a22",
+        "src/interfaces/libpq/fe-auth-oauth.c": "e909c6c453e820e091de35825c0c4c563a5079dd67f62a76ab96a42611bd8be5",
+        "src/interfaces/libpq/Makefile": "516ecc2a19c246394e1eecd7857505a80828d6569b89c7578288beba01e5e89f"
+      },
+      "staticOpenSSLRefsPatchSHA256": "efeae15db3ce7eaad16c080e9e582cec49d50ecb7e584fd5a89ea4293091b5e6"
+    },
+    "mariadb": {
+      "version": "3.4.11",
+      "revision": "be67a4fc1e0493913732df90e562f122bff9dfe3",
+      "sourceNARHash": "sha256-8H+r45drPNKVgmgbQHFfPestlR6Spsdpb7FERoiHTO4=",
+      "selectedFiles": {
+        "libmariadb/mariadb_lib.c": "1d23615cffd88b191914d32d715306388ded44a3be0b7cdb7231c6ecdb8c9557",
+        "libmariadb/secure/openssl.c": "d7b9b2333e49c9301a6d87ecddcbd48b95537585790446447db38f33cf5c7698",
+        "plugins/auth/caching_sha2_pw.c": "5bccab8905db282cbe906ff1e6887e0165b8731a4b85cd77dfc5b742d2763e94",
+        "plugins/auth/ed25519.c": "5944fa0cfef4fdc68b42b980daf7ccc6f84c246e2c8093e89f94e2df9e41dbd4",
+        "plugins/auth/CMakeLists.txt": "ae9bca78069f7c44d581ae95ad6395dbdbabddf76d6cecde68bbaadbfcb4e9a4",
+        "cmake/plugins.cmake": "10e779bbc4c55ca497742dc86a4ca82653d05a549e16fbf13f80af69fc958c81"
+      }
+    }
+  },
+  "mariadbPlugins": {
+    "MYSQL_NATIVE_PASSWORD": "STATIC",
+    "CACHING_SHA2_PASSWORD": "STATIC",
+    "CLIENT_ED25519": "STATIC",
+    "DIALOG": "STATIC",
+    "MYSQL_CLEAR_PASSWORD": "STATIC",
+    "SHA256_PASSWORD": "STATIC",
+    "PVIO_SOCKET": "STATIC",
+    "ZLIB": "STATIC",
+    "AUTH_GSSAPI_CLIENT": "OFF",
+    "PARSEC": "OFF",
+    "MYSQL_OLD_PASSWORD": "OFF",
+    "ZSTD": "OFF"
+  }
+}

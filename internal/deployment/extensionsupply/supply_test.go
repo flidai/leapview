@@ -74,6 +74,51 @@ func TestSupplyAdmitsVerifiedArtifactAndOfflineLookup(t *testing.T) {
 	}
 }
 
+func TestSupplyAdmitsCompiledBuiltinOnlyAfterEngineVerification(t *testing.T) {
+	builtin, enabled := extension.CompiledBuiltin("lance", "linux_amd64")
+	if !enabled {
+		t.Skip("this build has no compiled Lance registry")
+	}
+	identity := extension.Identity{Builtin: true, DuckDBVersion: builtin.DuckDBVersion, ExtensionVersion: builtin.SourceRevision, GOOS: "linux", GOARCH: "amd64", Platform: builtin.Platform, Name: "lance", Digest: builtin.Digest(), SupportProfile: "static-test"}
+	artifact := Artifact{Identity: identity, Origins: []string{"package"}, Provenance: builtin.Provenance(), Signature: "package:compiled-engine"}
+	config := Config{DuckDBVersion: identity.DuckDBVersion, GOOS: identity.GOOS, GOARCH: identity.GOARCH, Platform: identity.Platform, SupportProfile: identity.SupportProfile, CacheDir: filepath.Join(privateTestTempDir(t), "extensions"), Offline: true,
+		Manifest: Manifest{Version: ManifestVersion, DuckDBVersion: identity.DuckDBVersion, GOOS: identity.GOOS, GOARCH: identity.GOARCH, Platform: identity.Platform, SupportProfile: identity.SupportProfile, Artifacts: []Artifact{artifact}},
+		Origins: []Origin{{ID: "package", URL: "file:///reviewed/static-descriptor", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(builtin.Bytes())), nil
+		}}}, VerifySignature: func(_ context.Context, artifact Artifact, payload []byte) error {
+			return extension.VerifyBuiltinDescriptor(artifact.Identity, payload, artifact.Provenance, artifact.Signature)
+		}}
+	if _, err := New(config); !errors.Is(err, extension.ErrExtensionIntegrity) {
+		t.Fatalf("missing engine verifier error = %v", err)
+	}
+	verificationFailure := errors.New("engine has no compiled Lance")
+	config.VerifySignatureAtPath = func(context.Context, Artifact, string) error { return verificationFailure }
+	supply, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := supply.AdmitExtension(context.Background(), "lance"); !errors.Is(err, extension.ErrExtensionIntegrity) {
+		t.Fatalf("failed engine verification admission = %v", err)
+	}
+	var verified bool
+	config.VerifySignatureAtPath = func(_ context.Context, candidate Artifact, path string) error {
+		payload, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		verified = true
+		return extension.VerifyBuiltinDescriptor(candidate.Identity, payload, candidate.Provenance, candidate.Signature)
+	}
+	supply, err = New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := supply.AdmitExtension(context.Background(), "lance")
+	if err != nil || !verified || !admitted.Builtin || admitted.Digest != identity.Digest {
+		t.Fatalf("compiled admission = %#v, verified = %v, error = %v", admitted, verified, err)
+	}
+}
+
 func TestOfflineSupplyAdmitsPackagedReviewedFileOrigin(t *testing.T) {
 	content := []byte("packaged extension bytes")
 	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")

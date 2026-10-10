@@ -1,0 +1,44 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -50,16 +50,20 @@
+     )
+ endif()
+ 
++target_link_libraries(${EXTENSION_NAME} PostgreSQL::PostgreSQL ${DATABASE_STATIC_LIBRARIES})
++
+ target_link_libraries(${LOADABLE_EXTENSION_NAME}
+     OpenSSL::SSL
+     OpenSSL::Crypto
+     PostgreSQL::PostgreSQL
+-    ${CURL_LIBRARIES})
++    ${CURL_LIBRARIES} ${DATABASE_STATIC_LIBRARIES})
+ set_property(TARGET ${EXTENSION_NAME} PROPERTY C_STANDARD 99)
+ set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY C_STANDARD 99)
+ 
+ if(WIN32)
+-  target_link_libraries(${LOADABLE_EXTENSION_NAME}
++  target_link_libraries(${EXTENSION_NAME} PostgreSQL::PostgreSQL ${DATABASE_STATIC_LIBRARIES})
++
++target_link_libraries(${LOADABLE_EXTENSION_NAME}
+       wsock32
+       ws2_32
+       wldap32
+--- a/src/include/postgres_scanner_extension.hpp
++++ b/src/include/postgres_scanner_extension.hpp
+@@ -15,2 +15,3 @@
+ 	}
++	std::string Version() const override;
+ 	void Load(ExtensionLoader &loader) override;
+--- a/src/postgres_extension.cpp
++++ b/src/postgres_extension.cpp
+@@ -287,2 +287,10 @@
+ 
++std::string PostgresScannerExtension::Version() const {
++#ifdef EXT_VERSION_POSTGRES_SCANNER
++	return EXT_VERSION_POSTGRES_SCANNER;
++#else
++	return "";
++#endif
++}
++
+ void PostgresScannerExtension::Load(ExtensionLoader &loader) {

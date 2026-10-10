@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "wrapper": {
+    "revision": "f9d590297485f0318f480372c70bdd852826e258",
+    "sourceNARHash": "sha256-1JiLOHgnqd7Oao3S8W2/erlqi8fgvpbHXSURhigBQSM=",
+    "patchSHA256": "3161665ca9dc5bce49c8418f2648308f1e0ea0a6fbda16c51bc181c2c57e817c"
+  },
+  "libraries": {
+    "jansson": {
+      "version": "2.15.0",
+      "sourceHash": "sha256-s7g1QvJjl9LsWw+VZsTQHCoEgw2Ad9+8V0b2NFml5rw=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "src/load.c": "1b07a3467e5ddea6e798a5eb481cbd8efa49a033201922aae2ef125bc67b3c7b",
+        "src/dump.c": "9fcedf097156901676d2233d8f11c2676da4248d44212f42979bd5711c1156a5",
+        "src/jansson.h": "ec078fa923c91ac28b4bddb378b8f22ebc41d95b68b1999d63e41ccfbbd029f6",
+        "CMakeLists.txt": "9bbcccf1aed5d4355c9f4572a094dcf97b81e241a7b61c965b16b2442473bb70"
+      }
+    },
+    "snappy": {
+      "version": "1.2.2",
+      "sourceHash": "sha256-bMZD8EI9dvDGupfos4hi/0ShBkrJlI5Np9FxE6FfrNE=",
+      "patchSHA256": [
+        "0056c2dfa402e1fd55dec3f49e58e9b5df05ae90ca200ba674d5d7caf8b8233f",
+        "26156190787b5cfc750737f9c673a058b830875a22857dcef9e9905b31380e1a"
+      ],
+      "selectedFiles": {
+        "snappy.cc": "614766218acd35f7cee9f2e91b56a0890cb218045044ebf026010ffc883cf344",
+        "snappy-c.cc": "bd06ca0e8243940aaee6c42cf13aa212870b9b1b7d036727fc636f02c37e797d",
+        "snappy.h": "b4c51fd24a03d09dc17a6ba517a243a06a83c71ce7841955972a83576318b315"
+      }
+    },
+    "xz": {
+      "version": "5.8.3",
+      "sourceHash": "sha256-//H/zysNqE0wihTeUToaoj1OmqNGTRfmS5cUv90Lv7Y=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "src/liblzma/lzma/lzma_encoder.c": "0672ed1fd88fa419aa6dc1636e19c1cb1b09cdc100f1536769d6bd4bd6a392e5",
+        "src/liblzma/common/stream_decoder.c": "dbfc45cb56744823963ac26250401595c94e210fa12bcfbc91752cee8571c58a",
+        "src/liblzma/api/lzma.h": "6829350ef1ee35fae25481cc87a4f4b17c4b6c2a3df26f2b34dc1804df75c0d9"
+      }
+    },
+    "avro": {
+      "version": "1.11.3-duckdb",
+      "revision": "8af400279c445a81b8552a7670d8c1ebd92ba34a",
+      "sourceNARHash": "sha256-LaRdDinWkoXjUp/Z8Fyi5gQ2syB8ptaPA/y1oO+mYrA=",
+      "patchSHA256": "e6e44248cc8688bda8caea62ac3b4b9bc85a71faeec58d42d000db85e0f90f91",
+      "selectedFiles": {
+        "lang/c/src/schema.c": "319c4684c7b5d15658cb1b5f874e1f2c0ab3a30fcb487b41ab09ec303253e6b1",
+        "lang/c/src/codec.c": "27f90567567cb1f53e93c5128864931a91c72a6a132eea0f3ea411bce2319969",
+        "lang/c/src/datafile.c": "a6c9185d3fd299d47136520ac247e99d880ffd3cb65dc2834bc8690a2b3c36b0",
+        "lang/c/src/avro/schema.h": "2ba71d5c12a395263fa9abec2bf40f07b49f9551053e7570cd8b960b0ab16b5f"
+      },
+      "testPatchSHA256": "3049eeae4fa5aaea5143e3d4e998c929fc02fc8f16e7011694924464022acb77"
+    }
+  },
+  "cmakeFeatures": {
+    "jansson": {
+      "JANSSON_BUILD_SHARED_LIBS": false,
+      "JANSSON_WITHOUT_TESTS": false,
+      "JANSSON_BUILD_DOCS": false,
+      "JANSSON_EXAMPLES": false,
+      "USE_URANDOM": true,
+      "USE_DTOA": true,
+      "CMAKE_POSITION_INDEPENDENT_CODE": true
+    },
+    "snappy": {
+      "BUILD_SHARED_LIBS": false,
+      "SNAPPY_BUILD_TESTS": false,
+      "SNAPPY_BUILD_BENCHMARKS": false,
+      "CMAKE_POSITION_INDEPENDENT_CODE": true
+    },
+    "avro": {
+      "BUILD_SHARED_LIBS": false,
+      "BUILD_TESTS": true,
+      "BUILD_EXAMPLES": false,
+      "BUILD_DOCS": false,
+      "THREADSAFE": true,
+      "CMAKE_POSITION_INDEPENDENT_CODE": true,
+      "CMAKE_C_STANDARD_REQUIRED": true,
+      "CMAKE_C_EXTENSIONS": true
+    }
+  },
+  "avroCStandard": 17
+}

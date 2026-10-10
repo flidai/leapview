@@ -250,10 +250,14 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             sandbox = true
+      - uses: ./.github/actions/setup-docker
+        with:
+          postgres: "true"
       - name: Build native application tools and derive signed extension supply
         env:
           ARCH: ${{ matrix.arch }}
           MACHINE: ${{ matrix.machine }}
+          LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "true"
         run: |
           set -euo pipefail
           test "$(uname -m)" = "$MACHINE"
@@ -261,6 +265,39 @@ jobs:
           nix build --no-update-lock-file .#leapview-tools --no-link --json -L \
             > .tmp/native-application/build.json
           tools=$(python3 -c 'import json; print(json.load(open(".tmp/native-application/build.json"))[0]["outputs"]["tools"])')
+          sudo "$tools/libexec/check-http-default-ca" "$tools/libexec/http-ca.test" "$tools/libexec/ca-root.sh" \
+            > .tmp/native-application/http-default-ca.log 2>&1
+          "$tools/libexec/database-connectors.test" -test.v -test.timeout=10m \
+            -test.run '^(TestNativePostgreSQLSourceReadDenialAndRecovery|TestNativeMySQLSourceReadDenialAndRecovery)$' \
+            > .tmp/native-application/database-connectors.log 2>&1
+          "$tools/libexec/database-connectors.test" -test.v -test.timeout=2m \
+            -test.run '^TestNativeExcelSourceReadAndFreshSession$' \
+            > .tmp/native-application/excel-source.log 2>&1
+          "$tools/libexec/database-connectors.test" -test.v -test.timeout=2m \
+            -test.run '^TestNativeAvroReadAndFreshSession$' \
+            > .tmp/native-application/avro-source.log 2>&1
+          "$tools/libexec/postgres-ducklake.test" -test.v -test.timeout=10m \
+            -test.run '^TestPostgresDuckLakeRuntimeLifecycle$' \
+            > .tmp/native-application/postgres-ducklake.log 2>&1
+          # Go test executables return zero for an empty selection or a skip;
+          # qualification requires every selected concrete workload to pass.
+          for name in TestNativePostgreSQLSourceReadDenialAndRecovery TestNativeMySQLSourceReadDenialAndRecovery; do
+            grep -Eq "^--- PASS: $name \(" .tmp/native-application/database-connectors.log
+          done
+          grep -Eq '^--- PASS: TestPostgresDuckLakeRuntimeLifecycle \(' .tmp/native-application/postgres-ducklake.log
+          grep -Eq '^--- PASS: TestNativeExcelSourceReadAndFreshSession \(' .tmp/native-application/excel-source.log
+          grep -Eq '^--- PASS: TestNativeAvroReadAndFreshSession \(' .tmp/native-application/avro-source.log
+          # The packaged application has a separate runtime dependency rewrite.
+          # Realize that cached output explicitly instead of guessing it from
+          # the tools-only build's output selection.
+          nix build --no-update-lock-file .#leapview --no-link --json -L \
+            > .tmp/native-application/application-build.json
+          application=$(python3 -c 'import json; print(json.load(open(".tmp/native-application/application-build.json"))[0]["outputs"]["out"])')
+          cp -R "$application/share/leapview/native-build" .tmp/native-application/native-build
+          python3 scripts/nix_native_build_receipt.py verify-runtime \
+            --repo "$PWD" --platform "linux/$ARCH" --revision "$GITHUB_SHA" \
+            --binaries "$application/bin" --destination .tmp/native-application/native-build \
+            > .tmp/native-application/native-build-verification.json
           # Discovery executes native LOAD/signature verification, not a cross
           # build or an unverified download. It grants no release admission.
           "$tools/bin/extensionsupply" --out "$PWD/.tmp/native-application/extensions"
@@ -278,6 +315,17 @@ jobs:
               'nativeExecution': True, 'releaseAdmission': False,
               'extensionSupplyToolSHA256': hashlib.file_digest(tool.open('rb'), 'sha256').hexdigest(),
               'extensionSupplyNARHash': (root / 'extensions.nar-sha256').read_text().strip(),
+              'nativeBuildVerificationSHA256': hashlib.sha256((root / 'native-build-verification.json').read_bytes()).hexdigest(),
+              'databaseConnectorTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
+              'excelSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
+              'excelSourceLogSHA256': hashlib.sha256((root / 'excel-source.log').read_bytes()).hexdigest(),
+              'avroSourceLogSHA256': hashlib.sha256((root / 'avro-source.log').read_bytes()).hexdigest(),
+              'avroSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
+              'databaseConnectorLogSHA256': hashlib.sha256((root / 'database-connectors.log').read_bytes()).hexdigest(),
+              'postgresDuckLakeTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/postgres-ducklake.test').read_bytes()).hexdigest(),
+              'postgresDuckLakeLogSHA256': hashlib.sha256((root / 'postgres-ducklake.log').read_bytes()).hexdigest(),
+              'httpDefaultTrustTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/http-ca.test').read_bytes()).hexdigest(),
+              'httpDefaultTrustLogSHA256': hashlib.sha256((root / 'http-default-ca.log').read_bytes()).hexdigest(),
           }
           (root / 'discovery.json').write_text(json.dumps(receipt, indent=2) + '\n')
           PY
@@ -531,7 +579,10 @@ jobs:
     name: Application and image
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'image') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # A cold source-built Lance + DuckDB/SQLite closure consumed 83 minutes
+    # before application generation in run 38015442505. Keep time for tests,
+    # image qualification and scans even when no remote cache is available.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure hosted Docker pulls

@@ -593,6 +593,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
       - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_native_build_contract.test.ts
       - bun test scripts/ci_docker_contract.test.ts
       - bun test scripts/nix_desktop_candidate_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
@@ -619,6 +620,11 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p 'test_nix_desktop_lifecycle*.py'
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_preview_inputs.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_native_inventory.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_native_build_receipt.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_native_database_receipt.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_native_excel_receipt.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_native_avro_receipt.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_extension_version.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py

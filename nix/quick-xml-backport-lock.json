@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "advisories": [
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195"
+  ],
+  "upstream": [
+    {
+      "commit": "07f3db8343cf152f5bc3483ef5b3164582489bea",
+      "url": "https://github.com/tafia/quick-xml/commit/07f3db8343cf152f5bc3483ef5b3164582489bea.patch",
+      "path": "duplicate-attributes-upstream.patch",
+      "sha256": "be8a35f0efe8195c54bc65ebe93de54141e3b076f86699a3ea690afac51d925b"
+    },
+    {
+      "commit": "7ca25266e94987210daa864889ab15c9332c8a2a",
+      "url": "https://github.com/tafia/quick-xml/commit/7ca25266e94987210daa864889ab15c9332c8a2a.patch",
+      "path": "namespace-bounds-upstream.patch",
+      "sha256": "2183db8287969f6a0f936d93aa2edfb5ede412bb789b53cd8082fba64ef0967f"
+    }
+  ],
+  "backports": [
+    {
+      "version": "0.37.5",
+      "path": "0.37.5-backport.patch",
+      "sha256": "354027b5a175bccd356a4b59b55a10c67e5178a3ffb6727b76bdf6f9af87ea8d",
+      "files": [
+        {
+          "path": "src/events/attributes.rs",
+          "originalSHA256": "df60c279ed5c62df7d63701487d826943bccff241380668e2ac172a8a35f06aa",
+          "patchedSHA256": "0b003dadf9cdd375889efe7ae8b4f584de3caf6f9f4f60756f7c3892a6732e38"
+        },
+        {
+          "path": "src/name.rs",
+          "originalSHA256": "06821a5b1d8ef01b9c7b1c3214e527001da4f31173cf1091a56ab31ce418e8da",
+          "patchedSHA256": "bbb55654cf5028dca60a4cd3d2065333c488f05a0eaebe38fd22bd8d410f3c39"
+        },
+        {
+          "path": "src/reader/ns_reader.rs",
+          "originalSHA256": "edbedc9d7c1febe5fe9469c15a40da80699a091fda0e062982c16529a14dafac",
+          "patchedSHA256": "b882d7e8042d34e62a29094000a2545d9431e4535bcef87df4ccd34d8f3ac1fc"
+        }
+      ],
+      "crateSHA256": "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+    },
+    {
+      "version": "0.38.4",
+      "path": "0.38.4-backport.patch",
+      "sha256": "859923ed96ad867039b3c367afceb31e9bb0970cd9ed3e3ae9076b40449a4699",
+      "files": [
+        {
+          "path": "src/events/attributes.rs",
+          "originalSHA256": "7251e2b4ac1206b73c71a3218e5f63340165c44ddf0f7796073ca26cdae24812",
+          "patchedSHA256": "3f61b1eb6c19856e40070f5296a299e285feb93201e82af3ae7cd5e9a7985d44"
+        },
+        {
+          "path": "src/name.rs",
+          "originalSHA256": "59b60eab3559ed51d1aac51498659388510082ce2ee6759c4feecd84f7dbefd0",
+          "patchedSHA256": "996e7731c3e3476219f98fcdbef9b893832f1fc58a4c45c5ef0662725c1cb974"
+        },
+        {
+          "path": "src/reader/ns_reader.rs",
+          "originalSHA256": "c59c1c9376b013574b0685c3c248f240a95e47474e557515dd447944c75ae1b2",
+          "patchedSHA256": "f8304db8df8b26b8b69176589c56de8c925cb67f6d9cac1c8ca5874b90e0d6ba"
+        }
+      ],
+      "crateSHA256": "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+    }
+  ]
+}
