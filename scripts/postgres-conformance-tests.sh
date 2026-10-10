@@ -39,12 +39,12 @@ case "${1:-list}" in
     inventory
     ;;
   run)
-    bash "$root/scripts/prepare_ci_fixture_images.sh" postgres
     mapfile -t packages < <(inventory)
     if ((${#packages[@]} == 0)); then
       printf '%s\n' 'PostgreSQL conformance inventory is empty' >&2
       exit 1
     fi
+    bash "$root/scripts/prepare_ci_fixture_images.sh" postgres
     # Go runs each package in its own test process. The -exec wrapper owns one
     # disposable server for that process; the harness still creates a fresh
     # database for each test and the wrapper terminates the server on exit.
