@@ -12,10 +12,22 @@ import { browserClient, createPrivateBrowserContext, fillAdminLogin, finishPriva
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 test('private context blocks service workers and requests outside the canonical demo origin', async () => {
-  let handler;
-  const context = { async route(pattern, callback) { assert.equal(pattern, '**/*'); handler = callback; } };
+  let handler, websocket, registered;
+  const registration = new Promise(resolve => { registered = resolve; });
+  const context = { async route(pattern, callback) { assert.equal(pattern, '**/*'); handler = callback; },
+    async routeWebSocket(pattern, callback) { assert.equal(pattern, '**/*'); websocket = callback; await registration; } };
   const browser = { async newContext(options) { assert.deepEqual(options, { serviceWorkers: 'block' }); return context; } };
-  assert.equal(await createPrivateBrowserContext(browser), context);
+  let ready = false;
+  const pending = createPrivateBrowserContext(browser).then(value => { ready = true; return value; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ready, false);
+  registered();
+  assert.equal(await pending, context);
+  for (const url of ['wss://demo.leapview.dev/socket', 'wss://other.example/socket', 'ws://127.0.0.1/socket']) {
+    let closed = false;
+    await websocket({ url: () => url, close: () => { closed = true; }, connectToServer: () => assert.fail('private websocket connected upstream') });
+    assert.equal(closed, true);
+  }
   for (const [url, allowed] of [
     ['https://demo.leapview.dev/login', true], ['https://demo.leapview.dev/static/app.js', true],
     ['https://demo.leapview.dev:443/admin/agent', true], ['https://other.example/login', false],
@@ -52,6 +64,7 @@ test('private login attests final origin and path before filling any credentials
 });
 
 const input = () => ({
+  candidateRevision: 'd'.repeat(40),
   operationDigest: 'sha256:' + 'a'.repeat(64),
   intent: { reference: 'demo-migration', transitionVersion: '8a22935d-54ab-4b99-90ef-72cc4130be2a',
     fileDigest: 'sha256:' + 'b'.repeat(64), installationId: 'app-leapview-demo-02',
@@ -73,8 +86,10 @@ function fixture(options = {}) {
   const client = {
     async get(path) {
       calls.push(['GET', path]);
-      if (path === '/api/v1/me') return { status: 200, body: { id: options.actor ?? privateInput.intent.actorId, kind: 'user', email: privateInput.loginEmail } };
-      if (path === '/api/v1/instance/system') return { status: 200, body: { instanceId: options.instance ?? privateInput.intent.instanceId, canonicalOrigin: 'https://demo.leapview.dev' } };
+      if (path === '/api/v1/me') return { status: 200, body: { id: options.actor ?? privateInput.intent.actorId, email: privateInput.loginEmail,
+        sidebarPrincipalId: options.sidebarActor ?? privateInput.intent.actorId, identitySource: options.identitySource ?? 'local', hasLocalPassword: options.hasLocalPassword ?? true } };
+      if (path === '/api/v1/instance/system') return { status: 200, body: { instanceId: options.instance ?? privateInput.intent.instanceId, canonicalOrigin: 'https://demo.leapview.dev',
+        build: { revision: options.revision ?? privateInput.candidateRevision, dirty: options.dirty ?? false, development: options.development ?? false } } };
       if (path === '/api/v1/agent/config') return { status: 200, etag: `revision-${current}`, body: details() };
       throw new Error('unsupported path');
     },
@@ -174,7 +189,7 @@ test('private protocol rejects early/duplicate commands, EOF and cancellation', 
   }
 });
 
-test('browser API transport preserves CSRF, ETag, session and operation claims', async () => {
+test('browser session transport preserves CSRF, ETag, session and operation claims', async () => {
   let parameters;
   const page = { async evaluate(callback, args) {
     parameters = args;
@@ -182,10 +197,12 @@ test('browser API transport preserves CSRF, ETag, session and operation claims',
     try {
       globalThis.document = { querySelector: () => ({ content: 'csrf-session-token' }) };
       globalThis.fetch = async (path, options) => {
-        assert.equal(path, '/api/v1/agent/config');
+        assert.equal(path, '/admin/agent/config');
+        assert.deepEqual(JSON.parse(options.body), { adminAgentCommand: body });
         assert.equal(options.credentials, 'same-origin');
         assert.equal(options.redirect, 'error');
         assert.equal(options.headers['X-CSRF-Token'], 'csrf-session-token');
+        assert.equal(options.headers['Cache-Control'], 'no-store, no-transform');
         assert.equal(options.headers['If-Match'], 'exact-etag');
         assert.equal(options.headers['X-LeapView-Operation-ID'], 'updateAgentConfig');
         assert.match(options.headers['X-Request-ID'], /^[0-9a-f-]{14}7[0-9a-f-]{21}$/);
@@ -198,6 +215,178 @@ test('browser API transport preserves CSRF, ETag, session and operation claims',
   const result = await browserClient(page).patch('/api/v1/agent/config', body, 'exact-etag');
   assert.deepEqual(parameters.data, body);
   assert.equal(result.etag, 'response-etag');
+});
+
+for (const development of [true, false]) {
+  test(`clean immutable candidate permits release development stamp ${development}`, async () => {
+    const f = fixture({ development });
+    await f.run();
+    assert.deepEqual(f.markers, ['TEST_PASSED']);
+    assert.deepEqual(f.calls.filter(call => call[0] === 'PATCH').map(call => call[2].action), ['test', 'save']);
+  });
+}
+
+for (const options of [{ sidebarActor: 'other' }, { identitySource: 'oidc' }, { hasLocalPassword: false },
+  { revision: 'e'.repeat(40) }, { dirty: true }]) {
+  test(`session identity and immutable source reject before Test ${JSON.stringify(options)}`, async () => {
+    const f = fixture(options);
+    await assert.rejects(f.run());
+    assert.equal(f.calls.filter(call => call[0] === 'PATCH').length, 0);
+  });
+}
+
+test('private candidate source is mandatory and immutable', () => {
+  for (const value of [undefined, '', 'main', 'd'.repeat(39), 'D'.repeat(40)]) {
+    const malformed = input(); malformed.candidateRevision = value;
+    assert.throws(() => validatePrivateInput(malformed));
+  }
+});
+
+function signalEvent(patch) {
+  return `event: datastar-patch-signals\ndata: signals ${JSON.stringify(patch)}\n\n`;
+}
+
+function bootstrap(section) {
+  return { page: { kind: 'admin', active: section, ...(section === 'agent' ? { agent: {
+    configured: false, enabled: true, status: 'degraded', configurationRevision: 2,
+    configurationAvailable: true, adminManaged: true, credentialConfigured: false, revision: '"exact-config"',
+  } } : {}) }, runtime: { kind: 'admin' }, chrome: { sidebar: { principalId: 'principal_admin' } },
+  ...(section === 'profile' ? { personalSettings: { active: 'profile', profile: { id: 'principal_admin', email: 'admin@example.test', identitySource: 'local', hasLocalPassword: true, displayName: 'ignored' } } } : {}),
+  ...(section === 'system' ? { productSettings: { active: 'system', system: { instanceId: 'instance_demo', canonicalOrigin: 'https://demo.leapview.dev', build: { revision: 'd'.repeat(40), dirty: false, development: false } } } } : {}) };
+}
+
+function evaluationPage(fetchResponse) {
+  return { async evaluate(callback, args) {
+    const document = globalThis.document, fetch = globalThis.fetch;
+    try {
+      globalThis.document = { querySelector: () => ({ content: 'csrf-session-token' }) };
+      globalThis.fetch = fetchResponse;
+      return await callback(args);
+    } finally { globalThis.document = document; globalThis.fetch = fetch; }
+  } };
+}
+
+for (const [logical, section] of [['/api/v1/me', 'profile'], ['/api/v1/instance/system', 'system'], ['/api/v1/agent/config', 'agent']]) {
+  test(`session bootstrap ${section} uses fixed authorized route and projected metadata`, async () => {
+    const patch = bootstrap(section);
+    const page = evaluationPage(async (path, options) => {
+      assert.equal(path, `/updates?route=admin&section=${section}`);
+      assert.equal(options.headers.Accept, 'text/event-stream');
+      assert.equal(options.credentials, 'same-origin');
+      assert.equal(options.redirect, 'error');
+      return new Response(signalEvent(patch), { headers: { 'Content-Type': 'text/event-stream' } });
+    });
+    const result = await browserClient(page).get(logical);
+    assert.equal(result.status, 200);
+    if (section === 'profile') assert.deepEqual(result.body, { id: 'principal_admin', email: 'admin@example.test', sidebarPrincipalId: 'principal_admin', identitySource: 'local', hasLocalPassword: true });
+    if (section === 'system') assert.deepEqual(result.body, patch.productSettings.system);
+    if (section === 'agent') assert.equal(result.etag, '"exact-config"');
+  });
+}
+
+test('bootstrap reads fragmented CRLF UTF-8 and joins cancellation without waiting for stream EOF', async () => {
+  const patch = bootstrap('profile'); patch.personalSettings.profile.email = 'admín@example.test';
+  const encoded = new TextEncoder().encode((': keepalive\n\n' + signalEvent(patch)).replaceAll('\n', '\r\n'));
+  let cancelled = false;
+  const response = new Response(new ReadableStream({
+    start(controller) { for (const byte of encoded) controller.enqueue(new Uint8Array([byte])); },
+    async cancel() { await new Promise(resolve => setTimeout(resolve, 5)); cancelled = true; },
+  }), { headers: { 'Content-Type': 'text/event-stream; charset=utf-8' } });
+  const result = await browserClient(evaluationPage(async () => response)).get('/api/v1/me');
+  assert.equal(result.body.email, 'admín@example.test');
+  assert.equal(cancelled, true);
+  assert.equal(response.body.locked, false);
+});
+
+test('session projections exclude instruction, tool, token and unrelated system payloads', async () => {
+  for (const [section, path] of [['system', '/api/v1/instance/system'], ['agent', '/api/v1/agent/config']]) {
+    const patch = bootstrap(section);
+    if (section === 'system') {
+      patch.productSettings.system.runtime = { privateExtra: 'excluded-runtime' };
+      patch.productSettings.system.build.extra = 'excluded-build';
+    } else Object.assign(patch.page.agent, { systemPrompt: 'excluded-instruction', tools: [{ extra: 'excluded-tool' }], testToken: 'excluded-token' });
+    const response = new Response(signalEvent(patch), { headers: { 'Content-Type': 'text/event-stream' } });
+    const result = await browserClient(evaluationPage(async () => response)).get(path);
+    assert.equal(JSON.stringify(result).includes('excluded-'), false);
+  }
+});
+
+for (const behavior of ['pending', 'rejected', 'abort-error']) test(`reader cleanup immediately aborts and bounds ${behavior} cancellation`, async () => {
+  const original = globalThis.setTimeout;
+  let deadline, signal, cancels = 0;
+  globalThis.setTimeout = (callback, milliseconds) => { deadline = milliseconds; return original(callback, 5); };
+  const response = new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode(signalEvent(bootstrap('profile')))); },
+    cancel() {
+      cancels++;
+      assert.equal(signal.aborted, true);
+      if (behavior === 'pending') return new Promise(() => {});
+      const error = new Error('synthetic cancellation failure');
+      if (behavior === 'abort-error') error.name = 'AbortError';
+      return Promise.reject(error);
+    },
+  }), { headers: { 'Content-Type': 'text/event-stream' } });
+  try {
+    const operation = browserClient(evaluationPage(async (path, options) => { signal = options.signal; return response; })).get('/api/v1/me');
+    if (behavior === 'abort-error') assert.equal((await operation).status, 200);
+    else await assert.rejects(operation, error => error.message === 'Private response rejected.');
+    assert.equal(deadline, 15000);
+    assert.equal(cancels, 1);
+    assert.equal(signal.aborted, true);
+    assert.equal(response.body.locked, false);
+  } finally { globalThis.setTimeout = original; }
+});
+
+for (const [name, change] of [
+  ['wrong route', patch => { patch.page.kind = 'dashboard'; }],
+  ['wrong section', patch => { patch.page.active = 'system'; }],
+  ['wrong runtime', patch => { patch.runtime.kind = 'dashboard'; }],
+  ['missing runtime', patch => { delete patch.runtime; }],
+  ['missing identity', patch => { delete patch.personalSettings.profile.id; }],
+  ['missing sidebar identity', patch => { delete patch.chrome.sidebar.principalId; }],
+  ['missing password admission', patch => { delete patch.personalSettings.profile.hasLocalPassword; }],
+]) test(`session bootstrap rejects ${name} and cancels the owned reader`, async () => {
+  const patch = bootstrap('profile'); change(patch);
+  let cancelled = false;
+  const response = new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode(signalEvent(patch))); },
+    cancel() { cancelled = true; },
+  }), { headers: { 'Content-Type': 'text/event-stream' } });
+  await assert.rejects(browserClient(evaluationPage(async () => response)).get('/api/v1/me'));
+  assert.equal(cancelled, true);
+});
+
+for (const [name, raw, type] of [
+  ['malformed JSON', 'event: datastar-patch-signals\ndata: signals {\n\n', 'text/event-stream'],
+  ['missing signal payload', 'event: datastar-patch-signals\ndata: {}\n\n', 'text/event-stream'],
+  ['incomplete event', signalEvent(bootstrap('profile')).slice(0, -1), 'text/event-stream'],
+  ['non-stream content type', signalEvent(bootstrap('profile')), 'application/json'],
+  ['oversized stream', ':' + 'x'.repeat(1048576), 'text/event-stream'],
+]) test(`bounded bootstrap rejects ${name}`, async () => {
+  const response = new Response(raw, { headers: { 'Content-Type': type } });
+  await assert.rejects(browserClient(evaluationPage(async () => response)).get('/api/v1/me'));
+});
+
+test('bootstrap deadline remains fifteen seconds and aborts/join-cleans a stalled reader', async () => {
+  const original = globalThis.setTimeout;
+  let deadline, aborted = false;
+  globalThis.setTimeout = (callback, milliseconds) => { deadline = milliseconds; return original(callback, 5); };
+  try {
+    const page = evaluationPage(async (path, options) => new Response(new ReadableStream({
+      start(controller) { options.signal.addEventListener('abort', () => { aborted = true; controller.error(new Error('synthetic abort')); }, { once: true }); },
+    }), { headers: { 'Content-Type': 'text/event-stream' } }));
+    await assert.rejects(browserClient(page).get('/api/v1/me'));
+    assert.equal(deadline, 15000);
+    assert.equal(aborted, true);
+  } finally { globalThis.setTimeout = original; }
+});
+
+test('session transport rejects paths outside its fixed logical interface before browser evaluation', async () => {
+  const client = browserClient({ evaluate: () => assert.fail('unknown path reached browser') });
+  for (const path of ['/api/v1/me?other=1', '/updates?route=admin&section=principals', 'https://other.example/', '/api/v1/agent/config/']) {
+    await assert.rejects(client.get(path));
+    await assert.rejects(client.patch(path, {}, 'etag'));
+  }
 });
 
 test('matching postcommit metadata cannot replace exact activation receipt recovery', async () => {
