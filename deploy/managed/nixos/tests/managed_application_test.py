@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from managed_application import Runtime, offline, release_request, verify_retained, validate_visible_paths
+from managed_application import Runtime, offline, release_request, verify_retained, validate_visible_paths, command_diagnostic, COMMAND_DIAGNOSTIC_PREFIX
 
 
 class ApplicationBoundaryTests(unittest.TestCase):
@@ -36,6 +36,33 @@ class ApplicationBoundaryTests(unittest.TestCase):
         self.assertEqual(execute.call_count, 2)
         self.assertEqual(execute.call_args.args[3], "status")
         self.assertFalse(execute.call_args.kwargs["check"])
+
+    def test_safe_controller_marker_retained_without_private_output(self):
+        runtime = self.controller_runtime()
+        diagnostic = {"schemaVersion": 1, "stage": "proxy-reboot", "command": "bundle",
+                      "reason": "ssh-authentication", "exitCode": 23}
+        failure = SimpleNamespace(returncode=1, stdout="private-output",
+            stderr=COMMAND_DIAGNOSTIC_PREFIX + json.dumps(diagnostic) + "\nprivate-password")
+        status = SimpleNamespace(returncode=1, stdout="private-status")
+        with patch("managed_application.run", side_effect=[failure, status]):
+            with self.assertRaises(RuntimeError):
+                runtime.control("enroll", Path("/private/request.json"))
+        self.assertEqual(runtime.evidence["failure"]["commandDiagnostic"], diagnostic)
+        self.assertNotIn("private", json.dumps(runtime.evidence))
+
+    def test_command_marker_rejects_unknown_oversize_and_duplicate_fields(self):
+        valid = {"schemaVersion": 1, "stage": "inventory", "command": "docker", "reason": "unknown", "exitCode": -1}
+        marker = COMMAND_DIAGNOSTIC_PREFIX + json.dumps(valid)
+        self.assertEqual(command_diagnostic(marker), valid)
+        invalid = [marker + "\n" + marker, "private" * 3000 + marker,
+                   COMMAND_DIAGNOSTIC_PREFIX + json.dumps(valid)[:-1] + ', "exitCode": 2}',
+                   COMMAND_DIAGNOSTIC_PREFIX + '[]', COMMAND_DIAGNOSTIC_PREFIX + '{']
+        for key, value in (("stage", "private"), ("reason", "private"), ("command", "private"),
+                           ("exitCode", True), ("exitCode", 256), ("schemaVersion", True), ("stage", []),
+                           ("private", "secret")):
+            invalid.append(COMMAND_DIAGNOSTIC_PREFIX + json.dumps(dict(valid, **{key: value})))
+        for value in invalid:
+            self.assertIsNone(command_diagnostic(value))
 
     def test_unavailable_or_invalid_status_never_masks_controller_failure(self):
         failure = SimpleNamespace(returncode=1, stdout="secret", stderr="secret")

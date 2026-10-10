@@ -31,6 +31,43 @@ CONTROL_PHASES = frozenset(("prepared", "closing-work", "closing-ingress", "stop
                             "opening-work", "opening-ingress", "committed", "succeeded", "recovered"))
 
 
+COMMAND_DIAGNOSTIC_PREFIX = "LEAPVIEW_MANAGED_FAILURE_V1 "
+COMMAND_DIAGNOSTIC_STAGES = frozenset(("command", "gate-write", "proxy-reboot", "inventory", "proxy-running"))
+COMMAND_DIAGNOSTIC_REASONS = frozenset(("unknown", "start-failed", "canceled", "ssh-authentication", "ssh-host-key",
+    "ssh-connection", "connection-refused", "bundler-dependency", "ruby-load", "docker-daemon", "docker-image",
+    "docker-network", "docker-container", "controller-lock", "controller-deadline", "controller-process-group"))
+
+
+def command_diagnostic(stderr):
+    # Accept only one bounded controller marker; arbitrary process output and
+    # unrecognized schemas never become public qualification evidence.
+    if not isinstance(stderr, str) or len(stderr.encode("utf-8")) > 16384:
+        return None
+    lines = [line[len(COMMAND_DIAGNOSTIC_PREFIX):] for line in stderr.splitlines()
+             if line.startswith(COMMAND_DIAGNOSTIC_PREFIX)]
+    if len(lines) != 1 or len(lines[0]) > 512:
+        return None
+    try:
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate diagnostic field")
+                result[key] = value
+            return result
+        value = json.loads(lines[0], object_pairs_hook=unique)
+        if (not isinstance(value, dict) or set(value) != {"schemaVersion", "stage", "command", "reason", "exitCode"}
+                or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
+                or value["stage"] not in COMMAND_DIAGNOSTIC_STAGES
+                or value["command"] not in ("none", "other", "bundle", "docker")
+                or value["reason"] not in COMMAND_DIAGNOSTIC_REASONS
+                or type(value["exitCode"]) is not int or not -1 <= value["exitCode"] <= 255):
+            return None
+        return value
+    except (ValueError, TypeError):
+        return None
+
+
 def validate_visible_paths(paths):
     for path in paths:
         if any(Path(path).resolve().is_relative_to(hidden) for hidden in HIDDEN):
@@ -304,6 +341,9 @@ class Runtime:
             raise RuntimeError("qualification controller command timed out") from None
         if result.returncode:
             self.control_failure(action, request, "exit", result.returncode, **kwargs)
+            diagnostic = command_diagnostic(result.stderr)
+            if diagnostic is not None:
+                self.evidence["failure"]["commandDiagnostic"] = diagnostic
             if check:
                 raise RuntimeError("qualification controller command failed")
         return result
