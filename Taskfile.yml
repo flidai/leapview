@@ -341,7 +341,7 @@ tasks:
             exit 1
           fi
         done
-        LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
+        CGO_ENABLED=0 LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
           go test ./internal/app/cli/hostinstall \
             -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification|AgentProviderPrivateConfigContainer)$' \
             -count=1 -timeout=10m -v
