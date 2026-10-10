@@ -61,6 +61,15 @@ let
       recoveryOwner = "recovery-fixture";
       recoveryRestore = replacement;
     };
+    # Fencing checks every installed/retained generation. Direct kernel boot
+    # creates no system profile and cannot exercise that production boundary.
+    virtualisation = {
+      writableStore = true;
+      useBootLoader = true;
+      directBoot.enable = false;
+      diskSize = lib.mkForce 8192;
+    };
+    boot.loader.timeout = 1;
     # Private POSIX transport tests the installed coordinator mechanics only.
     # Customer object-store credentials and protected artifacts remain gates.
     services.pgbackrest.repos = lib.mkForce {

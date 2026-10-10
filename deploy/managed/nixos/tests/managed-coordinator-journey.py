@@ -74,7 +74,7 @@ def owner_command(command):
     return "sudo -u " + owner + " " + shlex.quote(str(cli)) + " host " + command
 
 
-source.start()
+source.start(allow_reboot=True)
 authority.start()
 replacement.start(allow_reboot=True)
 for machine in (source, authority, replacement):
@@ -84,6 +84,10 @@ for machine in (source, authority, replacement):
     machine.copy_from_host(str(private.parent / "public-tools.nar"), state + "/public-tools.nar")
     execute(machine, "nix-store --import < " + state + "/public-tools.nar", "public-tools-import", timeout=180)
     assert read(machine, "/etc/machine-id").strip() != "0" * 32
+    if machine is not authority:
+        machine.succeed("test -L /nix/var/nix/profiles/system")
+        assert machine.succeed("readlink -f /nix/var/nix/profiles/system").strip() == machine.succeed(
+            "readlink -f /run/current-system").strip()
 
 with subtest("immutable actual-publication export installs only on disposable original"):
     source.succeed("test ! -e /var/lib/postgresql/18")
@@ -204,6 +208,10 @@ with subtest("separate recovery owner reaches actual fixed restore seam and reta
     put(replacement, private_root + "/fence-authority.url", fixture.tls_url(operator_url, "192.168.1.3:5432", private_root + "/ca.crt"), owner, owner)
     execute(replacement, owner_command("fence-recovery --enrollment-file " + private_root + "/fence.json --control-url-file "
             + private_root + "/fence-authority.url --recovery-set-id " + retained["id"]), "original-fence")
+    source.fail("systemctl is-active postgresql.service")
+    source.succeed("test -s /var/lib/leapview-recovery/postgresql-fence.json")
+    source.reboot()
+    source.wait_for_unit("sshd.service", timeout=300)
     source.fail("systemctl is-active postgresql.service")
     source.succeed("test -s /var/lib/leapview-recovery/postgresql-fence.json")
     assert sql(authority, "SELECT system_identifier::text FROM pg_control_system();") == authority_system
