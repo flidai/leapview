@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,7 +169,9 @@ func TestActualConfinedNativePGReadback(t *testing.T) {
 		}
 		return restorer
 	}
-	positive := makeRestorer(filepath.Join(base, "replacement"), readback)
+	// The retained destination may exceed Unix socket path limits. Native
+	// readback connects through verified TLS on loopback, including on retry.
+	positive := makeRestorer(filepath.Join(base, "replacement-"+strings.Repeat("x", 110)), readback)
 	for attempt := 0; attempt < 2; attempt++ {
 		result, err := positive.RestoreCluster(ctx, request)
 		if err != nil || len(result) != 2 {

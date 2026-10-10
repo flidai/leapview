@@ -37,6 +37,14 @@ func postgresProcessFailure(message string, processErr error, output *postgresFa
 		{"Cannot allocate memory", "memory-unavailable"},
 		{"No space left on device", "storage-full"},
 		{"recovery ended before configured recovery target was reached", "recovery-target-unreached"},
+		{"has invalid permissions", "invalid-directory-permissions"},
+		{"has wrong ownership", "invalid-directory-owner"},
+		{"Unix-domain socket path", "unix-socket-path"},
+		{"could not look up effective user ID", "user-lookup"},
+		{"invalid value for parameter", "invalid-configuration"},
+		{"could not load private key file", "tls-key"},
+		{"shared memory", "shared-memory"},
+		{"bwrap:", "kernel-confinement"},
 	} {
 		if strings.Contains(string(output.tail), entry[0]) {
 			category = entry[1]
