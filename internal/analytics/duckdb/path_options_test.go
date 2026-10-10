@@ -16,8 +16,8 @@ func TestDuckDBPathOptionsRendersEveryTypedFormat(t *testing.T) {
 		{"json", map[string]any{"format": "auto"}},
 		{"parquet", map[string]any{"hive_partitioning": false, "union_by_name": false}},
 		{"excel", map[string]any{"header": true}},
-		{"text", map[string]any{"delim": "\t", "quote": `"`, "header": false}},
-		{"blob", map[string]any{"compression": "auto"}},
+		{"text", map[string]any{}},
+		{"blob", map[string]any{}},
 		{"vortex", map[string]any{}},
 		{"delta", map[string]any{}},
 		{"iceberg", map[string]any{}},
@@ -47,5 +47,40 @@ func TestDuckDBPathOptionsRejectsNilAndKeepsLanceOptionless(t *testing.T) {
 	}}
 	if got, err := duckDBPathOptions(location); err != nil || len(got) != 0 {
 		t.Fatalf("lance options = %#v, err = %v; want empty", got, err)
+	}
+}
+
+func TestTableReaderIDsRejectInvalidValuesBeforeSQL(t *testing.T) {
+	for _, format := range []string{"delta", "iceberg"} {
+		t.Run(format, func(t *testing.T) {
+			location := func(value string) *projectcontracts.PathSourceLocation {
+				got := testPathLocation(format, "fixture")
+				switch variant := got.Value.(type) {
+				case *projectcontracts.DeltaPathSourceLocation:
+					variant.Options = &projectcontracts.DeltaReaderOptions{Version: &value}
+				case *projectcontracts.IcebergPathSourceLocation:
+					variant.Options = &projectcontracts.IcebergReaderOptions{Snapshot: &value}
+				}
+				return got
+			}
+			for _, value := range []string{"0", "5298355539581857556", "9223372036854775807"} {
+				got, err := duckDBPathOptions(location(value))
+				if err != nil {
+					t.Fatalf("valid nonnegative ID %s: %v", value, err)
+				}
+				key := "version"
+				if format == "iceberg" {
+					key = "snapshot_from_id"
+				}
+				if got[key] != value {
+					t.Fatalf("ID options = %#v, want exact decimal %s", got, value)
+				}
+			}
+			for _, value := range []string{"", "-1", "+1", "01", "1.5", "1e3", "not-an-id", "9223372036854775808", "18446744073709551615", "18446744073709551616"} {
+				if _, err := duckDBPathOptions(location(value)); err == nil {
+					t.Fatalf("invalid ID %q reached SQL options", value)
+				}
+			}
+		})
 	}
 }

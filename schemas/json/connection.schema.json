@@ -141,35 +141,16 @@
             "blob"
           ],
           "type": "string"
-        },
-        "options": {
-          "$ref": "#/$defs/BlobReaderOptions"
         }
       },
       "required": [
         "format"
       ],
       "type": "object",
-      "unevaluatedProperties": false
-    },
-    "BlobReaderOptions": {
-      "properties": {
-        "compression": {
-          "enum": [
-            "auto",
-            "none",
-            "gzip",
-            "zstd"
-          ],
-          "type": "string"
-        }
-      },
-      "type": "object",
       "unevaluatedProperties": false,
       "x-leapview-format": {
-        "defaults": {
-          "compression": "auto"
-        },
+        "allowsOptions": false,
+        "defaults": {},
         "extensions": [
           ".blob"
         ],
@@ -623,6 +604,8 @@
     "DeltaReaderOptions": {
       "properties": {
         "version": {
+          "description": "Nonnegative signed 64-bit Delta log version, as an exact decimal string.",
+          "pattern": "^(0|[1-9][0-9]{0,18})$",
           "type": "string"
         }
       },
@@ -947,6 +930,8 @@
     "IcebergReaderOptions": {
       "properties": {
         "snapshot": {
+          "description": "Nonnegative signed 64-bit Iceberg snapshot ID, as an exact decimal string (not a timestamp or metadata version).",
+          "pattern": "^(0|[1-9][0-9]{0,18})$",
           "type": "string"
         }
       },
@@ -1528,9 +1513,6 @@
     "ReaderDefaults": {
       "description": "Connection defaults are closed by reader format; arbitrary option maps are not public.",
       "properties": {
-        "blob": {
-          "$ref": "#/$defs/BlobReaderOptions"
-        },
         "csv": {
           "$ref": "#/$defs/CSVReaderOptions"
         },
@@ -1548,12 +1530,6 @@
         },
         "parquet": {
           "$ref": "#/$defs/ParquetReaderOptions"
-        },
-        "text": {
-          "$ref": "#/$defs/TextReaderOptions"
-        },
-        "vortex": {
-          "$ref": "#/$defs/VortexReaderOptions"
         }
       },
       "type": "object",
@@ -1953,37 +1929,16 @@
             "text"
           ],
           "type": "string"
-        },
-        "options": {
-          "$ref": "#/$defs/TextReaderOptions"
         }
       },
       "required": [
         "format"
       ],
       "type": "object",
-      "unevaluatedProperties": false
-    },
-    "TextReaderOptions": {
-      "properties": {
-        "delimiter": {
-          "type": "string"
-        },
-        "header": {
-          "type": "boolean"
-        },
-        "quote": {
-          "type": "string"
-        }
-      },
-      "type": "object",
       "unevaluatedProperties": false,
       "x-leapview-format": {
-        "defaults": {
-          "delimiter": "\t",
-          "header": false,
-          "quote": "\""
-        },
+        "allowsOptions": false,
+        "defaults": {},
         "extensions": [
           ".txt"
         ],
@@ -2048,26 +2003,15 @@
             "vortex"
           ],
           "type": "string"
-        },
-        "options": {
-          "$ref": "#/$defs/VortexReaderOptions"
         }
       },
       "required": [
         "format"
       ],
       "type": "object",
-      "unevaluatedProperties": false
-    },
-    "VortexReaderOptions": {
-      "properties": {
-        "version": {
-          "type": "string"
-        }
-      },
-      "type": "object",
       "unevaluatedProperties": false,
       "x-leapview-format": {
+        "allowsOptions": false,
         "defaults": {},
         "extensions": [
           ".vortex"

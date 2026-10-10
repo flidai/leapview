@@ -99,7 +99,7 @@ assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
     ;
   playwrightVersion = playwright.version;
   GOTOOLCHAIN = "local";
-  # Planning/gating only compile pure Go and manipulate Git/JSON evidence.
+  # Planning/gating compile pure Go and verify GitHub performance evidence.
   orchestrationPackages = with pkgs; [
     go
     git
@@ -107,6 +107,9 @@ assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
     python3
     bash
     coreutils
+    nodejs_24
+    gh
+    unzip
   ];
   # The upstream headless-shell package does not inherit the Chromium wrapper.
   FONTCONFIG_FILE = fontconfig;
@@ -132,5 +135,7 @@ assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
     docker-compose
     nixfmt
     actionlint
+    gh
+    unzip
   ];
 }

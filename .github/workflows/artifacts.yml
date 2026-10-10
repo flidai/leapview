@@ -149,15 +149,15 @@ jobs:
     needs: build-production-image
     if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}
     runs-on: ubuntu-24.04
-    # The release gate now includes the policy-driven performance and repeated
-    # native-refresh phase. Its bounded phase budgets total 115 minutes before
-    # toolchain setup and evidence cleanup, so retain enough outer headroom for
-    # the controller to finish and publish diagnostics on a slow runner.
-    timeout-minutes: 150
+    # Once a reviewed reference exists, run reference and candidate serially
+    # with the same current fixture/controller. Each complete journey retains
+    # its existing phase bounds; allow both journeys and setup/cleanup to end.
+    timeout-minutes: 300
     permissions:
       contents: read
       packages: read
       attestations: read
+      actions: read
     outputs:
       image: ${{ steps.admission.outputs.image }}
       revision: ${{ needs.build-production-image.outputs.revision }}
@@ -228,11 +228,15 @@ jobs:
           IMAGE_VERSION: ${{ needs.build-production-image.outputs.version }}
           IMAGE_REVISION: ${{ needs.build-production-image.outputs.revision }}
           IMAGE_BUILD_TIME: ${{ needs.build-production-image.outputs.build_time }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           immutable_image="${IMAGE_REFERENCE}"
           [[ "${immutable_image}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
-          task image:qualify:production IMAGE="${immutable_image}"
+          task db:generate api:generate ui-signals:generate
+          node scripts/run_performance_comparison.mjs "${IMAGE_REVISION}" "${immutable_image}" \
+            .tmp/qualification/production-image
+          test -s .tmp/qualification/production-image/performance-report.json
           identity="$(docker run --rm "${immutable_image}" version --format json)"
           jq -e \
             --arg version "${IMAGE_VERSION}" \
@@ -241,6 +245,45 @@ jobs:
             '.version == $version and .revision == $revision and .buildTime == $build_time and .dirty == false and .development == true' \
             <<<"${identity}" >/dev/null
           printf 'Production image: `%s`\n' "${immutable_image}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Record bounded performance artifact identity
+        if: always() && (steps.qualification.outcome == 'success' || steps.qualification.outcome == 'failure')
+        env:
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+          IMAGE_REVISION: ${{ needs.build-production-image.outputs.revision }}
+        run: |
+          mkdir -p .tmp/qualification/production-image
+          jq -n --arg sourceRevision "${IMAGE_REVISION}" --arg image "${IMAGE_REFERENCE}" \
+            '{sourceRevision:$sourceRevision,image:$image}' \
+            > .tmp/qualification/production-image/performance-identity.json
+
+      # Only these bounded JSON files may establish a future reviewed reference.
+      # The surrounding directory contains credentials and private instance state.
+      - name: Retain bounded performance evidence
+        if: always() && (steps.qualification.outcome == 'success' || steps.qualification.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .tmp/qualification/production-image/performance-report.json
+            .tmp/qualification/production-image/performance-identity.json
+          if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'warn' }}
+          retention-days: 90
+
+      # Comparison review needs the fresh reference measurements, not a path
+      # into an expired runner. Preserve only this explicit bounded JSON set.
+      - name: Retain bounded serial comparison evidence
+        if: always() && (steps.qualification.outcome == 'success' || steps.qualification.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .tmp/qualification/production-image-comparison/reference/performance-report.json
+            .tmp/qualification/production-image-comparison/protocol.json
+            .tmp/qualification/production-image-comparison/build-inputs.json
+            .tmp/qualification/production-image/comparison-mode.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # This typed report contains only image identity and bounded phase
       # names/results/codes/timings. Never upload the surrounding evidence

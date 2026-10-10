@@ -83,6 +83,9 @@ type Harness struct {
 	// roles to be registered before databases so LIFO cleanup always drops the
 	// database before its owners.
 	databaseCreated bool
+	// A physical restore retires this standalone container as an authority.
+	// Its complete destruction replaces per-object SQL cleanup on that server.
+	stoppedForPhysicalRestore bool
 }
 
 // A test may open multiple harnesses before its cleanup runs. PostgreSQL roles
@@ -464,6 +467,9 @@ func (h *Harness) EnsureRole(t *testing.T, role Role) Role {
 	// Register after the role exists.  Role cleanup runs after databases (which
 	// are registered later), allowing ownership and memberships to disappear.
 	t.Cleanup(func() {
+		if h.physicalRestoreStopped() {
+			return
+		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		if _, err := h.admin.Exec(cleanupCtx, "DROP ROLE IF EXISTS "+quoteIdentifier(role.Name)); err != nil {
@@ -598,6 +604,9 @@ func (h *Harness) NewDatabase(t *testing.T, name string) *Database {
 	// Register database cleanup before opening the target pool so a connection
 	// failure cannot leave a database behind on the shared package server.
 	t.Cleanup(func() {
+		if h.physicalRestoreStopped() {
+			return
+		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		if _, err := h.admin.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)+" WITH (FORCE)"); err != nil {
