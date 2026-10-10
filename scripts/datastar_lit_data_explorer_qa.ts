@@ -6,7 +6,7 @@ export type DataExplorerRouteQAContext = {
   storageState?: string
   collectBlockingConsoleMessages: (page: Page) => string[]
   assertNoBlockingConsoleMessages: (label: string, messages: string[]) => void
-  focusByTab: (page: Page, target: Locator, label: string, maximumTabs?: number) => Promise<void>
+  focusByTab: (page: Page, target: Locator, label: string, maximumTabs?: number, direction?: 'forward' | 'backward') => Promise<void>
 }
 
 export async function verifyDataExplorerRecoveryActions({
@@ -210,7 +210,9 @@ export async function verifyDataExplorerKeyboardJourney({
     const analyze = explorer.getByRole('button', { name: 'Analyze', exact: true })
     await rows.waitFor({ state: 'visible' })
     await expect(rows, 'Data Explorer must start in Rows mode').toHaveAttribute('aria-pressed', 'true')
-    await focusByTab(page, analyze, 'Analyze mode button')
+    // Analyze precedes the dataset tree in document order. Navigate back to
+    // the header rather than wrapping through every field and sidebar control.
+    await focusByTab(page, analyze, 'Analyze mode button', 40, 'backward')
     await assertElementFocused(page, analyze, 'Analyze mode button')
     await page.keyboard.press('Enter')
     await expect(analyze, 'Enter must activate Analyze mode').toHaveAttribute('aria-pressed', 'true')

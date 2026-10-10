@@ -322,7 +322,7 @@ async function verifyKeyboardAccessibilityJourney(): Promise<void> {
   }
 }
 
-async function focusByTab(page: Page, target: Locator, label: string, maximumTabs = 40): Promise<void> {
+async function focusByTab(page: Page, target: Locator, label: string, maximumTabs = 40, direction: 'forward' | 'backward' = 'forward'): Promise<void> {
   await target.waitFor({ state: 'visible' })
   const targetIsFocused = () => target.evaluate((element) => {
     let active: Element | null = element.ownerDocument.activeElement
@@ -331,7 +331,7 @@ async function focusByTab(page: Page, target: Locator, label: string, maximumTab
   })
   if (await targetIsFocused()) return
   for (let count = 0; count < maximumTabs; count++) {
-    await page.keyboard.press('Tab')
+    await page.keyboard.press(direction === 'backward' ? 'Shift+Tab' : 'Tab')
     if (await targetIsFocused()) return
   }
   const active = await page.evaluate(() => {
@@ -341,7 +341,7 @@ async function focusByTab(page: Page, target: Locator, label: string, maximumTab
     const name = element.getAttribute('aria-label') || element.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80) || ''
     return `${element.localName}${name ? ` "${name}"` : ''}`
   })
-  throw new Error(`${label} was not reachable after ${maximumTabs} Tab presses; focus stopped at ${active}`)
+  throw new Error(`${label} was not reachable after ${maximumTabs} ${direction === 'backward' ? 'Shift+Tab' : 'Tab'} presses; focus stopped at ${active}`)
 }
 
 async function assertDocumentFocusReset(page: Page, label: string): Promise<void> {
