@@ -1302,7 +1302,9 @@ export class ReportTable extends LitElement {
         const viewport = this.bodyViewportRef.value
         if (!viewport) return
         viewport.scrollTop = previewViewport?.top ?? 0
-        viewport.scrollLeft = previewViewport?.left ?? 0
+        // A row-window reset must keep the currently inspected column and its
+        // focused sort header visible. Preview copies restore both axes.
+        if (previewViewport) viewport.scrollLeft = previewViewport.left
         this.viewportTop = viewport.scrollTop
         this.viewportHeight = viewport.clientHeight
         this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)

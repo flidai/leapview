@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as expectDOM, type Browser } from '@playwright/test'
 
 let server: Server
 let browser: Browser
@@ -841,5 +841,48 @@ test('group administration creates a local group in the selected project', async
       open: true,
       disabled: false,
     })
+  } finally { await page.close() }
+})
+
+
+test('deleting a service account returns to the durable list route only after success', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/admin/service-accounts/svc-deleted`)
+    await page.waitForFunction(() => customElements.get('lv-service-accounts'))
+    await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const signals: Record<string, any> = { adminServiceAccounts: { items: [{ id: 'svc-deleted', displayName: 'Disposable account', kind: 'service_principal' }], secrets: [], selectedId: 'svc-deleted' } }
+      const install = () => runtime.setDatastarLitRuntimeForTests?.({ root: signals, getPath: (path: string) => signals[path], effect: (fn: () => void) => { fn(); return () => {} } })
+      install()
+      const element = document.querySelector('lv-service-accounts') as any
+      element.requestUpdate(); await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const remove = async () => {
+        ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === 'Delete service account') as HTMLButtonElement).click()
+        await element.updateComplete
+        ;(root.querySelector('[data-service-account-dialog="delete"] button.danger') as HTMLButtonElement).click()
+        await element.updateComplete
+      }
+      await remove()
+      signals.adminServiceAccounts = { ...signals.adminServiceAccounts, error: 'Deletion was rejected.' }
+      install(); element.requestUpdate(); await element.updateComplete
+    })
+    expect(page.url()).toBe(`${baseURL}/admin/service-accounts/svc-deleted`)
+    await expectDOM(page.locator('lv-service-accounts').getByRole('alert')).toHaveText('Deletion was rejected.')
+    await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const element = document.querySelector('lv-service-accounts') as any
+      const root = element.shadowRoot as ShadowRoot
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === 'Delete service account') as HTMLButtonElement).click()
+      await element.updateComplete
+      ;(root.querySelector('[data-service-account-dialog="delete"] button.danger') as HTMLButtonElement).click()
+      await element.updateComplete
+      const state = { items: [], secrets: [], selectedId: 'svc-deleted' }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminServiceAccounts: state }, getPath: (path: string) => path === 'adminServiceAccounts' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      element.requestUpdate(); await element.updateComplete
+    })
+    await page.waitForURL(`${baseURL}/admin/service-accounts`, { timeout: 2_000 })
+    expect(page.url()).toBe(`${baseURL}/admin/service-accounts`)
   } finally { await page.close() }
 })

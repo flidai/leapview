@@ -562,11 +562,95 @@ test('table sorting, selection and scroll windows work while expanded', async ()
   await visibleCell.click()
   await visibleCellHandle.dispose()
   await browserExpect.poll(async () => host.evaluate((element: any) => element.envelope.selection.length)).toBeGreaterThan(0)
+  expect(await table.locator('.table-scrollport').evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  await table.getByRole('button', { name: 'Revenue', exact: true }).click()
+  await browserExpect(revenueHeader).toHaveAttribute('aria-sort', 'descending')
+  await browserExpect.poll(async () => table.locator('.table-scrollport').evaluate(element => element.scrollTop)).toBe(0)
   await page.keyboard.press('Escape')
   await browserExpect(page.getByRole('dialog')).toBeHidden()
   await browserExpect(page.locator('.preview lv-visualization-host')).toBeVisible()
 }, 20_000)
 
+
+// Measure the exposed header strip after subtracting the sticky identity column.
+async function mobileHeaderViewport(columnKey: string) {
+  return page.locator('lv-report-table').evaluate((element, key) => {
+    const root = element.shadowRoot!
+    const viewport = root.querySelector('.table-scrollport') as HTMLElement
+    const button = root.querySelector<HTMLButtonElement>(`.header-button[data-column-key="${key}"]`)!
+    const bounds = button.getBoundingClientRect()
+    const viewportBounds = viewport.getBoundingClientRect()
+    const pinnedBounds = root.querySelector('.head .header-cell')!.getBoundingClientRect()
+    const left = Math.max(bounds.left, viewportBounds.left, pinnedBounds.right)
+    const right = Math.min(bounds.right, viewportBounds.right)
+    const x = (left + right) / 2
+    const y = (bounds.top + bounds.bottom) / 2
+    return {
+      scrollLeft: viewport.scrollLeft,
+      visibleWidth: Math.max(0, right - left),
+      focused: root.activeElement === button,
+      hit: button.contains(root.elementFromPoint(x, y)),
+      x, y,
+      revealDelta: Math.max(0, bounds.right - viewportBounds.right),
+    }
+  }, columnKey)
+}
+
+for (const example of ['matrix', 'pivot']) {
+  test(`mobile ${example} sorting keeps naturally tabbed Revenue headers visible`, async () => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await open(`charts/${example}`)
+    const table = page.locator('lv-report-table')
+    const viewport = table.locator('.table-scrollport')
+    await viewport.focus()
+    for (const key of ['q1', 'q2', 'q3', 'q4']) {
+      const button = table.locator(`.header-button[data-column-key="${key}"]`)
+      for (let step = 0; step < 16 && !await button.evaluate(element => element.matches(':focus')); step++) {
+        await page.keyboard.press('Tab')
+      }
+      await browserExpect(button).toBeFocused()
+      const before = await mobileHeaderViewport(key)
+      expect(before.visibleWidth).toBeGreaterThan(0)
+      const header = table.getByRole('columnheader').filter({ has: page.locator(`.header-button[data-column-key="${key}"]`) })
+      for (const direction of ['descending', 'ascending']) {
+        await page.keyboard.press('Enter')
+        await browserExpect(header).toHaveAttribute('aria-sort', direction)
+        await table.evaluate(async (element: any) => { await element.updateComplete })
+        const after = await mobileHeaderViewport(key)
+        expect(after.focused).toBe(true)
+        expect(after.visibleWidth).toBeGreaterThan(0)
+        expect(after.scrollLeft).toBe(before.scrollLeft)
+      }
+    }
+  })
+
+  test(`mobile ${example} sorting preserves horizontally wheeled Revenue columns`, async () => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await open(`charts/${example}`)
+    const table = page.locator('lv-report-table')
+    const viewport = table.locator('.table-scrollport')
+    await viewport.scrollIntoViewIfNeeded()
+    for (const key of ['q1', 'q2', 'q3', 'q4']) {
+      const button = table.locator(`.header-button[data-column-key="${key}"]`)
+      const bounds = (await viewport.boundingBox())!
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+      const initial = await mobileHeaderViewport(key)
+      await page.mouse.wheel(initial.revealDelta, 0)
+      await browserExpect.poll(async () => (await mobileHeaderViewport(key)).scrollLeft).toBeGreaterThan(initial.scrollLeft)
+      // A wheel event is asynchronous; wait for the requested offset before clicking.
+      await browserExpect.poll(async () => (await mobileHeaderViewport(key)).revealDelta).toBeLessThanOrEqual(1)
+      const before = await mobileHeaderViewport(key)
+      expect(before.visibleWidth).toBeGreaterThan(24)
+      expect(before.hit).toBe(true)
+      await page.mouse.click(before.x, before.y)
+      await browserExpect(table.getByRole('columnheader').filter({ has: page.locator(`.header-button[data-column-key="${key}"]`) })).toHaveAttribute('aria-sort', 'descending')
+      await table.evaluate(async (element: any) => { await element.updateComplete })
+      const after = await mobileHeaderViewport(key)
+      expect(after.visibleWidth).toBeGreaterThan(24)
+      expect(after.scrollLeft).toBe(before.scrollLeft)
+    }
+  })
+}
 
 test('navigation keeps the preview in view when selecting an example at the end of the catalog', async () => {
   await open('charts/bar')

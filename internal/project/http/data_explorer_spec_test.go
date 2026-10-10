@@ -1,10 +1,12 @@
 package http
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
 
 func TestDefaultExplorationSpecIsCanonical(t *testing.T) {
@@ -57,3 +59,51 @@ func TestDataExploreStateRoundTripPreservesTypedAndRichFilters(t *testing.T) {
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestNullCheckCommandsKeepEmptyOperandArraysForBrowserRoundTrip(t *testing.T) {
+	for _, operator := range []string{"is_null", "is_not_null"} {
+		t.Run(operator, func(t *testing.T) {
+			spec := defaultExplorationSpec()
+			spec.ModelID = "semantic:sales"
+			spec.Filters = []exploration.ExplorationFilter{{
+				Field: "orders.status",
+				Expression: exploration.ExplorationFilterExpression{Value: &exploration.NullCheckExplorationFilterExpression{
+					ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "null_check"},
+					Kind:                            "null_check", Operator: operator,
+				}},
+			}}
+			command := dataExploreCommandWithCanonicalSpec(projectsignals.DataExploreCommand{Spec: spec})
+			encoded, err := json.Marshal(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire struct {
+				Filters []struct {
+					Values json.RawMessage `json:"values"`
+				} `json:"filters"`
+			}
+			if err := json.Unmarshal(encoded, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if len(wire.Filters) != 1 || string(wire.Filters[0].Values) != "[]" {
+				t.Fatalf("null-check browser operands must remain an empty array: %s", encoded)
+			}
+			var restored projectsignals.DataExploreCommand
+			if err := json.Unmarshal(encoded, &restored); err != nil {
+				t.Fatal(err)
+			}
+			refreshed := dataExploreCommandRefreshSpec(restored)
+			actual, err := json.Marshal(refreshed.Spec.Filters)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected, err := json.Marshal(spec.Filters)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(actual) != string(expected) {
+				t.Fatalf("null-check changed after command round trip: %s, want %s", actual, expected)
+			}
+		})
+	}
+}

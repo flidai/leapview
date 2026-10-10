@@ -3,6 +3,7 @@ package credentialagent
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -346,6 +347,41 @@ func TestPostgreSQLAgentActivationFreshProbeRetriesSamePendingVersion(t *testing
 	}
 	if saved.CredentialVersionID != original.Request.VersionID {
 		t.Fatal("retry substituted version")
+	}
+}
+
+func TestPostgreSQLAgentConfigurationCancelAfterValidationPreservesCurrent(t *testing.T) {
+	f := newAgentLifecycleFixture(t)
+	input := agentCandidateInput("current-key")
+	token, err := f.adapter.Test(t.Context(), "admin", 0, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := f.adapter.Activate(t.Context(), "admin", 0, input, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.APIKey = "candidate-key"
+	if _, err = f.adapter.Test(t.Context(), "admin", current.Revision, input); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.repository.GetPendingActivationRequest(t.Context(), f.config.InstanceID); !errors.Is(err, credential.ErrNotFound) {
+		t.Fatalf("validation created activation request: %v", err)
+	}
+	if err = f.adapter.AbortConfiguration(t.Context(), "other-admin"); !errors.Is(err, credential.ErrForbidden) {
+		t.Fatalf("unauthorized cancellation: %v", err)
+	}
+	for range 2 {
+		if err = f.adapter.AbortConfiguration(t.Context(), "admin"); err != nil {
+			t.Fatalf("cancel validated-only change: %v", err)
+		}
+	}
+	saved, err := f.store.CurrentConfiguration(t.Context())
+	if err != nil || saved.Revision != current.Revision || saved.CredentialVersionID != current.CredentialVersionID {
+		t.Fatalf("cancellation changed saved configuration: revision=%d err=%v", saved.Revision, err)
+	}
+	if !f.gate.Ready() || f.installed.APIKey != "current-key" {
+		t.Fatal("cancellation changed runtime admission or credential")
 	}
 }
 

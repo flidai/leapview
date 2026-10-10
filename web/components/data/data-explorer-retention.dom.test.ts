@@ -657,3 +657,49 @@ test('semantic table exposes exact totals and serializes windows beyond the old 
     expect(state.after.map(window => window.requestSeq)).toEqual([11, 12])
   } finally { await page.close() }
 })
+
+for (const mode of ['browse', 'explore'] as const) {
+  for (const operator of ['equals', 'contains', 'in'] as const) {
+    test(`${mode} filter editor preserves commas for ${operator}`, async () => {
+      const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+      try {
+        await page.goto(baseURL)
+        await page.waitForFunction(() => customElements.get('lv-data-explorer-query-controls'))
+        await page.evaluate(async (mode) => {
+          const object = { key: 'model:orders', resourceId: 'model:orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1, columns: [{ key: 'status', label: 'Status', type: 'string' }] }
+          const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 }
+          const command = { spec, semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 1, resetVersion: 1, columnWidths: {} }
+          const fields = [{ id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', compatible: true, selected: true, type: 'string' }]
+          const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+          mergePatch({
+            page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+            dataExplorer: {
+              objects: [object], selectedKey: object.key, selectedObject: object, warnings: [],
+              command: { mode, objectKey: object.key, explore: command, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 1, resetVersion: 1, sort: {}, visibleColumns: [], columnWidths: {} },
+              explore: { command, fields, semanticModels: [], datasets: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 1, truncated: false, warnings: [] }, status: { loading: false, stale: false, requestSeq: 1, state: 'idle' } },
+              preview: { columns: object.columns, totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 1, blocks: {}, totalRowLabel: '0', sort: {}, error: '' },
+            },
+          })
+          const element = document.createElement('lv-data-explorer')
+          ;(window as any).filterCommands = []
+          element.addEventListener('lv-data-explorer-command', (event: Event) => (window as any).filterCommands.push((event as CustomEvent).detail))
+          document.body.append(element)
+        }, mode)
+        const explorer = page.locator('lv-data-explorer')
+        await explorer.locator('.semantic-filter-trigger, .semantic-filter-rail').first().click()
+        await explorer.locator('.semantic-filter-picker > summary').click()
+        await explorer.getByRole('button', { name: 'Status, orders', exact: true }).click()
+        const editor = explorer.getByRole('region', { name: 'Add filter', exact: true })
+        await editor.getByLabel('Condition').selectOption(operator)
+        await editor.getByLabel('Value', { exact: true }).fill('paid, delivered')
+        await editor.getByRole('button', { name: 'Apply', exact: true }).click()
+        await page.waitForTimeout(400)
+        const filter = await page.evaluate(() => (window as any).filterCommands.findLast((command: any) => command.explore?.spec?.filters?.length === 1)?.explore.spec.filters[0])
+        expect(filter).toMatchObject({ field: 'orders.status', datasetId: 'orders' })
+        expect(filter.expression).toEqual(operator === 'in'
+          ? { kind: 'set', operator, values: [{ kind: 'string', value: 'paid' }, { kind: 'string', value: 'delivered' }] }
+          : { kind: 'comparison', operator, value: { kind: 'string', value: 'paid, delivered' } })
+      } finally { await page.close() }
+    })
+  }
+}

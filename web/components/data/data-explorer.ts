@@ -119,6 +119,11 @@ const emptyExplorer: DataExplorerSignal = {
 
 type ExplorerColumn = { key: string, label?: string }
 
+function filterInputValues(value: string, operator: string): string[] {
+  const values = operator === 'in' || operator === 'not_in' ? value.split(',') : [value]
+  return values.map((item) => item.trim()).filter(Boolean)
+}
+
 class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly dashboardAppend = new DashboardAppendController(this, () => this.requestUpdate())
   private readonly savedViewController = new SavedExplorationViewController(this, () => this.requestUpdate())
@@ -1036,9 +1041,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private applyExploreFilter(command: DataExploreCommand, fields: DataExploreFieldSignal[]) {
     if (!this.filterField) return
     const needsValue = this.filterOperator !== 'is_null' && this.filterOperator !== 'is_not_null'
-    const values = needsValue
-      ? this.filterValue.split(',').map((value) => value.trim()).filter(Boolean)
-      : []
+    const values = needsValue ? filterInputValues(this.filterValue, this.filterOperator) : []
     if (needsValue && !values.length) return
     const field = fields.find((candidate) => candidate.id === this.filterField)
     const spec = explorationSpecFor(command)
@@ -1062,7 +1065,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private applyBrowseFilter(command: DataExploreCommand, fields: DataExploreFieldSignal[]) {
     if (!this.filterField) return
     const needsValue = this.filterOperator !== 'is_null' && this.filterOperator !== 'is_not_null'
-    const values = needsValue ? this.filterValue.split(',').map((value) => value.trim()).filter(Boolean) : []
+    const values = needsValue ? filterInputValues(this.filterValue, this.filterOperator) : []
     if (needsValue && !values.length) return
     const field = fields.find((candidate) => candidate.id === this.filterField)
     if (!field || field.kind !== 'dimension' || field.compatible === false) return

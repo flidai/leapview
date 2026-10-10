@@ -387,6 +387,11 @@ func (a *AgentCredentials) AbortConfiguration(ctx context.Context, actor string)
 		return err
 	}
 	pending, err := a.repository.GetPendingActivationRequest(ctx, a.config.InstanceID)
+	if errors.Is(err, credential.ErrNotFound) {
+		// Validation alone has no activation operation to abort. Authorized
+		// cancellation is idempotent and leaves the saved runtime untouched.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
