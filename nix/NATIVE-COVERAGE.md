@@ -6,6 +6,64 @@ The application currently has unresolved compiled dependency edges and fresh
 source-lock advisory matches; `nix_native_inventory.py verify` fails closed.
 Site and static controller qualification remain independent profiles.
 
+## Source-built component receipts
+
+The source-built DuckDB/Lance/SQLite recipes now retain architecture-specific
+build evidence under `share/leapview/native-build` in their Nix outputs. Lance
+records `compiler-artifact` messages from its actual successful Cargo build,
+including target kinds, selected features, profiles, and package identities
+checked against the **patched** `nix/lance-Cargo.lock`. The receipt also binds
+the checked quick-xml vendor file hashes and reviewed backport inputs. This is
+different evidence from the older upstream source inventory described below.
+Compiler stdout is bounded while being captured.
+
+DuckDB retains the effective CMake cache, compilation commands, static extension
+selection, compiler target, and exact SQLite amalgamation/header hashes. Its
+receipt hashes the actual installed static archives after Nix fixups. SQLite
+is compiled inside this engine build; the standalone SQLite smoke executable
+is not used as evidence for the application's compiled SQLite component.
+
+The application checks both component receipts against its selected archive
+bytes and records the actual link-input list, compiler, build tags, and final
+ELF hashes. The portable export retains a separate transformation receipt for
+the post-`patchelf` bytes. The image carries these receipts at
+`/usr/local/share/leapview/native-build`; its LeapView executable is
+`/usr/local/bin/leapview` and its controller is `/usr/local/libexec/leapviewctl`.
+Build paths are retained only in compiler/configuration evidence; source
+identity and component link-input keys use recipe hashes and relative names.
+Evidence files use bounded canonical `.b64` envelopes, preserving their exact
+decoded bytes and hashes without literal Nix store references that would pull
+build-only compilers and archives into the runtime closure. For inspection,
+decode an individual envelope with `base64 --decode FILE.b64`.
+
+After independently authenticating the candidate archive and source revision,
+extract the receipt directory and both executables using the existing bounded
+archive reader. Place the executables together in a directory for verification:
+
+```sh
+python3 scripts/nix_native_build_receipt.py verify-portable \
+  --repo /path/to/authenticated/source --platform linux/amd64 \
+  --revision SOURCE_SHA --destination /path/to/extracted/native-build \
+  --binaries /path/to/extracted/bin
+```
+
+Use `verify` for the original Nix application output before portable conversion.
+The consumer compares recipe fingerprints to the supplied trusted checkout,
+recomputes the compiled Cargo selection using its current patched lock, rejects
+missing or substituted component/link/output evidence, and checks final ELF
+architecture. Receipts are not signatures: a self-consistent bundle from an
+unauthenticated builder does not establish trustworthy provenance.
+
+This is **build composition evidence**, not an exhaustive list of the archive
+members or native code incorporated into each final ELF. It does not establish
+the closure of the 12 remaining signed extensions, engine vendored dependency
+identities, build-script-produced C/C++ subgraphs, or a fresh complete native
+vulnerability scan. Results deliberately contain neither `verifiedDigest` nor
+an admission/complete flag. `nix_native_inventory.py verify` and whole-application
+release admission remain closed. Focused synthetic receipt tests exercise the
+consumer; actual receipts still require successful native builds on each
+architecture and cannot be supplied by source inventories alone.
+
 The recovered engine is DuckDB 1.5.4 at
 `08e34c447bae34eaee3723cac61f2878b6bdf787`. All 22 static archives in each
 `duckdb-go-bindings/lib/linux-{amd64,arm64}@v0.10504.0` module byte-match the

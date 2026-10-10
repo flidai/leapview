@@ -4,6 +4,10 @@
   toolchain,
 }:
 let
+  receipts = import ./native-receipts.nix {
+    inherit pkgs;
+    component = "application";
+  };
   interpreter = "/${pkgs.stdenv.hostPlatform.libDir}/${builtins.baseNameOf pkgs.stdenv.cc.bintools.dynamicLinker}";
 in
 pkgs.runCommand "leapview-linux-${application.version}"
@@ -40,4 +44,10 @@ pkgs.runCommand "leapview-linux-${application.version}"
         exit 1
       fi
     done
+    patchelf --version > "$TMPDIR/patchelf-version"
+    mkdir -p "$out/share/leapview"
+    ${receipts.command} portable --repo ${receipts.source} --platform ${receipts.platform} \
+      --revision ${application.revision} --input-receipt ${application}/share/leapview/native-build \
+      --binaries ${application}/bin --output-root "$out/bin" --interpreter ${interpreter} \
+      --tool-version "$TMPDIR/patchelf-version" --destination "$out/share/leapview/native-build" > /dev/null
   ''

@@ -16,6 +16,7 @@ let
     mkdir -p "$out/app" "$out/bin" "$out/sbin" "$out/${loaderDir}" "$out/etc" "$out/usr/bin" "$out/usr/local/bin" "$out/usr/local/libexec" "$out/usr/local/share/leapview" "$out/var/lib/leapview/home" "$out/tmp"
     cp ${portable}/bin/leapview "$out/usr/local/bin/leapview"
     cp ${portable}/bin/leapviewctl "$out/usr/local/libexec/leapviewctl"
+    cp -R ${portable}/share/leapview/native-build "$out/usr/local/share/leapview/native-build"
     ln -s ${patchedRuntime.glibc}/lib/${loader} "$out/${loaderDir}/${loader}"
     ln -s ${patchedRuntime.busybox}/bin "$out/busybox"
     ln -s ${patchedRuntime.busybox}/bin/sh "$out/bin/sh"

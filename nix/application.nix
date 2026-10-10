@@ -8,6 +8,10 @@
   purpose,
 }:
 let
+  receipts = import ./native-receipts.nix {
+    inherit pkgs;
+    component = "application";
+  };
   manifest = builtins.fromJSON (builtins.readFile ../package.json);
   canonicalVersion = pkgs.lib.trim (builtins.readFile ../VERSION);
   dependencies = import ./dependencies.nix { inherit pkgs toolchain src; };
@@ -100,11 +104,24 @@ pkgs.stdenv.mkDerivation {
     nativeLibraries=$(find ${duckdb.lib}/lib -maxdepth 1 -name '*.a' ! -name 'libdummy_static_extension_loader.a' -type f | LC_ALL=C sort)
     export CGO_LDFLAGS="-Wl,--start-group $nativeLibraries ${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a -Wl,--end-group -lstdc++ -ldl -lm"
     tags=duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite
+    mkdir -p "$TMPDIR/native-application-evidence"
+    printf '%s\n' "$nativeLibraries" '${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a' > "$TMPDIR/native-link-inputs"
+    printf '%s\n' "$CGO_LDFLAGS" > "$TMPDIR/native-application-evidence/link-flags.txt"
+    printf '%s\n' "$tags" > "$TMPDIR/native-application-evidence/tags.txt"
+    go version > "$TMPDIR/native-application-evidence/go.txt"
     go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview
     go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapviewctl" ./cmd/leapviewctl
     go build -tags="$tags" -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply
     go build -trimpath -buildvcs=false -o "$tools/bin/mapassets" ./internal/app/tools/mapassets
     runHook postBuild
+  '';
+  postFixup = ''
+    ${receipts.command} compose --repo ${receipts.source} --platform ${receipts.platform} \
+      --revision ${revision} --duckdb ${duckdb.lib} --lance ${duckdb.lance.rust} \
+      --binaries "$out/bin" --link-inputs "$TMPDIR/native-link-inputs" \
+      --evidence "$TMPDIR/native-application-evidence" --destination "$out/share/leapview/native-build" > /dev/null
+    ${receipts.command} verify --repo ${receipts.source} --platform ${receipts.platform} \
+      --revision ${revision} --binaries "$out/bin" --destination "$out/share/leapview/native-build" > /dev/null
   '';
   doCheck = true;
   checkPhase = ''
@@ -143,6 +160,6 @@ pkgs.stdenv.mkDerivation {
     "$out/bin/leapview" version
     "$out/bin/leapviewctl" --help >/dev/null
   '';
-  passthru = { inherit dependencies duckdb; };
+  passthru = { inherit dependencies duckdb revision; };
   meta.mainProgram = "leapview";
 }
