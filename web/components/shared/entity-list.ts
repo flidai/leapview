@@ -194,8 +194,14 @@ const entityListStyles = `
     outline-offset: var(--focus-outline-offset);
   }
 
+  .entity-toolbar > label {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .entity-filter {
     min-width: 4.75rem;
+    max-width: 100%;
     padding: 0 var(--base-size-8);
   }
 

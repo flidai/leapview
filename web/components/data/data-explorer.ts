@@ -233,6 +233,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       min-height: 0;
     }
 
+    /* Use the existing full-screen drawer mode when this container cannot
+       fit both a useful query surface and the 28rem agent pane. */
+    @container explorer (max-width: 900px) {
+      .route.agent-open { grid-template-columns: minmax(0, 1fr); }
+      lv-chat-drawer {
+        position: fixed;
+        inset: 0;
+        z-index: var(--zIndex-modal, 200);
+        width: 100%;
+        border-left: 0;
+      }
+    }
+
     .header {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -474,7 +487,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     .browse-layout.filters-open { --explorer-filter-width: 320px; }
     @media (max-width: 720px) {
       .browse-layout { position: relative; }
-      .browse-layout.filters-open .semantic-filter-dock { position: absolute; z-index: var(--zIndex-sticky, 50); inset: 0 0 0 auto; width: min(320px, 85vw); box-shadow: var(--lv-shadow-floating-sm); }
+      .browse-layout.filters-open .semantic-filter-dock { position: absolute; z-index: var(--zIndex-sticky, 50); inset: 0 0 0 auto; width: min(320px, 100%); box-shadow: var(--lv-shadow-floating-sm); }
     }
 
     lv-data-preview-table {

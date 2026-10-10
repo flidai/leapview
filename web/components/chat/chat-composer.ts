@@ -6,6 +6,7 @@ import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 import { chatComposerStyles } from './chat-composer-styles'
+import { toggleAnchoredPopover } from '../shared/anchored-popover'
 import {
   type ChatContextReference,
   type ChatReferenceSearchDetail,
@@ -47,6 +48,7 @@ class ChatComposer extends LitElement {
   @state() private readingFiles = false
   @state() private fileError = ''
   @state() private draggingFiles = false
+  @state() private mentionDismissed = false
   private fileDropTarget?: EventTarget
   private dragDepth = 0
 	@state() private mentionIndex = 0
@@ -58,11 +60,13 @@ class ChatComposer extends LitElement {
 	private acceptedSuggestionRequestId = 0
   private resizeObserver?: ResizeObserver
   private observedWidth = -1
+  private mentionPopover?: HTMLElement
 	private acceptedRunInitialized = false
 
   static styles = chatComposerStyles
 
 	protected willUpdate(changed: Map<string, unknown>) {
+    if (this.mentionDismissed || !this.activeMention()) this.closeMentionPopover()
 		if (!changed.has('acceptedRunId')) return
 		if (this.acceptedRunInitialized && this.acceptedRunId && this.acceptedRunId !== changed.get('acceptedRunId')) {
 			this.consumeAcceptedTurn()
@@ -71,6 +75,7 @@ class ChatComposer extends LitElement {
 	}
 
   updated(changed: Map<string, unknown>) {
+    this.positionMentionPopover()
     if (changed.has('value')) {
 		if (this.value) {
 			const message = readAttachedMessage(this.value)
@@ -100,6 +105,7 @@ class ChatComposer extends LitElement {
     this.fileDropTarget.addEventListener('dragleave', this.fileDragLeave as EventListener)
     this.fileDropTarget.addEventListener('dragover', this.fileDragOver as EventListener)
     this.fileDropTarget.addEventListener('drop', this.dropFiles as EventListener)
+    this.ownerDocument.addEventListener('pointerdown', this.dismissMentionPopover)
   }
 
   protected firstUpdated() {
@@ -114,6 +120,8 @@ class ChatComposer extends LitElement {
   }
 
   disconnectedCallback() {
+    this.closeMentionPopover()
+    this.ownerDocument.removeEventListener('pointerdown', this.dismissMentionPopover)
     this.fileDropTarget?.removeEventListener('dragenter', this.fileDragEnter as EventListener)
     this.fileDropTarget?.removeEventListener('dragleave', this.fileDragLeave as EventListener)
     this.fileDropTarget?.removeEventListener('dragover', this.fileDragOver as EventListener)
@@ -132,6 +140,7 @@ class ChatComposer extends LitElement {
   }
 
   public setDraft(value: string, focus = true): void {
+    this.mentionDismissed = false
     const message = readAttachedMessage(value)
     this.draft = message.text
     this.files = message.files
@@ -160,7 +169,7 @@ class ChatComposer extends LitElement {
 		const showStop = this.running
 		const stopDisabled = !this.runId.trim()
 		const continueDisabled = this.disabled || this.pending || this.running || this.readingFiles || this.files.length > 0 || isEditing || this.draft.trim() !== ''
-		const activeMention = this.activeMention()
+		const activeMention = this.mentionDismissed ? null : this.activeMention()
 		const mentionGroups = this.mentionSuggestionGroups()
 		const mentions = [...mentionGroups.pinned, ...mentionGroups.global]
 		const referenceLimitReached = this.referenceLimitReached()
@@ -178,7 +187,7 @@ class ChatComposer extends LitElement {
 				</div>
 			` : null}
 			${activeMention ? html`
-				<div id="chat-context-options" class="mention-picker" role="listbox" aria-label="Add LeapView context" aria-busy=${String(this.mentionSearchPending)}>
+				<div id="chat-context-options" class="mention-picker" popover="manual" role="listbox" aria-label="Add LeapView context" aria-busy=${String(this.mentionSearchPending)}>
 					${mentionGroups.pinned.length > 0 ? html`
 						<div class="mention-group" role="group" aria-label="On this page">
 							<div class="mention-section-label">On this page</div>
@@ -225,6 +234,7 @@ class ChatComposer extends LitElement {
             aria-activedescendant=${activeMention && mentions.length > 0 ? this.mentionOptionID(this.mentionIndex) : nothing}
             placeholder=${this.placeholder}
             rows="1"
+            @focus=${() => { this.mentionDismissed = false }}
             @input=${this.input}
             @keydown=${this.keydown}
           ></textarea>
@@ -284,6 +294,7 @@ class ChatComposer extends LitElement {
   }
 
   private input(event: Event) {
+    this.mentionDismissed = false
     const textarea = event.target as HTMLTextAreaElement
     this.draft = textarea.value
 		this.mentionIndex = 0
@@ -395,6 +406,7 @@ class ChatComposer extends LitElement {
 
 	private openContextPicker = (): void => {
 		if (this.disabled || this.pending || this.referenceLimitReached()) return
+    this.mentionDismissed = false
 		const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')
 		if (!textarea) return
 		const caret = textarea.selectionStart ?? this.draft.length
@@ -617,6 +629,26 @@ class ChatComposer extends LitElement {
 			next.focus()
 		})
 	}
+
+  private positionMentionPopover() {
+    const picker = this.shadowRoot?.querySelector<HTMLElement>('.mention-picker')
+    const surface = this.shadowRoot?.querySelector<HTMLElement>('.composer-surface')
+    if (this.mentionPopover !== picker) this.closeMentionPopover()
+    if (!picker || !surface) return
+    this.mentionPopover = picker
+    if (!picker.matches(':popover-open')) {
+      toggleAnchoredPopover(surface, picker, { minWidth: 0, maxHeight: 180 })
+    }
+  }
+
+  private closeMentionPopover() {
+    if (this.mentionPopover?.matches(':popover-open')) this.mentionPopover.hidePopover()
+    this.mentionPopover = undefined
+  }
+
+  private dismissMentionPopover = (event: PointerEvent) => {
+    if (this.mentionPopover && !event.composedPath().includes(this)) this.mentionDismissed = true
+  }
 
 	private scrollActiveMentionIntoView() {
 		const active = this.shadowRoot?.querySelector<HTMLElement>('.mention-option[data-active="true"]')

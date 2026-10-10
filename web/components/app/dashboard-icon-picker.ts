@@ -9,6 +9,9 @@ import { lucideIcon } from '../shared/lucide-icons'
 const colors = ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink'] as const
 const rowHeight = 38
 const columnCount = 9
+const columnWidth = 38
+const iconWidth = 34
+const horizontalInset = 10
 const viewportHeight = 254
 
 class DashboardIconPicker extends LitElement {
@@ -17,6 +20,30 @@ class DashboardIconPicker extends LitElement {
   @property() label = 'Dashboard'
   @state() private query = ''
   @state() private viewportScrollTop = 0
+  @state() private viewportColumnCount = columnCount
+  private resizeObserver?: ResizeObserver
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    this.resizeObserver = new ResizeObserver(this.fitColumns)
+    this.resizeObserver.observe(this)
+  }
+
+  override disconnectedCallback(): void {
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = undefined
+    super.disconnectedCallback()
+  }
+
+  protected override updated(): void {
+    this.fitColumns()
+  }
+
+  private fitColumns = (): void => {
+    const viewport = this.renderRoot.querySelector<HTMLElement>('.viewport')
+    if (!viewport || viewport.clientWidth <= 0) return
+    this.viewportColumnCount = Math.max(1, Math.min(columnCount, Math.floor((viewport.clientWidth - horizontalInset - iconWidth) / columnWidth) + 1))
+  }
 
   static styles = css`
     :host { display: block; width: min(22.5rem, 100%); }
@@ -33,7 +60,7 @@ class DashboardIconPicker extends LitElement {
     input:focus-visible { outline: var(--focus-outline); outline-offset: -2px; }
     .viewport { position: relative; height: ${viewportHeight}px; overflow-y: auto; scrollbar-width: thin; }
     .canvas { position: relative; width: 100%; }
-    .icon { position: absolute; display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: transparent; cursor: pointer; }
+    .icon { position: absolute; display: grid; width: ${iconWidth}px; height: ${iconWidth}px; place-items: center; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: transparent; cursor: pointer; }
     .icon:hover, .icon:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
     ${unsafeCSS(colors.map((color) => `
       .picker.color-${color} .icon { color: var(--display-${color}-fgColor, var(--lv-fg-default)); }
@@ -48,10 +75,11 @@ class DashboardIconPicker extends LitElement {
   render() {
     const activeColor = colors.includes(this.color as typeof colors[number]) ? this.color : 'purple'
     const names = this.filteredNames()
-    const rows = Math.ceil(names.length / columnCount)
+    const columns = this.viewportColumnCount
+    const rows = Math.ceil(names.length / columns)
     const firstRow = Math.max(0, Math.floor(this.viewportScrollTop / rowHeight) - 2)
     const lastRow = Math.min(rows, Math.ceil((this.viewportScrollTop + viewportHeight) / rowHeight) + 2)
-    const visible = names.slice(firstRow * columnCount, lastRow * columnCount)
+    const visible = names.slice(firstRow * columns, lastRow * columns)
     return html`
       <section class=${`picker color-${activeColor}`} role="dialog" aria-label=${`Customize ${this.label}`}>
         <div class="title">Icon and color</div>
@@ -66,10 +94,10 @@ class DashboardIconPicker extends LitElement {
           <div class="viewport" @scroll=${this.scrolled}>
             <div class="canvas" style=${`height:${rows * rowHeight}px`}>
               ${visible.map((name, index) => {
-                const absolute = firstRow * columnCount + index
-                const row = Math.floor(absolute / columnCount)
-                const column = absolute % columnCount
-                return html`<button type="button" class="icon" style=${`left:${10 + column * 38}px;top:${row * rowHeight + 2}px`} title=${name} aria-label=${name} aria-pressed=${this.icon === name} @click=${() => this.select({ icon: name })}>${lucideIcon(lucideIconByCanonicalName(name), { size: 17, strokeWidth: 1.8 })}</button>`
+                const absolute = firstRow * columns + index
+                const row = Math.floor(absolute / columns)
+                const column = absolute % columns
+                return html`<button type="button" class="icon" style=${`left:${horizontalInset + column * columnWidth}px;top:${row * rowHeight + 2}px`} title=${name} aria-label=${name} aria-pressed=${this.icon === name} @click=${() => this.select({ icon: name })}>${lucideIcon(lucideIconByCanonicalName(name), { size: 17, strokeWidth: 1.8 })}</button>`
               })}
             </div>
           </div>

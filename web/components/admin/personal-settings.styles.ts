@@ -111,7 +111,7 @@ export const personalSettingsStyles = css`
     .permissions-heading { display: grid; gap: var(--base-size-6); }
     .permissions-heading h3 { font: var(--lv-type-section-title); }
     .permissions-card { display: grid; overflow: visible; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); }
-    .permissions-header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); border-radius: var(--lv-radius-large) var(--lv-radius-large) 0 0; background: var(--lv-bg-panel); }
+    .permissions-header { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; justify-content: space-between; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); border-radius: var(--lv-radius-large) var(--lv-radius-large) 0 0; background: var(--lv-bg-panel); }
     .permissions-title { display: flex; min-width: 0; align-items: center; gap: var(--base-size-8); }
     .count { display: inline-grid; min-width: var(--base-size-24); height: var(--base-size-24); box-sizing: border-box; place-items: center; border-radius: var(--lv-radius-full); padding: 0 var(--base-size-8); color: var(--lv-fg-muted); background: var(--lv-bg-control); font: var(--lv-type-caption); }
     .permission-picker { position: relative; flex: none; }
@@ -186,7 +186,8 @@ export const personalSettingsStyles = css`
     .theme-preview[data-tone="dark"] { color: var(--fgColor-white); background: var(--bgColor-black); }
     .theme-preview[data-tone="system"] { color: var(--fgColor-white); background: linear-gradient(135deg, var(--bgColor-white) 0 48%, var(--bgColor-black) 52% 100%); }
     .theme-preview-dot { width: var(--base-size-6); height: var(--base-size-6); border-radius: var(--lv-radius-full); background: var(--lv-bg-accent); }
-    .theme-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(22rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, calc(100svh - var(--base-size-64))); overflow-y: auto; overscroll-behavior: contain; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-6); scrollbar-color: var(--lv-scrollbar-thumb) transparent; scrollbar-width: thin; }
+    .theme-menu { position: fixed; inset: auto; margin: 0; box-sizing: border-box; display: grid; overflow-y: auto; overscroll-behavior: contain; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-6); scrollbar-color: var(--lv-scrollbar-thumb) transparent; scrollbar-width: thin; }
+    .theme-menu:not(:popover-open) { display: none; }
     .theme-group { display: grid; gap: var(--base-size-2); padding: var(--base-size-4) 0; border-bottom: var(--lv-border-muted); }
     .theme-group:last-child { border-bottom: 0; }
     .theme-group-label { padding: var(--base-size-4) var(--base-size-8); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
@@ -215,7 +216,6 @@ export const personalSettingsStyles = css`
       .profile-local-input { width: 100%; justify-self: stretch; }
       .theme-picker { width: 100%; min-width: 0; justify-self: stretch; }
       .theme-trigger { width: 100%; }
-      .theme-menu { right: auto; left: 0; }
       .avatar-control { justify-self: start; }
       .token-page-header { align-items: stretch; flex-direction: column; }
       .token-page-header > .button-link { align-self: start; }
