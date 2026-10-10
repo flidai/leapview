@@ -3,12 +3,12 @@
   "compileOnly": true,
   "metadata": {
     "diagnosticNormalization": "temporary source-root paths removed; complete diagnostic sibling subtrees sorted",
-    "compilerCommit": "232840f42dd2ad2a861586d5ac8c39b606dbb62d",
+    "compilerCommit": "d81cd6f7ce60eb5b61221c8e932131e4fd92d6f1",
     "compilerVersion": "leapview-source-compiler:v1",
-    "compilerFingerprint": "sha256:af2b98f856b66a5e0e917f230234d7a924fab4a8ee2778de86c7d1b8902f5367",
-    "compilerSourceDigest": "sha256:4206e329950cc6cddd957ee6d5185e8861bfdf57fd9ed8f5f03ea7bc03df2714",
+    "compilerFingerprint": "sha256:a78fcd4e4436fea7e9e154ff4a53672e030b4b65f2dfe2f5844d58bcea5eeed2",
+    "compilerSourceDigest": "sha256:fc1ff85c66e250656bb1aa9b3993d5d82cdd3ca71d439460aff8b18104ab0ab4",
     "build": {
-      "goVersion": "go1.27.1",
+      "goVersion": "go1.27.2",
       "goos": "linux",
       "goarch": "amd64",
       "tags": "duckdb_arrow",
@@ -207,8 +207,8 @@
         },
         {
           "Path": "golang.org/x/net",
-          "Version": "v0.58.0",
-          "Sum": "h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To="
+          "Version": "v0.60.0",
+          "Sum": "h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU="
         },
         {
           "Path": "golang.org/x/sys",
@@ -217,8 +217,8 @@
         },
         {
           "Path": "golang.org/x/text",
-          "Version": "v0.41.0",
-          "Sum": "h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8="
+          "Version": "v0.42.0",
+          "Sum": "h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI="
         },
         {
           "Path": "golang.org/x/xerrors",
@@ -237,16 +237,34 @@
         }
       ]
     },
-    "trackedSourceCount": 289,
+    "trackedSourceCount": 297,
     "untrackedSourcePaths": [
       "internal/dashboard/api/gen/client.apigen.gen.go",
       "internal/dashboard/api/gen/request_models.gen.go",
       "internal/dashboard/api/gen/server.apigen.gen.go",
       "internal/platform/http/api/gen/request_models.gen.go"
     ],
-    "modifiedSourcePaths": [],
+    "modifiedSourcePaths": [
+      "api/dashboard/main.tsp",
+      "api/visualization/main.tsp",
+      "go.sum",
+      "internal/analytics/model/metric_datatype.go",
+      "internal/analytics/query/aggregate_plan_ir.go",
+      "internal/dashboard/compiler/dashboard_presentation_lowering.go",
+      "internal/dashboard/compiler/document_compile_visualization.go",
+      "internal/dashboard/compiler/grid_hierarchy.go",
+      "internal/dashboard/document/models.gen.go",
+      "internal/dashboard/visualization/definition/definition.go",
+      "internal/dashboard/visualization/definition/grid_hierarchy.go",
+      "internal/dashboard/visualization/ir/frame.go",
+      "internal/dashboard/visualization/ir/grid_cell_content.go",
+      "internal/dashboard/visualization/ir/grid_hierarchy.go",
+      "internal/dashboard/visualization/ir/inline_rows.go",
+      "internal/dashboard/visualization/ir/models.gen.go",
+      "schemas/json/dashboard-document.schema.json"
+    ],
     "bundledResourcesDigest": "sha256:4b632c10fc29cbda059b27752d66ed17e81410286c2cb09668a5c1f0a8ddafb4",
-    "schemaDigest": "sha256:19c49ba464c1bf8cc49537e772914f4dfdde0b9f6a93da1b7402b33cac2fa48c"
+    "schemaDigest": "sha256:ac446d7cf784c1c7a634a1be08be03d48b0f3c0168f3812a2c7455d70a9322fa"
   },
   "fixtures": [
     {

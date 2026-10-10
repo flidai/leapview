@@ -229,9 +229,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Configure Docker Hub cache
-        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py
+      - name: Configure hosted Docker pulls
+        uses: ./.github/actions/setup-docker
 
       - name: Build sandboxed proof image
         run: |

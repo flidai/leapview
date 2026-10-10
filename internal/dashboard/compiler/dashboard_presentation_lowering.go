@@ -405,7 +405,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.RowHeight <= 0 {
 			return nil, fmt.Errorf("table rowHeight must be greater than zero")
 		}
-		return visualizationir.GridVisualizationPresentation{RowHeight: int64(variant.RowHeight), ShowHeader: variant.ShowHeader, Striped: variant.Striped}, nil
+		return visualizationir.GridVisualizationPresentation{RowHeight: int64(variant.RowHeight), ShowHeader: variant.ShowHeader, Striped: variant.Striped, Hierarchy: variant.Hierarchy, CellContent: variant.CellContent}, nil
 	case *document.KPIDashboardPresentation:
 		out := visualizationir.KPIVisualizationPresentation{
 			Mode:               visualizationir.VisualizationKPIModeCompact,

@@ -87455,6 +87455,120 @@ components:
         resourceKind: project
         subjectId: example
         subjectType: example
+    GridLevelHierarchy:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/GridRowHierarchyBase'
+      required:
+        - mode
+        - fields
+      properties:
+        mode:
+          type: string
+          enum:
+            - levels
+          example: example
+        fields:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          example:
+            - example
+        label:
+          type: string
+          example: example
+      example:
+        fields:
+          - example
+        label: example
+        mode: example
+    GridNestedHierarchy:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/GridRowHierarchyBase'
+      required:
+        - mode
+        - childrenField
+        - labelField
+      properties:
+        mode:
+          type: string
+          enum:
+            - nested
+          example: example
+        childrenField:
+          type: string
+          example: example
+        labelField:
+          type: string
+          example: example
+        idField:
+          type: string
+          example: example
+      example:
+        childrenField: example
+        idField: example
+        labelField: example
+        mode: example
+    GridParentChildHierarchy:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/GridRowHierarchyBase'
+      required:
+        - mode
+        - idField
+        - parentField
+        - labelField
+      properties:
+        mode:
+          type: string
+          enum:
+            - parent_child
+          example: example
+        idField:
+          type: string
+          example: example
+        parentField:
+          type: string
+          example: example
+        labelField:
+          type: string
+          example: example
+      example:
+        idField: example
+        labelField: example
+        mode: example
+        parentField: example
+    GridRowHierarchy:
+      oneOf:
+        - $ref: '#/components/schemas/GridLevelHierarchy'
+        - $ref: '#/components/schemas/GridParentChildHierarchy'
+        - $ref: '#/components/schemas/GridNestedHierarchy'
+      discriminator:
+        propertyName: mode
+        mapping:
+          levels: '#/components/schemas/GridLevelHierarchy'
+          nested: '#/components/schemas/GridNestedHierarchy'
+          parent_child: '#/components/schemas/GridParentChildHierarchy'
+    GridRowHierarchyBase:
+      type: object
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          example: example
+        defaultExpandedDepth:
+          type: integer
+          format: int32
+          minimum: 0
+          example: 1
+      description: Tree rows are expanded locally over the complete governed result
+        frame.
+      example:
+        defaultExpandedDepth: 1
+        mode: example
     GridVisualizationPresentation:
       type: object
       required:
@@ -87472,7 +87586,18 @@ components:
         showHeader:
           type: boolean
           example: true
+        hierarchy:
+          $ref: '#/components/schemas/GridRowHierarchy'
+        cellContent:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TableCellContent'
+          description: Cell presentation keyed by delivered query field aliases.
+          example:
+            key: {}
       example:
+        cellContent:
+          key: {}
         rowHeight: 1
         showHeader: true
         striped: true
@@ -89318,6 +89443,8 @@ components:
           - dataset: example
             field: example
         presentation:
+          cellContent:
+            key: {}
           rowHeight: 1
           showHeader: true
           striped: true
@@ -89839,6 +89966,8 @@ components:
           - dataset: example
             field: example
         presentation:
+          cellContent:
+            key: {}
           rowHeight: 1
           showHeader: true
           striped: true
@@ -97592,6 +97721,25 @@ components:
         kind: example
         values:
           key: example
+    TableCellContent:
+      oneOf:
+        - $ref: '#/components/schemas/TableImageCellContent'
+        - $ref: '#/components/schemas/TableLinkCellContent'
+      discriminator:
+        propertyName: kind
+        mapping:
+          image: '#/components/schemas/TableImageCellContent'
+          link: '#/components/schemas/TableLinkCellContent'
+    TableCellContentBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      example:
+        kind: example
     TableDashboardPresentation:
       type: object
       allOf:
@@ -97617,7 +97765,17 @@ components:
         striped:
           type: boolean
           example: true
+        hierarchy:
+          $ref: '#/components/schemas/GridRowHierarchy'
+        cellContent:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TableCellContent'
+          example:
+            key: {}
       example:
+        cellContent:
+          key: {}
         rowHeight: 1
         showHeader: true
         striped: true
@@ -97679,6 +97837,70 @@ components:
         columns:
           - field: example
         kind: example
+    TableImageCellContent:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/TableCellContentBase'
+      required:
+        - kind
+        - display
+      properties:
+        kind:
+          type: string
+          enum:
+            - image
+          example: example
+        display:
+          $ref: '#/components/schemas/TableImageDisplay'
+        width:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 512
+          example: 1
+        height:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 512
+          example: 1
+        altField:
+          type: string
+          example: example
+      example:
+        altField: example
+        display: inline
+        height: 1
+        kind: example
+        width: 1
+    TableImageDisplay:
+      type: string
+      enum:
+        - inline
+        - tooltip
+      example: inline
+    TableLinkCellContent:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/TableCellContentBase'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - link
+          example: example
+        labelField:
+          type: string
+          example: example
+        newTab:
+          type: boolean
+          example: true
+      example:
+        kind: example
+        labelField: example
+        newTab: true
     TableTextColorFormattingRule:
       type: object
       allOf:
@@ -97746,6 +97968,8 @@ components:
           items:
             $ref: '#/components/schemas/TableVisualizationFormattingRule'
           example: []
+        content:
+          $ref: '#/components/schemas/TableCellContent'
       example:
         columnValue: example
         field:
@@ -97836,6 +98060,8 @@ components:
               field: example
         kind: example
         presentation:
+          cellContent:
+            key: {}
           rowHeight: 1
           showHeader: true
           striped: true

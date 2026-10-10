@@ -26,6 +26,8 @@ on:
       - 'scripts/nix_compose_candidate_contract.test.ts'
       - 'scripts/tests/test_nix_ci_environment.py'
       - '.github/actions/setup-ci/**'
+      - '.github/actions/setup-docker/**'
+      - '.github/docker/buildkitd.toml'
       - 'scripts/check_nix_image.sh'
       - 'scripts/check_nix_cli_compatibility.py'
       - 'scripts/tests/test_nix_cli_compatibility.py'
@@ -457,9 +459,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - name: Configure Docker Hub cache
-        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py
+      - name: Configure hosted Docker pulls
+        uses: ./.github/actions/setup-docker
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
@@ -530,9 +531,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Configure Docker Hub cache
-        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py
+      - name: Configure hosted Docker pulls
+        uses: ./.github/actions/setup-docker
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:

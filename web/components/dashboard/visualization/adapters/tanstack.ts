@@ -4,12 +4,17 @@ import type { RendererAdapter, RendererHandle } from '../host-controller'
 import { resolveVisualizationMetadata } from '../metadata'
 import { projectVisualizationHighlights } from '../highlight'
 
-type ReportTableElement = HTMLElement & { tableId: string; table: TableSignal }
+type ReportTableElement = HTMLElement & { tableId: string; table: TableSignal; maxHeight?: number }
 
 export const adapter: RendererAdapter = {
   async mount(container, envelope) {
     const { ReportTable } = await import('../../table/report-table')
     await customElements.whenDefined('lv-report-table')
+    const root = container.getRootNode()
+    if (root instanceof ShadowRoot && root.host instanceof HTMLElement) {
+      root.host.removeAttribute('data-table-fit')
+      root.host.style.removeProperty('--lv-table-content-height')
+    }
     const table = new ReportTable() as ReportTableElement
     // Forward the host's Ask action into the table's own toolbar so all
     // controls share alignment and scale without positional offsets.
@@ -30,19 +35,48 @@ export const adapter: RendererAdapter = {
 
 class TanStackHandle implements RendererHandle {
   private envelope?: VisualizationEnvelope
+  private allocation?: HTMLElement
+  private allocationObserver?: ResizeObserver
+  private allocationChrome = 0
   constructor(private readonly container: HTMLElement, private readonly table: ReportTableElement) {
     this.table.addEventListener('lv-visual-window-change', this.handleWindowChange)
+    this.syncHeightLimit()
   }
   update(envelope: VisualizationEnvelope): void {
+    this.syncHeightLimit()
     this.envelope = envelope
     this.table.tableId = envelope.visualID
     this.table.table = tableSignal(envelope)
   }
-  resize(): void {}
+  resize(): void { this.syncHeightLimit() }
   async snapshot(): Promise<Blob> { return new Blob([JSON.stringify(this.table.table)], { type: 'application/json' }) }
   dispose(): void {
+    this.allocationObserver?.disconnect()
     this.table.removeEventListener('lv-visual-window-change', this.handleWindowChange)
     this.container.replaceChildren()
+  }
+  private syncHeightLimit(): void {
+    const root = this.container.getRootNode()
+    const host = root instanceof ShadowRoot ? root.host : undefined
+    const allocation = host instanceof HTMLElement && getComputedStyle(host).getPropertyValue('--lv-visual-height').trim() !== 'auto'
+      ? host.closest<HTMLElement>('[data-table-allocation]') ?? host.parentElement ?? undefined : undefined
+    if (allocation !== this.allocation) {
+      this.allocationObserver?.disconnect()
+      this.allocation = allocation
+      this.table.maxHeight = 0
+      if (host instanceof HTMLElement) {
+        host.removeAttribute('data-table-fit')
+        host.style.removeProperty('--lv-table-content-height')
+      }
+      if (allocation) {
+        // Measure before fitting, and observe the stable authored allocation.
+        // Focus mode can move this same live renderer into an automatic layout.
+        this.allocationChrome = Math.max(0, allocation.clientHeight - this.container.clientHeight)
+        this.allocationObserver = new ResizeObserver(() => this.syncHeightLimit())
+        this.allocationObserver.observe(allocation)
+      }
+    }
+    this.table.maxHeight = allocation ? Math.max(0, allocation.clientHeight - this.allocationChrome) : 0
   }
   private readonly handleWindowChange = (event: Event) => {
     const envelope = this.envelope
@@ -77,7 +111,10 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
     const metricAliases = spec.kind === 'matrix' || spec.kind === 'pivot' ? spec.metrics.map((metric) => metric.field) : []
     const conditionalFormatting = conditionalFormatsForField(spec.conditionalFormatting ?? [], ref.dataset, ref.field, metricKey, schema?.fields ?? [], metricAliases)
     const grid = authored ?? field?.grid
-	return tableColumn(field, authored?.label, authored?.width, authored?.formatting ?? (gridFormatting?.length ? gridFormatting : metricFormatting), grid ? { ...grid, metric: metricKey } : { metric: metricKey }, conditionalFormatting)
+    return {
+      ...tableColumn(field, authored?.label, authored?.width, authored?.formatting ?? (gridFormatting?.length ? gridFormatting : metricFormatting), grid ? { ...grid, metric: metricKey } : { metric: metricKey }, conditionalFormatting),
+      content: authored?.content ?? spec.presentation.cellContent?.[ref.field],
+    }
   })
   const state = envelope.dataState
   const sort = state.kind === 'windowed' ? tableSort(state.sort[0], columns[0]?.key) : tableSort(spec.kind === 'table' ? spec.defaultSort?.[0] : undefined, columns[0]?.key)
@@ -88,10 +125,13 @@ export function tableSignal(envelope: VisualizationEnvelope): TableSignal {
   return {
     id: envelope.visualID, version: 2, type: spec.kind, title: resolveVisualizationMetadata(envelope).title,
     style: { density: spec.presentation.rowHeight <= 30 ? 'compact' : spec.presentation.rowHeight >= 42 ? 'spacious' : 'comfortable', zebra: spec.presentation.striped, grid: 'rows', showHeader: spec.presentation.showHeader },
+    hierarchy: spec.kind === 'table' ? undefined : spec.presentation.hierarchy,
     interaction, selection: tableSelection(envelope, interaction), columns,
     highlight: tableHighlight(envelope, schema?.id ?? 'primary'),
     cardinality: { kind: state.kind === 'windowed' ? state.cardinality.kind : 'exact', value: cardinalityCount },
-    availableRows, isCapped: state.kind === 'windowed' && availableRows >= state.rowCap,
+    availableRows, isCapped: state.kind === 'windowed'
+      ? availableRows >= state.rowCap || state.cardinality.kind === 'lower_bound'
+      : state.datasets.some((dataset) => dataset.completeness === 'truncated' || dataset.completeness === 'partial'),
     rowCap: state.kind === 'windowed' ? state.rowCap : spec.dataBudget.maxRows,
     chunkSize: state.kind === 'windowed' ? state.chunkSize : Math.max(1, availableRows),
     rowHeight: spec.presentation.rowHeight, resetVersion: state.kind === 'windowed' ? state.resetVersion : 0,

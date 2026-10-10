@@ -1,0 +1,10 @@
+name: Configure hosted Docker pulls
+description: Prefer Google's Docker Hub cache and verify the pinned Testcontainers reaper on GitHub-hosted Linux runners.
+
+runs:
+  using: composite
+  steps:
+    - name: Configure Docker mirror and pinned reaper before starting containers
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py

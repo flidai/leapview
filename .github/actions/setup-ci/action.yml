@@ -50,10 +50,9 @@ runs:
           *) echo "unknown CI profile: $CI_PROFILE" >&2; exit 1 ;;
         esac
 
-    - name: Configure Docker Hub cache
-      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
-      shell: bash
-      run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py
+    - name: Configure hosted Docker pulls
+      if: inputs.profile == 'validation' && runner.os == 'Linux' && runner.environment == 'github-hosted'
+      uses: ./.github/actions/setup-docker
 
     - name: Install locked Nix
       if: inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'

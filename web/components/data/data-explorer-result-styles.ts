@@ -137,6 +137,10 @@ export const dataExplorerResultStyles = css`
     height: 100%;
   }
 
+  .result-visual[data-table-allocation] lv-visualization-host[data-table-fit] {
+    min-height: 0;
+  }
+
   .execution-state {
     display: inline-flex;
     align-items: center;

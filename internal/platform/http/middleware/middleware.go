@@ -295,6 +295,7 @@ func SecurityHeadersMiddleware(config SecurityHeadersConfig) func(http.Handler) 
 		}
 		strictPolicy := ContentSecurityPolicy(ContentSecurityPolicyConfig{})
 		documentPolicy := ContentSecurityPolicy(ContentSecurityPolicyConfig{
+			ExternalImages:      true,
 			DatastarExpressions: true,
 			DynamicStyles:       true,
 		})

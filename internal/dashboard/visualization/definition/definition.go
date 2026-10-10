@@ -540,6 +540,16 @@ func (definition Definition) Validate() error {
 	if err := ir.ValidateSpec(definition.Spec); err != nil {
 		return fmt.Errorf("visualization %q specification: %w", definition.ID, err)
 	}
+	var hierarchy *ir.GridRowHierarchy
+	switch spec := definition.Spec.Value.(type) {
+	case *ir.MatrixVisualizationSpec:
+		hierarchy = spec.Presentation.Hierarchy
+	case *ir.PivotVisualizationSpec:
+		hierarchy = spec.Presentation.Hierarchy
+	}
+	if err := definition.Query.ValidateHierarchyTotals(hierarchy); err != nil {
+		return fmt.Errorf("visualization %q hierarchy: %w", definition.ID, err)
+	}
 	renderer, queryKind, err := ownership(definition.Spec)
 	if err != nil {
 		return err

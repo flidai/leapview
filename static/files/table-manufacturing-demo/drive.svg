@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180" viewBox="0 0 240 180" role="img" aria-labelledby="title description">
+<title id="title">Variable frequency drive — catalog illustration</title><desc id="description">Illustrative technical drawing for the manufacturing parts demo.</desc>
+<defs><linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e7eef3"/><stop offset=".45" stop-color="#b5c7d4"/><stop offset="1" stop-color="#7f98ad"/></linearGradient><linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#638aa7"/><stop offset="1" stop-color="#3c6584"/></linearGradient><radialGradient id="ball" cx=".32" cy=".25"><stop stop-color="#fff"/><stop offset=".4" stop-color="#c4d4df"/><stop offset="1" stop-color="#627c91"/></radialGradient><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#dce6ed" stroke-width=".6"/></pattern></defs>
+<rect width="240" height="180" rx="12" fill="#edf3f7"/><rect width="240" height="180" rx="12" fill="url(#grid)"/><path d="M18 29V18h11M211 18h11v11M18 151v11h11M211 162h11v-11" fill="none" stroke="#a8bdcd" stroke-width="1.5"/>
+    <ellipse cx="123" cy="151" rx="57" ry="8" fill="#172b42" opacity=".12"/>
+    <path d="M82 27h68l21 14v100l-21 13H82z" fill="#58748b" stroke="#324e65" stroke-width="2"/>
+    <path d="M151 31v116" stroke="#304a60" stroke-width="2"/><path d="M154 33v112" stroke="#304a60" stroke-width="2"/><path d="M157 35v108" stroke="#304a60" stroke-width="2"/><path d="M160 37v104" stroke="#304a60" stroke-width="2"/><path d="M163 39v100" stroke="#304a60" stroke-width="2"/><path d="M166 41v96" stroke="#304a60" stroke-width="2"/>
+    <rect x="74" y="27" width="77" height="117" rx="4" fill="url(#metal)" stroke="#3e5a70" stroke-width="2"/>
+    <rect x="82" y="36" width="61" height="46" rx="3" fill="#2c4a64"/>
+    <rect x="88" y="42" width="49" height="19" rx="2" fill="#adcfd5"/><path d="M96 48h13v7H96M114 48h13v7h-13" fill="none" stroke="#42727c" stroke-width="2"/>
+    <circle cx="98" cy="71" r="4" fill="#6ea4b7"/><circle cx="113" cy="71" r="4" fill="#7e91a2"/><circle cx="129" cy="71" r="4" fill="#7e91a2"/>
+    <path d="M84 92h56" stroke="#697f92" stroke-width="2"/><path d="M84 97h56" stroke="#697f92" stroke-width="2"/><path d="M84 102h56" stroke="#697f92" stroke-width="2"/><path d="M84 107h56" stroke="#697f92" stroke-width="2"/><path d="M84 112h56" stroke="#697f92" stroke-width="2"/><path d="M84 117h56" stroke="#697f92" stroke-width="2"/><path d="M84 122h56" stroke="#697f92" stroke-width="2"/>
+    <rect x="87" y="129" width="51" height="9" rx="1" fill="#405e70"/>
+    <circle cx="92" cy="133.5" r="2" fill="#b9cda8"/><circle cx="100" cy="133.5" r="2" fill="#b9cda8"/><circle cx="108" cy="133.5" r="2" fill="#b9cda8"/><circle cx="116" cy="133.5" r="2" fill="#b9cda8"/><circle cx="124" cy="133.5" r="2" fill="#b9cda8"/><circle cx="132" cy="133.5" r="2" fill="#b9cda8"/>
+</svg>

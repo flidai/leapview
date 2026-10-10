@@ -346,8 +346,15 @@ func validatePolicy(policy vulnerabilityPolicy) error {
 	if policy.SchemaVersion != 1 || policy.Scanner != "trivy" || !semverPattern.MatchString(policy.ScannerVersion) {
 		return errors.New("policy identity")
 	}
-	wantImage := "aquasec/trivy:" + policy.ScannerVersion + "@sha256:"
-	if !strings.HasPrefix(policy.ScannerImage, wantImage) || !digestPattern.MatchString(strings.TrimPrefix(policy.ScannerImage, "aquasec/trivy:"+policy.ScannerVersion+"@")) {
+	pinnedScanner := false
+	for _, registry := range []string{"aquasec/trivy:", "ghcr.io/aquasecurity/trivy:"} {
+		prefix := registry + policy.ScannerVersion + "@"
+		if strings.HasPrefix(policy.ScannerImage, prefix) && digestPattern.MatchString(strings.TrimPrefix(policy.ScannerImage, prefix)) {
+			pinnedScanner = true
+			break
+		}
+	}
+	if !pinnedScanner {
 		return errors.New("policy scanner image")
 	}
 	if len(policy.Severity) == 0 {

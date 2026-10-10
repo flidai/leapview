@@ -16,6 +16,7 @@ type ContentSecurityPolicyConfig struct {
 	FrameSrc            string
 	DatastarExpressions bool
 	DynamicStyles       bool
+	ExternalImages      bool
 }
 
 // ContentSecurityPolicy returns a deterministic CSP for a LeapView surface.
@@ -38,6 +39,10 @@ func ContentSecurityPolicy(config ContentSecurityPolicyConfig) string {
 		styleElem += " 'unsafe-inline'"
 		styleAttr = "style-src-attr 'unsafe-inline'"
 	}
+	imageSrc := "img-src 'self' data: blob:"
+	if config.ExternalImages {
+		imageSrc += " https:"
+	}
 	directives := []string{
 		"default-src 'self'",
 		"base-uri " + baseURI,
@@ -49,7 +54,7 @@ func ContentSecurityPolicy(config ContentSecurityPolicyConfig) string {
 		"style-src 'self'",
 		styleElem,
 		styleAttr,
-		"img-src 'self' data: blob:",
+		imageSrc,
 		"font-src 'self' data:",
 		"connect-src 'self'",
 		"worker-src 'self' blob:",

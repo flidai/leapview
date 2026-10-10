@@ -5,6 +5,41 @@ import (
 	"testing"
 )
 
+func TestMetricDataTypePreservesAggregatePrecision(t *testing.T) {
+	model := &Model{Tables: map[string]Table{
+		"observations": {Dimensions: map[string]MetricDimension{
+			"whole":      {Datatype: DataTypeInteger},
+			"fractional": {Datatype: DataTypeFloat},
+		}},
+	}}
+	for _, test := range []struct {
+		name, aggregation, field string
+		want                     LogicalDataType
+	}{
+		{"integer sum", "sum", "whole", DataTypeDecimal},
+		{"integer average", "avg", "whole", DataTypeDecimal},
+		{"integer minimum", "min", "whole", DataTypeInteger},
+		{"integer maximum", "max", "whole", DataTypeInteger},
+		{"integer count", "count", "whole", DataTypeInteger},
+		{"float distinct count", "count_distinct", "fractional", DataTypeInteger},
+		{"float sum", "sum", "fractional", DataTypeFloat},
+		{"float average", "avg", "fractional", DataTypeFloat},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metric := Metric{Type: "aggregate", Aggregation: test.aggregation, Input: &MetricInput{Field: "observations." + test.field}, Format: "integer"}
+			model.Metrics = map[string]Metric{"value": metric}
+			got, err := model.MetricDataType("value")
+			if err != nil || got != test.want {
+				t.Fatalf("MetricDataType = %q, %v; want %q despite integer display format", got, err, test.want)
+			}
+			got, err = model.MetricDataTypeFor(metric)
+			if err != nil || got != test.want {
+				t.Fatalf("MetricDataTypeFor = %q, %v; want %q", got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestMetricDataTypeTracksFloatReferencesAndCycles(t *testing.T) {
 	model := &Model{
 		Tables: map[string]Table{

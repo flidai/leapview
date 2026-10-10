@@ -63,6 +63,10 @@ export class VisualizationHost extends LitElement {
   private assignEnvelope(value: VisualizationEnvelope | undefined): void {
     const previous = this.envelopeValue
     if (Object.is(previous, value)) return
+    if (!value || !['table', 'matrix', 'pivot'].includes(value.spec.kind)) {
+      this.removeAttribute('data-table-fit')
+      this.style.removeProperty('--lv-table-content-height')
+    }
     this.envelopeValue = value
     if (this.focusPreview) this.focusPreview.envelope = value
     this.requestUpdate('envelope', previous)
@@ -137,6 +141,13 @@ export class VisualizationHost extends LitElement {
   connectedCallback(): void {
     super.connectedCallback()
     const generation = ++this.connectionGeneration
+    if (this.controller) {
+      queueMicrotask(() => {
+        if (generation !== this.connectionGeneration || !this.isConnected || !this.rendererContainer) return
+        this.controller?.resize(this.rendererContainer.clientWidth, this.rendererContainer.clientHeight, window.devicePixelRatio || 1)
+      })
+      return
+    }
     if (!this.hasUpdated || this.controller || this.mountObserver) return
     queueMicrotask(() => {
       if (generation === this.connectionGeneration && this.isConnected) {
@@ -339,7 +350,7 @@ export class VisualizationHost extends LitElement {
         </header>
       ` : !this.actionsEnabled ? html`<div class="headerless-actions"><div class="visual-actions"><slot name="focus-action"></slot></div></div>` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
-        <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
+        <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation} @lv-table-size-change=${this.handleTableSizeChange}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
           <lv-loading-spinner size="medium" aria-hidden="true"></lv-loading-spinner>
           <span>${loadingLabel}</span>
@@ -441,6 +452,20 @@ export class VisualizationHost extends LitElement {
     if (kind === 'geographic') return 'map'
     return 'chart'
   }
+
+  private readonly handleTableSizeChange = (event: Event): void => {
+    const envelope = this.envelope
+    if (!envelope || !['table', 'matrix', 'pivot'].includes(envelope.spec.kind)) return
+    const { height, naturalHeight } = (event as CustomEvent<{ height: number; naturalHeight: number }>).detail
+    if (!Number.isFinite(height) || height < 0 || !Number.isFinite(naturalHeight) || naturalHeight < 0) return
+    event.stopPropagation()
+    this.setAttribute('data-table-fit', '')
+    this.style.setProperty('--lv-table-content-height', `${height}px`)
+    this.dispatchEvent(new CustomEvent('lv-visualization-size-change', {
+      bubbles: true, composed: true, detail: { visualID: envelope.visualID, height, naturalHeight },
+    }))
+  }
+
 
   private expand = (): void => {
     const envelope = this.envelope
