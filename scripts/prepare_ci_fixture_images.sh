@@ -9,7 +9,10 @@ case "${1:-}" in
   minio)
     mapfile -t fixture_images < <(awk 'toupper($1) == "FROM" && tolower($2) != "scratch" { print $2 }' "$root/internal/platform/testminio/Dockerfile")
     ;;
-  *) printf 'usage: %s postgres|minio\n' "$0" >&2; exit 2 ;;
+  registry)
+    fixture_images=("$(sed -n 's/^const qualificationRegistryImage = "\([^"]*\)"$/\1/p' "$root/internal/app/cli/composectl/qualification_image.go")")
+    ;;
+  *) printf 'usage: %s postgres|minio|registry\n' "$0" >&2; exit 2 ;;
 esac
 if ((${#fixture_images[@]} == 0)); then
   printf '%s\n' 'fixture image inventory is empty' >&2

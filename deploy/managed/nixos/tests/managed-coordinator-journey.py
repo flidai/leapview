@@ -111,7 +111,8 @@ with subtest("immutable actual-publication export installs only on disposable or
         put(machine, tls_root + "/server.key", key, "postgres", "postgres", "0400")
         put(machine, state + "/ca.crt", ca)
         if machine is not authority:
-            put(machine, "/var/lib/leapview-backup-secrets/pgbackrest.conf", "", "root", "pgbackrest", "0640")
+            put(machine, "/var/lib/leapview-backup-secrets/pgbackrest.conf",
+                "# Disposable POSIX repository; no provider authentication is required.\n", "root", "pgbackrest", "0640")
     execute(source, "systemctl start postgresql.service", "source-start", timeout=300)
     source.wait_for_unit("postgresql.service", timeout=300)
     system = sql(source, "SELECT system_identifier::text FROM pg_control_system();")
