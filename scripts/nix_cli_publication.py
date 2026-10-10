@@ -26,7 +26,7 @@ import nix_candidate_manifest as candidate
 SYFT_VERSION = '1.52.0'
 HOST_FIXTURES = (
     {'id': 'debian12', 'image': ('public.ecr.aws/docker/library/debian:bookworm-slim@sha256:'
-                                 '3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251'),
+                                 '7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587'),
      'osID': 'debian', 'versionID': '12'},
     {'id': 'ubuntu2404', 'image': ('public.ecr.aws/docker/library/ubuntu:24.04@sha256:'
                                   '534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55'),

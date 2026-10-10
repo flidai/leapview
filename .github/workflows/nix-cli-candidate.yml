@@ -93,7 +93,7 @@ jobs:
           done
       - name: Retain the exact candidate archives and build identities
         id: archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate/
@@ -130,7 +130,7 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Download the exact build artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           merge-multiple: true
@@ -169,7 +169,7 @@ jobs:
             --evidence-dir qualified/amd64/evidence
       - name: Retain exact amd64 qualification
         id: qualified
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-qualified-amd64-${{ github.run_id }}-${{ github.run_attempt }}
           path: qualified/amd64/
@@ -177,7 +177,7 @@ jobs:
           retention-days: 14
       - name: Retain amd64 diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-diagnostic-amd64-${{ github.run_id }}-${{ github.run_attempt }}
           path: qualified/amd64/evidence/
@@ -214,7 +214,7 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Download the exact build artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           merge-multiple: true
@@ -253,7 +253,7 @@ jobs:
             --evidence-dir qualified/arm64/evidence
       - name: Retain exact arm64 qualification
         id: qualified
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-qualified-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: qualified/arm64/
@@ -261,7 +261,7 @@ jobs:
           retention-days: 14
       - name: Retain arm64 diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-diagnostic-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: qualified/arm64/evidence/
@@ -307,12 +307,12 @@ jobs:
           nix develop --no-update-lock-file .#runtime-security -c \
             go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
       - name: Download the exact amd64 qualification artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.qualify-amd64.outputs.artifact_id }}
           path: qualified/amd64
       - name: Download the exact arm64 qualification artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.qualify-arm64.outputs.artifact_id }}
           path: qualified/arm64
@@ -368,7 +368,7 @@ jobs:
           predicate-path: qualified/arm64/evidence/sbom.spdx.json
       - name: Retain the exact signed controller archives and evidence
         id: signed
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-signed-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -411,7 +411,7 @@ jobs:
           nix develop --no-update-lock-file .#runtime-security -c \
             go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
       - name: Download the exact signed publisher artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.publish.outputs.artifact_id }}
           path: qualified
@@ -443,7 +443,7 @@ jobs:
             --signer-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/nix-cli-signed-arm64.json"
       - name: Retain independently verified signed evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-signed-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

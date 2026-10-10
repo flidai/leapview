@@ -101,7 +101,7 @@ jobs:
           bash deploy/managed/nixos/tests/run-kamal-transport.sh "$RUNNER_TEMP/kamal-transport"
       - name: Retain transport-only evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-kamal-transport
           path: ${{ runner.temp }}/kamal-transport/
@@ -156,7 +156,7 @@ jobs:
             --max-jobs 1 --cores 2 -L 2>&1 | tee "$RUNNER_TEMP/fresh-install.log"
       - name: Retain exact common-OS installation test logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-fresh-install-${{ matrix.boot-mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

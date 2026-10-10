@@ -91,7 +91,7 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 			}
 		case step.Name == "Upload UI visual-regression failure artifacts":
 			artifactIndex = index
-			if step.If != "${{ failure() && matrix.shard == 'site' && steps.ui-route-qa.outcome == 'failure' }}" || step.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || !strings.Contains(step.With["path"], ".tmp/qa-ui-framework/visual-artifacts") {
+			if step.If != "${{ failure() && matrix.shard == 'site' && steps.ui-route-qa.outcome == 'failure' }}" || step.Uses != "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" || !strings.Contains(step.With["path"], ".tmp/qa-ui-framework/visual-artifacts") {
 				t.Fatal("site UI QA failures must retain visual-regression artifacts")
 			}
 		}
