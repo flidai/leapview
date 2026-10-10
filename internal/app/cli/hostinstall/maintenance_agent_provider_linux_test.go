@@ -107,6 +107,92 @@ func TestAgentRelayProductionCommandHelper(t *testing.T) {
 	t.Fatal("production command arguments missing")
 }
 
+// Engine 28 requires an explicitly configured subnet for static container IPs.
+// Let Docker choose an available pool, then make only this empty owned network's
+// exact allocation explicit before attaching any fixture containers.
+func agentProviderFixtureNetwork(ctx context.Context, run func(context.Context, ...string) (string, error), name string) (netip.Addr, error) {
+	if _, err := run(ctx, "network", "create", "--internal", name); err != nil {
+		return netip.Addr{}, errors.New("private fixture network creation failed")
+	}
+	raw, err := run(ctx, "network", "inspect", name, "--format", "{{json .IPAM.Config}}")
+	var config []struct{ Subnet, Gateway string }
+	if err != nil || len(raw) > 2048 || json.Unmarshal([]byte(raw), &config) != nil || len(config) != 1 {
+		return netip.Addr{}, errors.New("private fixture network allocation unavailable")
+	}
+	subnet, subnetErr := netip.ParsePrefix(config[0].Subnet)
+	gateway, gatewayErr := netip.ParseAddr(config[0].Gateway)
+	if subnetErr != nil || gatewayErr != nil || !subnet.Addr().Is4() || !subnet.Addr().IsPrivate() || subnet != subnet.Masked() || subnet.Bits() > 29 || !agentUsableCloneAddress(subnet, gateway.String()) || !agentUsableCloneAddress(subnet, gateway.Next().String()) || !agentUsableCloneAddress(subnet, gateway.Next().Next().String()) {
+		return netip.Addr{}, errors.New("private fixture network allocation invalid")
+	}
+	if _, err := run(ctx, "network", "rm", name); err != nil {
+		return netip.Addr{}, errors.New("empty fixture network removal failed")
+	}
+	if _, err := run(ctx, "network", "create", "--internal", "--subnet", subnet.String(), "--gateway", gateway.String(), name); err != nil {
+		return netip.Addr{}, errors.New("explicit private fixture network creation failed")
+	}
+	return gateway, nil
+}
+
+func TestAgentProviderFixtureUsesExplicitPrivateAllocation(t *testing.T) {
+	var calls []string
+	run := func(_ context.Context, args ...string) (string, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if args[1] == "inspect" {
+			return `[{"Subnet":"172.25.0.0/16","Gateway":"172.25.0.1"}]`, nil
+		}
+		return "", nil
+	}
+	gateway, err := agentProviderFixtureNetwork(t.Context(), run, "owned-fixture")
+	if err != nil || gateway.String() != "172.25.0.1" {
+		t.Fatal("valid private allocation rejected")
+	}
+	want := []string{"network create --internal owned-fixture", "network inspect owned-fixture --format {{json .IPAM.Config}}", "network rm owned-fixture", "network create --internal --subnet 172.25.0.0/16 --gateway 172.25.0.1 owned-fixture"}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatal("fixture did not explicitly preserve its owned subnet and gateway")
+	}
+	for _, invalid := range []string{`[]`, `[{},{}]`, `[{"Subnet":"1.1.1.0/24","Gateway":"1.1.1.1"}]`, `[{"Subnet":"172.25.0.0/16","Gateway":"172.26.0.1"}]`, `[{"Subnet":"172.25.0.0/31","Gateway":"172.25.0.1"}]`, `[{"Subnet":"172.25.0.0/16","Gateway":"172.25.0.0"}]`, `[{"Subnet":"172.25.0.0/16","Gateway":"172.25.255.253"}]`, `[{"Subnet":"172.25.0.0/16","Gateway":"172.25.255.255"}]`, `[{"Subnet":"fd00::/64","Gateway":"fd00::1"}]`} {
+		mutated := false
+		run := func(_ context.Context, args ...string) (string, error) {
+			if args[1] == "inspect" {
+				return invalid, nil
+			}
+			if args[1] == "rm" || len(args) > 4 {
+				mutated = true
+			}
+			return "", nil
+		}
+		if _, err := agentProviderFixtureNetwork(t.Context(), run, "owned-fixture"); err == nil || mutated {
+			t.Fatal("invalid fixture allocation reached network recreation")
+		}
+	}
+}
+
+func agentProviderFixtureFailure(output string) string {
+	switch {
+	case strings.Contains(output, "user configured subnets"):
+		return "static_ip_requires_explicit_subnet"
+	case strings.Contains(output, "no such file or directory"), strings.Contains(output, "exec format error"):
+		return "executable_unavailable"
+	case strings.Contains(output, "permission denied"):
+		return "permission_denied"
+	default:
+		return "other_setup_failure"
+	}
+}
+
+func TestAgentProviderFixtureFailureIsSanitized(t *testing.T) {
+	for _, tc := range []struct{ output, want string }{
+		{"user configured subnets: private-canary", "static_ip_requires_explicit_subnet"},
+		{"no such file or directory: private-canary", "executable_unavailable"},
+		{"permission denied: private-canary", "permission_denied"},
+		{"arbitrary private-canary", "other_setup_failure"},
+	} {
+		if agentProviderFixtureFailure(tc.output) != tc.want {
+			t.Fatal("fixture setup diagnostic escaped its fixed classification")
+		}
+	}
+}
+
 func TestAgentProviderPrivateConfigContainer(t *testing.T) {
 	if os.Getenv("LEAPVIEW_HOST_UPGRADE_QUALIFICATION") != "1" {
 		t.Skip("explicit disposable host recovery qualification")
@@ -170,19 +256,15 @@ func TestAgentProviderPrivateConfigContainer(t *testing.T) {
 	if user, err := run(ctx, "image", "inspect", image, "--format", "{{.Config.User}}"); err != nil || user != "999:999" {
 		t.Fatal("fixture does not retain production default UID")
 	}
-	if _, err := run(ctx, "network", "create", "--internal", prefix); err != nil {
-		t.Fatal("private fixture network creation failed")
-	}
-	gateway, err := run(ctx, "network", "inspect", prefix, "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}")
-	address, parseErr := netip.ParseAddr(gateway)
-	if err != nil || parseErr != nil || !address.IsPrivate() || !address.Is4() {
-		t.Fatal("private fixture network unavailable")
+	address, err := agentProviderFixtureNetwork(ctx, run, prefix)
+	if err != nil {
+		t.Fatal("private fixture network setup failed")
 	}
 	e.agentCloneAppIP = address.Next().String()
 	sidecarIP := address.Next().Next().String()
 	candidate.HostConfig.ExtraHosts = []string{"provider.example:" + sidecarIP}
-	if _, err := run(ctx, "run", "-d", "--name", prefix+"-app", "--network", prefix, "--ip", e.agentCloneAppIP, "--entrypoint", "/bin/sh", image, "-c", "sleep 180"); err != nil {
-		t.Fatal("default-UID app fixture failed")
+	if output, err := run(ctx, "run", "-d", "--name", prefix+"-app", "--network", prefix, "--ip", e.agentCloneAppIP, "--entrypoint", "/bin/sh", image, "-c", "sleep 180"); err != nil {
+		t.Fatal("default-UID app fixture failed: " + agentProviderFixtureFailure(output))
 	}
 	e.execute = func(commandCtx context.Context, args ...string) (string, error) {
 		if args[0] == "run" {
