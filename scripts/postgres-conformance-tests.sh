@@ -39,6 +39,7 @@ case "${1:-list}" in
     inventory
     ;;
   run)
+    bash "$root/scripts/prepare_postgres_image.sh"
     mapfile -t packages < <(inventory)
     if ((${#packages[@]} == 0)); then
       printf '%s\n' 'PostgreSQL conformance inventory is empty' >&2
