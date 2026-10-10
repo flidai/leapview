@@ -59,6 +59,18 @@ import {
 
 const dashboardFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
 
+type PendingInteraction = {
+  command: OptimisticInteractionCommand
+  context: string
+}
+
+type TransportedInteraction = PendingInteraction & {
+  generation: number
+  revision: number
+  error: string
+  expectedSelections: string
+}
+
 type DashboardRenderSnapshot = {
   page: DashboardPageSignal
   filterContract: DashboardFilterContract
@@ -89,6 +101,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private persistedAgentOpen = false
   private persistedAgentConversationID = ''
   private optimisticExpectedGeneration = 0
+  private readonly pendingInteractions: PendingInteraction[] = []
+  private transportedInteraction?: TransportedInteraction
+  private readonly transportedInteractionEvents = new WeakSet<Event>()
+  private interactionTransportTimer?: ReturnType<typeof setTimeout>
   private renderSnapshot?: DashboardRenderSnapshot
   private filterStateFingerprint = ''
   private filterValidationMutationID = ''
@@ -98,6 +114,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     this.optimisticSelections = snapshot.selections
     this.optimisticSpatialSelections = snapshot.spatialSelections
     this.optimisticExpectedGeneration = snapshot.expectedGeneration
+    if (snapshot.selections === null && snapshot.spatialSelections === null) this.resetInteractionTransport()
     this.requestUpdate()
   }, () => this.status.generation)
   private readonly filterOptionGenerations = new Map<string, number>()
@@ -106,6 +123,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private readonly retainedFilterOptionPages = new Map<string, DashboardFilterOptionPage>()
   private retainedFilterOptionServingStateID = ''
   private readonly filterController = new DashboardFilterController((command) => {
+    this.clearOptimisticState()
     this.dispatchEvent(new CustomEvent('lv-filter-command', {
       bubbles: true, composed: true, detail: command,
     }))
@@ -553,6 +571,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     window.addEventListener('storage', this.handleDashboardFavoriteStorage)
     this.addEventListener('lv-interaction-select', this.handleOptimisticInteraction as EventListener, { capture: true })
     this.addEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
+    this.addEventListener('lv-selection-clear', this.handleSelectionClear, { capture: true })
     this.addEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
     this.addEventListener('lv-filter-options-needed', this.handleFilterOptionsNeeded as EventListener, { capture: true })
     this.loadRenderedComponents()
@@ -566,8 +585,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     window.removeEventListener('storage', this.handleDashboardFavoriteStorage)
     this.removeEventListener('lv-interaction-select', this.handleOptimisticInteraction as EventListener, { capture: true })
     this.removeEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
+    this.removeEventListener('lv-selection-clear', this.handleSelectionClear, { capture: true })
     this.removeEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
     this.removeEventListener('lv-filter-options-needed', this.handleFilterOptionsNeeded as EventListener, { capture: true })
+    this.clearOptimisticState()
     this.optimisticController.dispose()
     super.disconnectedCallback()
   }
@@ -619,7 +640,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       this.dispatchPageNavigation()
       return
     }
-    this.optimisticController.reconcile(this.status.generation)
+    this.reconcileInteractionTransport()
+    if (!this.transportedInteraction) this.optimisticController.reconcile(this.status.generation)
   }
 
   get page(): DashboardPageSignal | null {
@@ -1101,6 +1123,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private dispatchPageNavigation(): void {
     const request = this.navigationController.markRequested()
     if (!request) return
+    this.clearOptimisticState()
     this.dispatchEvent(new CustomEvent('lv-page-navigate', {
       bubbles: true,
       composed: true,
@@ -1346,12 +1369,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleOptimisticInteraction = (event: CustomEvent<unknown>): void => {
-    if (this.readOnly) return
+    if (this.transportedInteractionEvents.has(event)) return
+    // The shell posts every bubbling selection event. Only validated commands
+    // may reach it, including commands released after canonical acceptance.
+    event.stopImmediatePropagation()
+    if (this.readOnly || this.navigationController.request) return
     if (!event.detail || typeof event.detail !== 'object') return
     const candidate = event.detail as Partial<OptimisticInteractionCommand>
     if (typeof candidate.sourceId !== 'string') return
     const source = this.visualSignals[candidate.sourceId]
-    if (!source || source.filterRevision !== this.canonicalFilterState.revision || this.status.loading) return
+    if (!source || source.filterRevision !== this.canonicalFilterState.revision
+      || (this.status.loading && !this.transportedInteraction)) return
     Object.assign(candidate, {
       specRevision: source.specRevision,
       dataRevision: source.dataRevision,
@@ -1364,11 +1392,92 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const configured = this.interactionConfigFor(command.sourceKind, command.sourceId)
     if (!validateInteractionCommand(command, configured)) return
 
+    if (this.transportedInteraction && this.interactionTransportContext(this.transportedInteraction.command) !== this.transportedInteraction.context) {
+      this.clearOptimisticState()
+      return
+    }
+    // A clear supersedes unsent gestures, but waits for the owned command's
+    // acceptance so it can carry a real canonical interaction revision.
+    if (command.action === 'clear') this.pendingInteractions.length = 0
+    if (this.pendingInteractions.length >= 32) return
+    const pending = { command: structuredClone(command), context: this.interactionTransportContext(command) }
+
     const current = this.optimisticSelections ?? this.interactionSelections
     this.optimisticController.setSelections(applyOptimisticInteraction(current, {
       ...command,
       toggle: configured?.toggle !== false,
     }), this.status.generation)
+    if (this.transportedInteraction) this.pendingInteractions.push(pending)
+    else this.transportInteraction(pending)
+  }
+
+  private interactionTransportContext(command: OptimisticInteractionCommand): string {
+    const source = this.visualSignals[command.sourceId]
+    return JSON.stringify([
+      this.page?.dashboardId, this.page?.pageId, this.canonicalFilterState.revision,
+      this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' }).servingStateId,
+      source?.specRevision, source?.dataRevision, source?.servingStateID, source?.filterRevision,
+      this.interactionConfigFor(command.sourceKind, command.sourceId),
+    ])
+  }
+
+  private transportInteraction(pending: PendingInteraction): void {
+    const revision = this.signal<number>('interactionRevision', 0)
+    const configured = this.interactionConfigFor(pending.command.sourceKind, pending.command.sourceId)
+    const command = { ...pending.command, interactionRevision: revision }
+    this.transportedInteraction = {
+      ...pending, command, revision, generation: this.status.generation, error: this.status.error,
+      expectedSelections: interactionSelectionFingerprint(applyOptimisticInteraction(this.interactionSelections, {
+        ...command, toggle: configured?.toggle === true,
+      })),
+    }
+    if (this.interactionTransportTimer !== undefined) clearTimeout(this.interactionTransportTimer)
+    this.interactionTransportTimer = setTimeout(() => this.clearOptimisticState(), 10_000)
+    const event = new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: command })
+    this.transportedInteractionEvents.add(event)
+    this.dispatchEvent(event)
+  }
+
+  private reconcileInteractionTransport(): void {
+    const transported = this.transportedInteraction
+    if (!transported) return
+    if (this.readOnly || this.navigationController.request
+      || (this.status.error && (this.status.error !== transported.error || this.status.generation > transported.generation))
+      || this.interactionTransportContext(transported.command) !== transported.context) {
+      this.clearOptimisticState()
+      return
+    }
+    const revision = this.signal<number>('interactionRevision', 0)
+    const accepted = this.status.generation > transported.generation
+      && (revision === transported.revision || revision === transported.revision + 1)
+      && interactionSelectionFingerprint(this.interactionSelections) === transported.expectedSelections
+    if (!accepted) {
+      // A different mutation advanced canonical state. It does not acknowledge
+      // this command and cannot release gestures authored against its source.
+      if (revision !== transported.revision || this.status.generation > transported.generation) this.clearOptimisticState()
+      return
+    }
+    const pending = this.pendingInteractions.shift()
+    if (!pending) {
+      this.clearOptimisticState()
+      return
+    }
+    if (this.interactionTransportContext(pending.command) !== pending.context) {
+      this.clearOptimisticState()
+      return
+    }
+    this.transportInteraction(pending)
+  }
+
+  private resetInteractionTransport(): void {
+    if (this.interactionTransportTimer !== undefined) clearTimeout(this.interactionTransportTimer)
+    this.interactionTransportTimer = undefined
+    this.transportedInteraction = undefined
+    this.pendingInteractions.length = 0
+  }
+
+  private handleSelectionClear = (): void => {
+    this.clearOptimisticState()
   }
 
   private handleFilterMutation = (event: CustomEvent<FilterMutationDetail>): void => {
@@ -1378,6 +1487,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
     if (!event.detail?.bindingKey || !event.detail.expression) return
     event.stopPropagation()
+    this.clearOptimisticState()
     // Clearing is a first-class mutation so textbox and drawer clears share
     // the same idempotent server path and canonical URL tombstone.
     if (event.detail.expression.kind === 'unfiltered') {
@@ -1519,6 +1629,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const interaction = visual.spec.spatialInteractions.find((candidate) => candidate.id === command.interactionID)
     if (!interaction || !interaction.gestures.includes(command.gesture)) return
     if (command.action === 'set' && (!command.geometry || command.geometry.kind !== command.gesture)) return
+    // Spatial mutations supersede unsent point gestures rather than replaying
+    // them after a different canonical selection command.
+    if (this.transportedInteraction) this.clearOptimisticState()
 
     const current = [...(this.optimisticSpatialSelections ?? this.spatialSelections)]
       .filter((selection) => selection.visualID !== command.visualID || selection.interactionID !== command.interactionID)
@@ -1573,6 +1686,15 @@ function optimisticCommand(value: unknown): OptimisticInteractionCommand | undef
   if (command.action !== 'set' && command.action !== 'replace' && command.action !== 'clear') return undefined
   if (typeof command.toggle !== 'boolean' || !Array.isArray(command.mappings)) return undefined
   return command as OptimisticInteractionCommand
+}
+
+// Display labels and server-assigned IDs/order are not command identity.
+function interactionSelectionFingerprint(selections: readonly CanonicalInteractionSelection[]): string {
+  return JSON.stringify(selections.map((selection) => [
+    selection.sourceKind, selection.sourceId, selection.interactionKind,
+    (selection.entries ?? []).map((entry) => (entry.mappings ?? []).map((mapping) =>
+      JSON.stringify([mapping.field, mapping.dataset ?? '', mapping.grain ?? '', mapping.value])).sort()).sort(),
+  ]).sort())
 }
 
 function visualizationType(visual: VisualizationEnvelope): string {
