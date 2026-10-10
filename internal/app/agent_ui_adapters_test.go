@@ -138,7 +138,8 @@ func TestDataExplorerAgentAdapterPreservesExplicitStatusResetsAndCommandScope(t 
 	if bindings.CreateConversation.OperationID() != "createAgentConversation" || bindings.CreateRun.OperationID() != "createAgentRun" || bindings.CancelRun.OperationID() != "cancelAgentRun" {
 		t.Fatalf("agent command contract mismatch: %#v", bindings)
 	}
-	if dataExplorerAgentCommands(nil).CreateRun.OperationID() != "" {
-		t.Fatal("missing agent must not configure run commands")
+	initialBindings := dataExplorerAgentCommands(nil)
+	if initialBindings.CreateConversation.OperationID() != "createAgentConversation" || initialBindings.CreateRun.OperationID() != "createAgentRun" || initialBindings.CancelRun.OperationID() != "cancelAgentRun" {
+		t.Fatal("static command identities must be available before agent initialization")
 	}
 }

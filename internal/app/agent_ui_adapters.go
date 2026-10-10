@@ -193,9 +193,8 @@ func dataExplorerAgentBootstrap(state agentmodule.ChatViewState) projecthttp.Dat
 }
 
 func dataExplorerAgentCommands(module *agentmodule.Module) projecthttp.DataExplorerAgentCommandBindings {
-	if module == nil {
-		return projecthttp.DataExplorerAgentCommandBindings{}
-	}
+	// Generated command bindings are static and nil-receiver safe, including
+	// while the browser surface is composed before the agent module is built.
 	bindings := module.UICommandBindings()
 	return projecthttp.DataExplorerAgentCommandBindings{CreateConversation: bindings.CreateConversation, CreateRun: bindings.CreateRun, CancelRun: bindings.CancelRun}
 }
