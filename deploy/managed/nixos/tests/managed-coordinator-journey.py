@@ -222,8 +222,8 @@ with subtest("separate recovery owner reaches actual fixed restore seam and reta
     credentials = value["credentials"]
     credentials.update(schemaVersion=1, profile="managed-local-v1", recoverySetId=retained["id"], targetId=retained["delivery"]["target_id"],
                        occurrenceId=enrollment["occurrenceId"], postgresRootCa=ca,
-                       controlUrl=fixture.tls_url(credentials["controlUrl"], "database.local:5432"),
-                       duckLakeUrl=fixture.tls_url(credentials["duckLakeUrl"], "database.local:5432"))
+                       controlUrl=fixture.tls_url(credentials["controlUrl"], "192.168.1.1:5432"),
+                       duckLakeUrl=fixture.tls_url(credentials["duckLakeUrl"], "192.168.1.1:5432"))
     document(replacement, private_root + "/credentials.json", credentials, owner)
     roots = value["roots"]
     for root in roots:
