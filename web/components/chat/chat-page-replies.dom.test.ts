@@ -508,14 +508,15 @@ test('dashboard chart preview offers Save and Remove from saved with one saved-l
       await e.updateComplete
     })
     expect(await chat.getByRole('button',{name:'Save',exact:true}).count()).toBe(1)
-    expect(await chat.getByRole('link',{name:'Saved visuals',exact:true}).getAttribute('href')).toBe('/visuals/saved')
+    expect(await chat.getByRole('link',{name:'Saved visuals',exact:true}).count()).toBe(0)
     expect(await chat.getByRole('button',{name:/^Visuals \(/}).count()).toBe(0)
     expect(await chat.getByRole('button',{name:'Shrink chat',exact:true}).count()).toBe(0)
     await chat.evaluate(async(e:any)=>{
-      e.visualLibraryState = {savedIds:['dashboard:demo:overview:revenue'],savingId:'',error:''}
+      e.visualLibraryState = {savedIds:['dashboard:demo:overview:revenue'],totalSaved:1,savingId:'',error:''}
       await e.updateComplete
     })
     expect(await chat.getByRole('button',{name:'Remove from saved',exact:true}).count()).toBe(1)
+    expect(await chat.getByRole('link',{name:'Saved visuals',exact:true}).getAttribute('href')).toBe('/visuals/saved')
     await chat.getByRole('button',{name:'Close visuals sidebar',exact:true}).click()
     expect(await chat.getByRole('region',{name:'Dashboard preview'}).isVisible()).toBe(false)
     expect(await chat.getByRole('button',{name:'Preview dashboard',exact:true}).count()).toBe(1)

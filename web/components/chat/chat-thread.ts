@@ -4,6 +4,7 @@ import { ChartColumn, ChevronRight, Check, Copy, FileText, LayoutPanelTop, Penci
 import { lucideIcon } from '../shared/lucide-icons'
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
+import '../dashboard/dashboard-generation'
 import { agentIcon } from './agent-icon'
 import { referenceHierarchy, referenceIcon, referenceKindLabel } from './reference'
 import { chatThreadStyles } from './chat-thread-styles'
@@ -42,6 +43,7 @@ class ChatThread extends LitElement {
   @property({ attribute: 'conversation-id' }) conversationId = ''
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
   @property({ type: Boolean }) dashboardPreviewAvailable = false
+  @property({ type: Boolean }) dashboardGenerating = false
   @property({ type: String }) dashboardId = ''
   @property({ attribute: false }) pageArtifacts: ChatArtifactSignal[] = []
   @property({ type: String }) pageTitle = ''
@@ -107,8 +109,9 @@ class ChatThread extends LitElement {
             ${units.map((unit, index) => this.renderUnit(unit, visibleItems, earlierAssistantMessages, index === units.length - 1, index === dashboardReply))}
             ${this.dashboardPreviewAvailable && dashboardReply < 0 ? this.renderPageArtifacts() : nothing}
             ${showWorking ? html`
-              <div class="working" role="status" aria-label="Working" aria-live="polite">
+              <div class="working" role="status" aria-label=${this.dashboardGenerating ? 'Building your dashboard' : 'Working'} aria-live="polite">
                 <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                ${this.dashboardGenerating ? html`<span>Building your dashboard</span>` : nothing}
               </div>
             ` : nothing}
           </div>
@@ -271,7 +274,7 @@ class ChatThread extends LitElement {
     const end = Date.parse(allItems[allItems.length - 1]?.createdAt || '')
     const elapsed = Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatElapsed(end - start) : ''
     const activity = elapsed ? `Worked for ${elapsed}` : 'View steps'
-    const label = running ? 'Working' : context.length ? (elapsed ? `View details · ${activity}` : 'View details') : activity
+    const label = running ? (this.dashboardGenerating ? 'Building your dashboard' : 'Working') : context.length ? (elapsed ? `View details · ${activity}` : 'View details') : activity
     return html`<details class="run-steps run-activity">
       <summary>${label}${lucideIcon(ChevronRight, { size: 16 })}</summary>
       ${steps.length > 0 ? html`<div class="run-step-list">${steps.map(item => html`<div class="run-step">${item.markdown || item.text || ''}</div>`)}</div>` : nothing}

@@ -83,6 +83,7 @@ jobs:
         uses: ./.github/actions/setup-ci
         with:
           browser: "false"
+          postgres: "true"
 
       - name: Prepare generated and embedded assets
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare

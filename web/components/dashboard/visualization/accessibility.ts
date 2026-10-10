@@ -181,3 +181,14 @@ export function visualizationChangeAnnouncement(previous: VisualizationEnvelope 
   ].filter(Boolean)
   return `${metadata.title} updated. ${reasons.join(' ')}`
 }
+
+/** Brief text fallback for a host before and after renderer preparation. */
+export function accessibleVisualizationSummary(envelope: VisualizationEnvelope | undefined, context: RendererContext): string {
+  if (!envelope) return 'Visualization is loading.'
+  const data = accessibleVisualizationData(envelope, context, 6)
+  const metadata = resolveVisualizationMetadata(envelope)
+  const summary = metadata.summary ?? metadata.description
+  const status = accessibleStatus(envelope)
+  const dataSummary = accessibleDataStatus(envelope, data)
+  return `${metadata.title}.${metadata.subtitle ? ` ${metadata.subtitle}.` : ''} ${summary}. ${status}. ${dataSummary}`
+}
