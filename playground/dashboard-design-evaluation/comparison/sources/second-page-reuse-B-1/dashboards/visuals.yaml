@@ -1,0 +1,27 @@
+visuals:
+  - id: revenue-by-month
+    title: Revenue by month
+    type: area
+    query:
+      type: aggregate
+      metrics:
+        - revenue
+      sort:
+        - field: purchase_month
+          direction: asc
+      limit: 30
+      group:
+        category:
+          dimension: purchase_date
+          grain: month
+          alias: purchase_month
+  - id: total-revenue
+    title: Total revenue
+    type: kpi
+    query:
+      type: aggregate
+      metrics:
+        - revenue
+      group: {}
+    presentation:
+      displayUnits: auto

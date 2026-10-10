@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "purpose": "deterministic-canonical-v1-qualification",
+  "supportRoot": "support",
+  "tasks": [
+    {
+      "id": "monthly-create",
+      "prompt": "tasks/monthly-create/PROMPT.md",
+      "seedRoot": "tasks/monthly-create/seed",
+      "oracleRoot": "tasks/monthly-create/oracle",
+      "coverage": [
+        "monthly time grain",
+        "result alias and sort",
+        "KPI creation",
+        "component order"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-metric",
+          "sourceRoot": "tasks/monthly-create/negatives/wrong-metric",
+          "rejects": "Trend selects order_count instead of revenue."
+        }
+      ]
+    },
+    {
+      "id": "ranked-chart",
+      "prompt": "tasks/ranked-chart/PROMPT.md",
+      "seedRoot": "tasks/ranked-chart/seed",
+      "oracleRoot": "tasks/ranked-chart/oracle",
+      "coverage": [
+        "bounded ranked aggregate",
+        "metric sort",
+        "append preserving neighbors"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-limit",
+          "sourceRoot": "tasks/ranked-chart/negatives/wrong-limit",
+          "rejects": "Returns ten categories instead of five."
+        }
+      ]
+    },
+    {
+      "id": "grain-alias-sort",
+      "prompt": "tasks/grain-alias-sort/PROMPT.md",
+      "seedRoot": "tasks/grain-alias-sort/seed",
+      "oracleRoot": "tasks/grain-alias-sort/oracle",
+      "coverage": [
+        "weekly grain",
+        "alias-linked sort",
+        "unchanged visual identity"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-sort",
+          "sourceRoot": "tasks/grain-alias-sort/negatives/wrong-sort",
+          "rejects": "Week result order is descending."
+        }
+      ]
+    },
+    {
+      "id": "scoped-dependent-filter",
+      "prompt": "tasks/scoped-dependent-filter/PROMPT.md",
+      "seedRoot": "tasks/scoped-dependent-filter/seed",
+      "oracleRoot": "tasks/scoped-dependent-filter/oracle",
+      "coverage": [
+        "page filter scope",
+        "dependent distinct options",
+        "explicit component targets",
+        "unaffected second page"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-target-scope",
+          "sourceRoot": "tasks/scoped-dependent-filter/negatives/wrong-target-scope",
+          "rejects": "Adds revenue-kpi to both filter targets."
+        },
+        {
+          "id": "missing-dependency",
+          "sourceRoot": "tasks/scoped-dependent-filter/negatives/missing-dependency",
+          "rejects": "Category options lose the state dependency."
+        }
+      ]
+    },
+    {
+      "id": "second-page-reuse",
+      "prompt": "tasks/second-page-reuse/PROMPT.md",
+      "seedRoot": "tasks/second-page-reuse/seed",
+      "oracleRoot": "tasks/second-page-reuse/oracle",
+      "coverage": [
+        "confined include expansion",
+        "shared visual identity",
+        "second page",
+        "fragment source provenance"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-reference",
+          "sourceRoot": "tasks/second-page-reuse/negatives/wrong-reference",
+          "rejects": "Second page references the KPI instead of the monthly trend."
+        }
+      ]
+    },
+    {
+      "id": "move-resize",
+      "prompt": "tasks/move-resize/PROMPT.md",
+      "seedRoot": "tasks/move-resize/seed",
+      "oracleRoot": "tasks/move-resize/oracle",
+      "coverage": [
+        "nonoverlapping placement",
+        "compact authored component order",
+        "query preservation"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-placement",
+          "sourceRoot": "tasks/move-resize/negatives/wrong-placement",
+          "rejects": "KPI starts at row two rather than row one."
+        }
+      ]
+    },
+    {
+      "id": "reordered-definition-edit",
+      "prompt": "tasks/reordered-definition-edit/PROMPT.md",
+      "seedRoot": "tasks/reordered-definition-edit/seed",
+      "oracleRoot": "tasks/reordered-definition-edit/oracle",
+      "coverage": [
+        "stable-ID targeting",
+        "duplicate titles",
+        "reordered definitions",
+        "reused visual impact",
+        "unrelated neighbor preservation"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-neighbor",
+          "sourceRoot": "tasks/reordered-definition-edit/negatives/wrong-neighbor",
+          "rejects": "Also changes unrelated-trend despite its different ID."
+        }
+      ]
+    },
+    {
+      "id": "combo-bindings",
+      "prompt": "tasks/combo-bindings/PROMPT.md",
+      "seedRoot": "tasks/combo-bindings/seed",
+      "oracleRoot": "tasks/combo-bindings/oracle",
+      "coverage": [
+        "combo measure bindings",
+        "per-measure marks",
+        "axis roles",
+        "ordered metric selection"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-axis",
+          "sourceRoot": "tasks/combo-bindings/negatives/wrong-axis",
+          "rejects": "Swaps the primary and secondary measure axes."
+        }
+      ]
+    },
+    {
+      "id": "records-query",
+      "prompt": "tasks/records-query/PROMPT.md",
+      "seedRoot": "tasks/records-query/seed",
+      "oracleRoot": "tasks/records-query/oracle",
+      "coverage": [
+        "governed records dataset",
+        "ordered physical field selections",
+        "records sort and row limit"
+      ],
+      "seedCompilerValid": true,
+      "negatives": [
+        {
+          "id": "wrong-record-field",
+          "sourceRoot": "tasks/records-query/negatives/wrong-record-field",
+          "rejects": "Selects status in place of category."
+        }
+      ]
+    },
+    {
+      "id": "repair-preserving-neighbors",
+      "prompt": "tasks/repair-preserving-neighbors/PROMPT.md",
+      "seedRoot": "tasks/repair-preserving-neighbors/seed",
+      "oracleRoot": "tasks/repair-preserving-neighbors/oracle",
+      "coverage": [
+        "compiler-invalid seed repair",
+        "preserved time binding",
+        "unchanged valid neighbors"
+      ],
+      "seedCompilerValid": false,
+      "negatives": [
+        {
+          "id": "changed-neighbor",
+          "sourceRoot": "tasks/repair-preserving-neighbors/negatives/changed-neighbor",
+          "rejects": "Repairs the trend but changes the total-revenue metric."
+        }
+      ],
+      "seedDiagnosticContains": "nonexistent_period"
+    }
+  ],
+  "frozenFiles": {
+    "support/connections/olist.yaml": "bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40",
+    "support/models/sales_customers.yaml": "1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c",
+    "support/models/sales_orders.yaml": "3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2",
+    "support/semantic-models/sales.yaml": "9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f",
+    "support/sources/olist.customers.yaml": "0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a",
+    "support/sources/olist.order_items.yaml": "0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b",
+    "support/sources/olist.orders.yaml": "8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf",
+    "support/sources/olist.payments.yaml": "eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3",
+    "support/sources/olist.products.yaml": "3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd",
+    "support/sources/olist.translations.yaml": "5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac",
+    "tasks/combo-bindings/PROMPT.md": "43d6a8dbd474272a43a511e88a2f49d00480ba445e10f5c5e331852814265df1",
+    "tasks/combo-bindings/negatives/wrong-axis/dashboards/evaluation.yaml": "4fcb2e96828aa5200d81233028ec44fe3b3749a8a00b51676c34884946714ae3",
+    "tasks/combo-bindings/oracle/dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+    "tasks/combo-bindings/seed/dashboards/evaluation.yaml": "6d437a9ae6a4176f88a12b7fd6549c8af382faac1382415f90fe3283a9f4edf7",
+    "tasks/grain-alias-sort/PROMPT.md": "92bcbf85cd65521390168b92d22774c28ae1fd21427e5078c99826ee2482ac7f",
+    "tasks/grain-alias-sort/negatives/wrong-sort/dashboards/evaluation.yaml": "2171fa189aa8e5b586001fb21759601c2791407496307a2bf3e33334c19bf534",
+    "tasks/grain-alias-sort/oracle/dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+    "tasks/grain-alias-sort/seed/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "tasks/monthly-create/PROMPT.md": "fa6fd6b3a9cfeb094a1ccd3aff4d04f9d80d1c746f469406bc0e731b1249f668",
+    "tasks/monthly-create/negatives/wrong-metric/dashboards/evaluation.yaml": "f272d85d2a4104b3166b9afd6219015d808745befaeb573b37e32272b7d8c59d",
+    "tasks/monthly-create/oracle/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "tasks/monthly-create/seed/dashboards/evaluation.yaml": "a19d412f48078de5b54608b3aabc87a356c685785d239698d1b6d4ce6d6c9321",
+    "tasks/move-resize/PROMPT.md": "0c2c2cd0936fe2fc81530e45f31c504a06fa24bea3432484ac51dd1219ac96ce",
+    "tasks/move-resize/negatives/wrong-placement/dashboards/evaluation.yaml": "608f8bc46cdf7499c3fbec5adf171dd186049f4ea4af23eee866bd80b29c3ae2",
+    "tasks/move-resize/oracle/dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+    "tasks/move-resize/seed/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "tasks/ranked-chart/PROMPT.md": "879ad35f298cb531949cdadd8a20677d5305d359d7479ede2c745020a5c11b96",
+    "tasks/ranked-chart/negatives/wrong-limit/dashboards/evaluation.yaml": "e1449acc26dd0b88a8f0211d8cd8629df5adca096df390b7775a1c884c83f000",
+    "tasks/ranked-chart/oracle/dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+    "tasks/ranked-chart/seed/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "tasks/records-query/PROMPT.md": "05fbbe0c2a415fc20f6e70295bc1c375e9b667983af2d6cbd25644f5cc2a94ab",
+    "tasks/records-query/negatives/wrong-record-field/dashboards/evaluation.yaml": "26ac04faa058e6ba182f8f63e0d5c3cec41700328fc9567957f9bddf10366792",
+    "tasks/records-query/oracle/dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+    "tasks/records-query/seed/dashboards/evaluation.yaml": "499237d2b952ee278d5d00c9e2ba811caa246fdfdbaf18487295608a8eb715de",
+    "tasks/reordered-definition-edit/PROMPT.md": "5ed411b6e55b8357be410638b769b8fe72ac70d645dd5da265262480a9359680",
+    "tasks/reordered-definition-edit/negatives/wrong-neighbor/dashboards/evaluation.yaml": "f8442f18f7814bcfd5997492efea583db45af506d9028eb8bacb57317991daca",
+    "tasks/reordered-definition-edit/oracle/dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+    "tasks/reordered-definition-edit/seed/dashboards/evaluation.yaml": "12017aaf1375bc0814880e0214d4ceaa9810f82c9790a75bfb4fb16ac9e663e3",
+    "tasks/repair-preserving-neighbors/PROMPT.md": "252a03c6f3e2d4665fe516417a183fd97c21304d302b5110a37368da0924445c",
+    "tasks/repair-preserving-neighbors/negatives/changed-neighbor/dashboards/evaluation.yaml": "961dd6e21a365615210a4ee948527e64fa38cc0f14b0e00f012645b919cb37c6",
+    "tasks/repair-preserving-neighbors/oracle/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "tasks/repair-preserving-neighbors/seed/dashboards/evaluation.yaml": "c72944a579e820c3de30c8956194ec9aff7711fee849443e7d20b26479855d19",
+    "tasks/scoped-dependent-filter/PROMPT.md": "49aebfe7a6c27552ea48f27a4353dae5b8312e7853d1f7f5aee4958004e07164",
+    "tasks/scoped-dependent-filter/negatives/missing-dependency/dashboards/evaluation.yaml": "2ec19595898e8ee0b7bafceff114f577c5cdfc160af42e75ef7c522f0f73daf3",
+    "tasks/scoped-dependent-filter/negatives/wrong-target-scope/dashboards/evaluation.yaml": "1b2c6128a813442467ec48693c405ac4e96aa2fd1b3d754dbb255b506d2fddd5",
+    "tasks/scoped-dependent-filter/oracle/dashboards/evaluation.yaml": "7778f693eda783265754992fb2d3adae0ae38ac9ce9da245f788568eba565077",
+    "tasks/scoped-dependent-filter/seed/dashboards/evaluation.yaml": "409fc7b95b5f7629ad7e7f09427c2c6956b1c2c50977611d993b5b30e734dbb0",
+    "tasks/second-page-reuse/PROMPT.md": "36fdfb72ac92993186a06fc6993a3bd88e494ab89121e2e479a071424d9cd8e4",
+    "tasks/second-page-reuse/negatives/wrong-reference/dashboards/evaluation.yaml": "1dc4fe98189710a17f2a121cda3b6fa1fa04a455aabb68ee98b5a2909421893b",
+    "tasks/second-page-reuse/oracle/dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+    "tasks/second-page-reuse/oracle/dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+    "tasks/second-page-reuse/oracle/dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+    "tasks/second-page-reuse/seed/dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+    "tasks/second-page-reuse/seed/dashboards/pages.yaml": "1ebb90ff3eb568099fb49974d6703c5c8e2f21011605bbc0e216dccbcc83b73a",
+    "tasks/second-page-reuse/seed/dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00"
+  }
+}

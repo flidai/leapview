@@ -1,0 +1,107 @@
+/** Offline experiment controller; no import from product runtime or Playground. */
+import { createHash } from 'node:crypto'
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { join, resolve, dirname } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
+import { parse } from 'yaml'
+import { candidateSchemas, candidateFragmentSchemas, authoringReference, encodeSourceFiles, lowerSourceFiles, type Candidate, type SourceFiles } from './prototypes'
+
+const repo = resolve(import.meta.dir, '../..')
+const corpusPath = join(import.meta.dir, 'manifest.json')
+const corpus = JSON.parse(readFileSync(corpusPath, 'utf8'))
+const candidates: Candidate[] = ['A', 'B', 'C']
+export const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex')
+export function sourceFiles(root: string): SourceFiles {
+  const files: SourceFiles = {}
+  function walk(path: string, prefix: string) {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error('Source symlinks are unsupported')
+      if (entry.isDirectory()) walk(join(path, entry.name), prefix + entry.name + '/')
+      else if (/\.(yaml|yml|json)$/.test(entry.name)) files[prefix + entry.name] = readFileSync(join(path, entry.name), 'utf8')
+    }
+  }
+  walk(root, '')
+  return files
+}
+function writeFiles(root: string, files: SourceFiles) {
+  for (const [path, text] of Object.entries(files)) {
+    const target = join(root, path)
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, text)
+  }
+}
+function goGrade(binary: string, task: string, root: string): any {
+  const child = Bun.spawnSync([binary, '-design-manifest', corpusPath, '-design-task', task, '-design-source', root], { cwd: repo })
+  if (child.exitCode !== 0) throw new Error(child.stderr.toString())
+  return JSON.parse(child.stdout.toString())
+}
+export function qualify(binary: string): any {
+  const records: any[] = []
+  for (const task of corpus.tasks) {
+    const roots = [
+      { kind: 'seed', path: task.seedRoot, compiler: task.seedCompilerValid, intent: false },
+      { kind: 'oracle', path: task.oracleRoot, compiler: true, intent: true },
+      ...task.negatives.map((n: any) => ({ kind: 'negative:' + n.id, path: n.sourceRoot, compiler: true, intent: false })),
+    ]
+    for (const fixture of roots) for (const candidate of candidates) {
+      const original = sourceFiles(join(import.meta.dir, fixture.path))
+      const encoded = encodeSourceFiles(original, candidate)
+      const lowered = lowerSourceFiles(encoded, candidate)
+      if (!isDeepStrictEqual(Object.keys(lowered).sort(), Object.keys(original).sort())) throw new Error('Lowerer changed file set')
+      for (const key of Object.keys(original)) if (!isDeepStrictEqual(parse(original[key]), parse(lowered[key]))) throw new Error('Lowerer changed authored behavior: ' + fixture.path)
+      const root = mkdtempSync('/tmp/dashboard-design-qualification-')
+      try {
+        writeFiles(root, lowered)
+        const result = goGrade(binary, task.id, root)
+        if (!result.parseAndSchema || result.compiler !== fixture.compiler || result.intent !== fixture.intent) throw new Error('Invalid prototype qualification: ' + JSON.stringify(result))
+        records.push({ task: task.id, candidate, fixture: fixture.kind, prototypeAccepted: true, ...result })
+      } finally { rmSync(root, { recursive: true, force: true }) }
+    }
+  }
+  return { kind: 'deterministic-prototype-qualification', agentTrials: 0, corpusSHA256: digest(readFileSync(corpusPath)), binarySHA256: digest(readFileSync(binary)), implementationSHA256: Object.fromEntries(['controller.ts','prototypes.ts','prototypes-cli.ts'].map(path => [path,digest(readFileSync(join(import.meta.dir,path)))])), records, qualified: records.length === 93 }
+}
+
+/** All inputs are constructed and hashed BEFORE the first scored CLI process. */
+export function prepare(root: string, qualification: any): string {
+  if (!qualification.qualified || qualification.agentTrials !== 0 || qualification.records.length !== 93) throw new Error('Require complete prototype qualification first')
+  const frozen: Record<string,string> = {}
+  function write(path: string, bytes: string): string {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, bytes, { flag: 'wx' })
+    frozen[path] = digest(bytes)
+    return path
+  }
+  const support = sourceFiles(join(import.meta.dir, corpus.supportRoot))
+  const supportSpecs = Object.entries(support).map(([name, text]) => ({ source: write(join(root, 'input/support', name), text), destination: 'project/' + name }))
+  const arms = candidates.map(id => ({ id, reference_files: [
+    { source: write(join(root, 'input/reference', id, 'AUTHORING.md'), authoringReference(id)), destination: 'reference/AUTHORING.md' },
+    { source: write(join(root, 'input/reference', id, 'schema.json'), JSON.stringify(candidateSchemas[id], null, 2) + '\n'), destination: 'reference/schema.json' },
+    { source: write(join(root, 'input/reference', id, 'fragments.schema.json'), JSON.stringify(candidateFragmentSchemas[id], null, 2) + '\n'), destination: 'reference/fragments.schema.json' },
+  ] }))
+  const tasks = corpus.tasks.map((task: any) => {
+    const raw = readFileSync(join(import.meta.dir, task.prompt), 'utf8')
+    const prompt = raw.replace('Use the canonical v1 contract and the frozen sales context. This is a fixture definition; no agent submission has been made.', 'Use your assigned contract in reference/AUTHORING.md and reference/schema.json with the frozen sales context under project/. The task describes canonical semantic intent; express it using the assigned syntax.')
+    if (prompt === raw) throw new Error('Unexpected task wording')
+    const policy = '\nWrite the requested YAML files under project/dashboards/. Read only this TASK.md, reference/, and project/ inputs. Do not inspect parent directories, other trials, repository source, or oracles. Do not use MCP, network, compiler, validators, or other agents. Use filesystem reads/edits only. You have one attempt, 240 seconds and at most 12 tool calls; no grading feedback or repair round is available. Finish with a concise description. Every unmentioned authored field and file must retain its semantic value; for second-page-reuse only project/dashboards/pages.yaml may change.\n'
+    const seed_files_by_arm = Object.fromEntries(candidates.map(candidate => [candidate, [...supportSpecs, ...Object.entries(encodeSourceFiles(sourceFiles(join(import.meta.dir, task.seedRoot)), candidate)).map(([name, text]) => ({ source: write(join(root, 'input/seeds', candidate, task.id, name), text), destination: 'project/' + name }))]]))
+    return { id: task.id, prompt_file: write(join(root, 'input/prompts', task.id + '.md'), prompt + policy), seed_files_by_arm, allowed_yaml_files: task.id === 'second-page-reuse' ? ['project/dashboards/pages.yaml'] : Object.keys(sourceFiles(join(import.meta.dir, task.seedRoot))).map(name => 'project/' + name) }
+  })
+  const trials = tasks.flatMap((task: any) => candidates.flatMap(arm => [1, 2, 3].map(replicate => ({ id: task.id + '-' + arm + '-' + replicate, task_id: task.id, arm_id: arm, replicate }))))
+  const qualificationPath = write(join(root, 'prototype-qualification.json'), JSON.stringify(qualification, null, 2) + '\n')
+  const manifest = { version: 1, experiment_id: 'pr938-dashboard-design-20261009', shuffle_seed: 93820261009, tasks, arms, trials, frozen_files: frozen, protocol: {
+    qualified: true, qualification: qualificationPath, qualification_sha256: frozen[qualificationPath], firstAttemptOnly: true, repairBudget: 0, wallSeconds: 240, toolCalls: 12,
+    preservation: 'Candidate C must retain all preexisting local row IDs per page, except move-resize permits structural row regrouping. All arms retain exact unchanged source files for fragment-only edits and semantic values of unmentioned fields.',
+    treatment: 'candidate source form plus matched generated schema and concise mapping reference; no tool-access changes',
+    limits: ['Filesystem access is instruction-bounded, not physically blinded', 'No live in-product LLM or query-data execution', 'Common corpus subset does not qualify complete canonical replacement', 'Three repetitions per task are descriptive, not conclusive population evidence'],
+  } }
+  const path = join(root, 'experiment.json')
+  writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' })
+  return path
+}
+
+if (import.meta.main) {
+  const [mode, binary, outputRoot] = process.argv.slice(2)
+  if (mode !== 'prepare' || !binary || !outputRoot) throw new Error('Usage: bun controller.ts prepare <Go grader binary> <new experiment root>')
+  const report = qualify(resolve(binary))
+  console.log(prepare(resolve(outputRoot), report))
+}

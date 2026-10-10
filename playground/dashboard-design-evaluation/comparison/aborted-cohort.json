@@ -1,0 +1,142 @@
+{
+  "kind": "aborted-infrastructure-cohort",
+  "plannedDenominator": 90,
+  "attemptsStarted": 11,
+  "outcomesPreserved": 11,
+  "reason": "Runner classified normal post-turn CLI teardown as continued_after_terminal. Entire cohort stopped; no outcomes reused in replacement comparison.",
+  "primaryComparisonIncluded": false,
+  "outcomes": [
+    {
+      "trial": {
+        "arm_id": "C",
+        "id": "reordered-definition-edit-C-3",
+        "replicate": 3,
+        "task_id": "reordered-definition-edit"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f12-7450-7900-9ba9-5055abd1acd6",
+      "tool_calls": 4
+    },
+    {
+      "trial": {
+        "arm_id": "A",
+        "id": "move-resize-A-2",
+        "replicate": 2,
+        "task_id": "move-resize"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f12-640c-7341-a789-0e3bf7c05c19",
+      "tool_calls": 4
+    },
+    {
+      "trial": {
+        "arm_id": "A",
+        "id": "monthly-create-A-2",
+        "replicate": 2,
+        "task_id": "monthly-create"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f12-2c75-7dc3-b812-4fb631e44acf",
+      "tool_calls": 5
+    },
+    {
+      "trial": {
+        "arm_id": "B",
+        "id": "move-resize-B-1",
+        "replicate": 1,
+        "task_id": "move-resize"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f12-1639-76e1-82bb-80f1e5938bc0",
+      "tool_calls": 4
+    },
+    {
+      "trial": {
+        "arm_id": "B",
+        "id": "second-page-reuse-B-3",
+        "replicate": 3,
+        "task_id": "second-page-reuse"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f11-fe80-78b3-b921-62f6bf571fe5",
+      "tool_calls": 4
+    },
+    {
+      "trial": {
+        "arm_id": "B",
+        "id": "reordered-definition-edit-B-2",
+        "replicate": 2,
+        "task_id": "reordered-definition-edit"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f11-bb71-7793-a342-0eb9f67efc6e",
+      "tool_calls": 3
+    },
+    {
+      "trial": {
+        "arm_id": "A",
+        "id": "ranked-chart-A-1",
+        "replicate": 1,
+        "task_id": "ranked-chart"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f11-b680-78e2-bac5-245afdd5499a",
+      "tool_calls": 5
+    },
+    {
+      "trial": {
+        "arm_id": "A",
+        "id": "ranked-chart-A-3",
+        "replicate": 3,
+        "task_id": "ranked-chart"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f11-ab63-7891-bc71-616921cd5db0",
+      "tool_calls": 5
+    },
+    {
+      "trial": {
+        "arm_id": "A",
+        "id": "repair-preserving-neighbors-A-1",
+        "replicate": 1,
+        "task_id": "repair-preserving-neighbors"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f11-62f3-78c1-8a13-fa0b5cabbf2e",
+      "tool_calls": 4
+    },
+    {
+      "trial": {
+        "arm_id": "B",
+        "id": "reordered-definition-edit-B-1",
+        "replicate": 1,
+        "task_id": "reordered-definition-edit"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f11-62f3-7a20-baf7-ab72846c2aa0",
+      "tool_calls": 4
+    },
+    {
+      "trial": {
+        "arm_id": "C",
+        "id": "move-resize-C-2",
+        "replicate": 2,
+        "task_id": "move-resize"
+      },
+      "complete": false,
+      "failure": "continued_after_terminal",
+      "thread_id": "01a11f11-62f3-77e1-a94c-b110891d0e7e",
+      "tool_calls": 3
+    }
+  ]
+}

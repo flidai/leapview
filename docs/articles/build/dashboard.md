@@ -46,7 +46,10 @@ spec:
       type: area
       query:
         type: aggregate
-        dimensions: [purchase_month]
+        dimensions:
+          - dimension: purchase_date
+            grain: month
+            alias: purchase_month
         metrics: [revenue]
         sort:
           - field: purchase_month
@@ -82,7 +85,7 @@ The visual definition owns the semantic query and presentation. The page entry r
 
 ### Design the query result
 
-Dimension and metric selections are ordered sequences of semantic members. The names delivered to a result frame are the member names unless an explicit typed alias is used. Sort fields address those result names, never source expressions.
+Dimension and metric selections are ordered sequences of semantic members. The names delivered to a result frame are the member names unless an explicit typed alias is used. For a monthly time series, select the real semantic time dimension with `grain: month`; `alias` names that grouped result for sorting and presentation. In the bundled sales model, `purchase_date` is the dimension and `purchase_month` is the result alias. Sort fields address those result names, never source expressions.
 
 Every chart query should have a bounded limit and deterministic sort. For time series, sort the time field ascending. For ranked bars, sort the value descending and choose a limit readers can scan. Do not rely on database default order.
 
@@ -134,6 +137,16 @@ visuals:
 ### Add filters after the base query works
 
 Define filters against semantic fields and place typed filter components on the page. Exercise each filter independently before combining several. Use stable URL parameters when users should share filtered links.
+
+## Authoring with an agent
+
+Give the agent the generated Dashboard contract and the authorized semantic catalog. Use the catalog's member names; a result alias does not create a new semantic dimension. Keep the query kind explicit, and validate the whole resource after editing.
+
+Target visual, page and component IDs when making changes. Titles can repeat and definition order can change. A visual reused on two pages has one query definition, so changing that definition affects both placements. Move a page component by editing its placement rather than copying its query.
+
+Omitting `spec.layout` uses the default 12-column grid, row height 48, gap 16 and padding 16. An explicit layout must supply all four fields. Page layout overrides inherit omitted fields. Keep page and component order intentional because it controls compact reading order; query dimension order can also carry visual meaning.
+
+Schema acceptance checks document structure. Full project validation also resolves semantic members and checks relationships between definitions. A saved draft or an isolated visual preview can still need repair. Check complete validation and representative query results before publication.
 
 ## Validate the dashboard
 

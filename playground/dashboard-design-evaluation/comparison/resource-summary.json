@@ -1,0 +1,615 @@
+{
+  "formatVersion": 1,
+  "kind": "descriptive-resource-summary",
+  "denominator": 90,
+  "qualificationCases": 93,
+  "queryExecutionScored": false,
+  "repairBudget": 0,
+  "arms": {
+    "A": {
+      "attempts": 30,
+      "successes": 30,
+      "referenceBundleBytes": 471463,
+      "metrics": {
+        "elapsedSeconds": {
+          "sum": 742.7306110546924,
+          "mean": 24.757687035156415,
+          "median": 20.81454083835706,
+          "minimum": 14.151054719928652,
+          "maximum": 45.330391951836646,
+          "sampleStddev": 8.337298141086897
+        },
+        "toolCalls": {
+          "sum": 134,
+          "mean": 4.466666666666667,
+          "median": 4.0,
+          "minimum": 3,
+          "maximum": 8,
+          "sampleStddev": 1.3321834121764768
+        },
+        "inputTokens": {
+          "sum": 3783606,
+          "mean": 126120.2,
+          "median": 112350.5,
+          "minimum": 94729,
+          "maximum": 191466,
+          "sampleStddev": 32223.758513203287
+        },
+        "cachedInputTokens": {
+          "sum": 3175808,
+          "mean": 105860.26666666666,
+          "median": 94336.0,
+          "minimum": 64768,
+          "maximum": 170752,
+          "sampleStddev": 30910.18797668534
+        },
+        "uncachedInputTokens": {
+          "sum": 607798,
+          "mean": 20259.933333333334,
+          "median": 19833.0,
+          "minimum": 15686,
+          "maximum": 33395,
+          "sampleStddev": 4362.556202055391
+        },
+        "outputTokens": {
+          "sum": 15646,
+          "mean": 521.5333333333333,
+          "median": 417.5,
+          "minimum": 305,
+          "maximum": 1234,
+          "sampleStddev": 243.27332908413564
+        },
+        "sourceBytes": {
+          "sum": 45954,
+          "mean": 1531.8,
+          "median": 1392.5,
+          "minimum": 1208,
+          "maximum": 2312,
+          "sampleStddev": 368.62843642064706
+        },
+        "editedByteSpan": {
+          "sum": 20139,
+          "mean": 671.3,
+          "median": 268.5,
+          "minimum": 31,
+          "maximum": 2819,
+          "sampleStddev": 821.909515533272
+        }
+      }
+    },
+    "B": {
+      "attempts": 30,
+      "successes": 30,
+      "referenceBundleBytes": 600973,
+      "metrics": {
+        "elapsedSeconds": {
+          "sum": 691.8437853022479,
+          "mean": 23.06145951007493,
+          "median": 21.306391707388684,
+          "minimum": 16.06981811579317,
+          "maximum": 35.54603205109015,
+          "sampleStddev": 5.731879187845283
+        },
+        "toolCalls": {
+          "sum": 120,
+          "mean": 4,
+          "median": 4.0,
+          "minimum": 3,
+          "maximum": 7,
+          "sampleStddev": 1.1141720290623112
+        },
+        "inputTokens": {
+          "sum": 3439688,
+          "mean": 114656.26666666666,
+          "median": 107728.0,
+          "minimum": 96137,
+          "maximum": 179801,
+          "sampleStddev": 20827.705607962536
+        },
+        "cachedInputTokens": {
+          "sum": 2843520,
+          "mean": 94784,
+          "median": 87104.0,
+          "minimum": 66816,
+          "maximum": 159232,
+          "sampleStddev": 20578.404964830286
+        },
+        "uncachedInputTokens": {
+          "sum": 596168,
+          "mean": 19872.266666666666,
+          "median": 18913.0,
+          "minimum": 15218,
+          "maximum": 36848,
+          "sampleStddev": 4157.694461691673
+        },
+        "outputTokens": {
+          "sum": 14567,
+          "mean": 485.56666666666666,
+          "median": 407.0,
+          "minimum": 270,
+          "maximum": 949,
+          "sampleStddev": 208.67078233978722
+        },
+        "sourceBytes": {
+          "sum": 50448,
+          "mean": 1681.6,
+          "median": 1544.5,
+          "minimum": 1312,
+          "maximum": 2598,
+          "sampleStddev": 420.6881554523862
+        },
+        "editedByteSpan": {
+          "sum": 22320,
+          "mean": 744,
+          "median": 373.5,
+          "minimum": 31,
+          "maximum": 3139,
+          "sampleStddev": 913.7253416645508
+        }
+      }
+    },
+    "C": {
+      "attempts": 30,
+      "successes": 30,
+      "referenceBundleBytes": 475446,
+      "metrics": {
+        "elapsedSeconds": {
+          "sum": 719.4106368161738,
+          "mean": 23.980354560539126,
+          "median": 21.025851778918877,
+          "minimum": 15.32356446608901,
+          "maximum": 45.799984832294285,
+          "sampleStddev": 8.049487570571179
+        },
+        "toolCalls": {
+          "sum": 121,
+          "mean": 4.033333333333333,
+          "median": 4.0,
+          "minimum": 3,
+          "maximum": 7,
+          "sampleStddev": 0.9994251221140299
+        },
+        "inputTokens": {
+          "sum": 3593979,
+          "mean": 119799.3,
+          "median": 114858.5,
+          "minimum": 94252,
+          "maximum": 208578,
+          "sampleStddev": 27104.22786736798
+        },
+        "cachedInputTokens": {
+          "sum": 2980864,
+          "mean": 99362.13333333333,
+          "median": 91712.0,
+          "minimum": 64768,
+          "maximum": 187008,
+          "sampleStddev": 26407.1365846867
+        },
+        "uncachedInputTokens": {
+          "sum": 613115,
+          "mean": 20437.166666666668,
+          "median": 18550.0,
+          "minimum": 15338,
+          "maximum": 38516,
+          "sampleStddev": 5415.414748871858
+        },
+        "outputTokens": {
+          "sum": 15070,
+          "mean": 502.3333333333333,
+          "median": 374.5,
+          "minimum": 267,
+          "maximum": 1163,
+          "sampleStddev": 246.1043139267033
+        },
+        "sourceBytes": {
+          "sum": 55291,
+          "mean": 1843.0333333333333,
+          "median": 1681.0,
+          "minimum": 1381,
+          "maximum": 2826,
+          "sampleStddev": 459.75116833088003
+        },
+        "editedByteSpan": {
+          "sum": 24819,
+          "mean": 827.3,
+          "median": 335.5,
+          "minimum": 31,
+          "maximum": 3468,
+          "sampleStddev": 1004.4809313169217
+        }
+      }
+    }
+  },
+  "pairedDifferences": {
+    "B_minus_A": {
+      "elapsedSeconds": {
+        "pairs": 30,
+        "meanDifference": -1.6962275250814856,
+        "medianDifference": -1.9114573004189879,
+        "lower": 18,
+        "equal": 0,
+        "higher": 12,
+        "sampleStddev": 6.5108709698677005
+      },
+      "toolCalls": {
+        "pairs": 30,
+        "meanDifference": -0.4666666666666667,
+        "medianDifference": -1.0,
+        "lower": 16,
+        "equal": 6,
+        "higher": 8,
+        "sampleStddev": 1.5477087254553341
+      },
+      "inputTokens": {
+        "pairs": 30,
+        "meanDifference": -11463.933333333332,
+        "medianDifference": -5689.0,
+        "lower": 19,
+        "equal": 0,
+        "higher": 11,
+        "sampleStddev": 25005.64471023918
+      },
+      "cachedInputTokens": {
+        "pairs": 30,
+        "meanDifference": -11076.266666666666,
+        "medianDifference": -3776.0,
+        "lower": 18,
+        "equal": 0,
+        "higher": 12,
+        "sampleStddev": 25200.384078809995
+      },
+      "uncachedInputTokens": {
+        "pairs": 30,
+        "meanDifference": -387.6666666666667,
+        "medianDifference": -170.5,
+        "lower": 17,
+        "equal": 0,
+        "higher": 13,
+        "sampleStddev": 6099.396755549617
+      },
+      "outputTokens": {
+        "pairs": 30,
+        "meanDifference": -35.96666666666667,
+        "medianDifference": -37.5,
+        "lower": 21,
+        "equal": 0,
+        "higher": 9,
+        "sampleStddev": 99.85730623842906
+      },
+      "sourceBytes": {
+        "pairs": 30,
+        "meanDifference": 149.8,
+        "medianDifference": 141.5,
+        "lower": 0,
+        "equal": 0,
+        "higher": 30,
+        "sampleStddev": 55.02626332191215
+      },
+      "editedByteSpan": {
+        "pairs": 30,
+        "meanDifference": 72.7,
+        "medianDifference": 51.0,
+        "lower": 3,
+        "equal": 3,
+        "higher": 24,
+        "sampleStddev": 120.12756151059905
+      }
+    },
+    "C_minus_A": {
+      "elapsedSeconds": {
+        "pairs": 30,
+        "meanDifference": -0.7773324746172875,
+        "medianDifference": -0.3014444096479565,
+        "lower": 15,
+        "equal": 0,
+        "higher": 15,
+        "sampleStddev": 7.709472866615668
+      },
+      "toolCalls": {
+        "pairs": 30,
+        "meanDifference": -0.43333333333333335,
+        "medianDifference": 0.0,
+        "lower": 12,
+        "equal": 12,
+        "higher": 6,
+        "sampleStddev": 1.4307782626184986
+      },
+      "inputTokens": {
+        "pairs": 30,
+        "meanDifference": -6320.9,
+        "medianDifference": -87.5,
+        "lower": 15,
+        "equal": 0,
+        "higher": 15,
+        "sampleStddev": 30217.786645422526
+      },
+      "cachedInputTokens": {
+        "pairs": 30,
+        "meanDifference": -6498.133333333333,
+        "medianDifference": -1152.0,
+        "lower": 15,
+        "equal": 0,
+        "higher": 15,
+        "sampleStddev": 29840.252411492922
+      },
+      "uncachedInputTokens": {
+        "pairs": 30,
+        "meanDifference": 177.23333333333332,
+        "medianDifference": -136.5,
+        "lower": 16,
+        "equal": 0,
+        "higher": 14,
+        "sampleStddev": 6123.921803388984
+      },
+      "outputTokens": {
+        "pairs": 30,
+        "meanDifference": -19.2,
+        "medianDifference": -7.0,
+        "lower": 17,
+        "equal": 0,
+        "higher": 13,
+        "sampleStddev": 97.31194065017637
+      },
+      "sourceBytes": {
+        "pairs": 30,
+        "meanDifference": 311.23333333333335,
+        "medianDifference": 298.5,
+        "lower": 0,
+        "equal": 0,
+        "higher": 30,
+        "sampleStddev": 94.70669179769911
+      },
+      "editedByteSpan": {
+        "pairs": 30,
+        "meanDifference": 156,
+        "medianDifference": 75.5,
+        "lower": 0,
+        "equal": 3,
+        "higher": 27,
+        "sampleStddev": 189.6959454604603
+      }
+    }
+  },
+  "taskMatrix": [
+    {
+      "task": "monthly-create",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 34.509362729421504,
+          "outputTokensSum": 2442
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 31.86569355862836,
+          "outputTokensSum": 2545
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 32.129254653428994,
+          "outputTokensSum": 2635
+        }
+      }
+    },
+    {
+      "task": "ranked-chart",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 30.10080337524414,
+          "outputTokensSum": 1819
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 27.26740595124041,
+          "outputTokensSum": 1799
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 27.326918365123372,
+          "outputTokensSum": 1984
+        }
+      }
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 20.934736092574894,
+          "outputTokensSum": 1062
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 19.10685566579923,
+          "outputTokensSum": 1039
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 23.45507035466532,
+          "outputTokensSum": 1142
+        }
+      }
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 36.35875268653035,
+          "outputTokensSum": 3226
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 29.30477330725019,
+          "outputTokensSum": 2577
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 38.351402320122965,
+          "outputTokensSum": 2978
+        }
+      }
+    },
+    {
+      "task": "second-page-reuse",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 23.62771239861225,
+          "outputTokensSum": 1424
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 25.49267715914175,
+          "outputTokensSum": 1130
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 24.003673522733152,
+          "outputTokensSum": 1092
+        }
+      }
+    },
+    {
+      "task": "move-resize",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 19.44699961661051,
+          "outputTokensSum": 1398
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 18.875497640110552,
+          "outputTokensSum": 1390
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 18.24586387972037,
+          "outputTokensSum": 1150
+        }
+      }
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 27.408547333596896,
+          "outputTokensSum": 1156
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 20.928518982914586,
+          "outputTokensSum": 1085
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 21.87683232423539,
+          "outputTokensSum": 1199
+        }
+      }
+    },
+    {
+      "task": "combo-bindings",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 18.732383730976533,
+          "outputTokensSum": 1116
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 19.688045242646087,
+          "outputTokensSum": 1092
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 17.230528527870774,
+          "outputTokensSum": 1057
+        }
+      }
+    },
+    {
+      "task": "records-query",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 15.408761234022677,
+          "outputTokensSum": 961
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 19.943726970348507,
+          "outputTokensSum": 1030
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 19.929459133030225,
+          "outputTokensSum": 953
+        }
+      }
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidates": {
+        "A": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 21.048811153974384,
+          "outputTokensSum": 1042
+        },
+        "B": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 18.141400622669607,
+          "outputTokensSum": 880
+        },
+        "C": {
+          "attempts": 3,
+          "successes": 3,
+          "meanElapsedSeconds": 17.254542524460703,
+          "outputTokensSum": 880
+        }
+      }
+    }
+  ],
+  "editedByteSpanDefinition": "For each seeded dashboard file remove the common byte prefix, then the common suffix without crossing that prefix. Add the remaining old and new byte lengths; sum across seeded files. This is not minimum edit distance, keystrokes or semantic edit count.",
+  "resourceLimits": [
+    "Input tokens include cached input tokens",
+    "Resource sums are per-attempt totals, not whole-experiment wall time",
+    "Task/replicate labels pair descriptive contrasts, not identical stochastic trajectories",
+    "No confidence interval, significance test or population superiority is claimed"
+  ],
+  "gradedReport": "graded-results-final.json",
+  "gradedReportSHA256": "c5b93e09842a73d269ab97041fe20d17703928a86b4ed927d3bc461407271df2",
+  "resourceValuesUnchangedByFinalRegrade": true
+}
