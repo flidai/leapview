@@ -10,6 +10,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Mask ambient registry credentials before Docker diagnostics
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: python3 scripts/mask_ci_docker_credentials.py
+
     - name: Configure Docker mirror and pinned test images before starting containers
       if: runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash

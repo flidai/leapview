@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 import struct
 import subprocess
 from pathlib import Path
@@ -11,7 +12,10 @@ from pathlib import Path
 def check_elf(data, arch):
     if len(data) < 64 or data[:7] != b'\x7fELF\x02\x01\x01':
         raise ValueError('controller must be a little-endian ELF64 executable')
-    if b'/nix/store/' in data:
+    # A namespace prefix used to validate operator input is not a runtime
+    # dependency. Reject embedded store objects, whose names begin with the
+    # 32-character store hash, including data paths that need no ELF loader.
+    if re.search(rb'/nix/store/[0-9a-z]{32}-', data):
         raise ValueError('controller contains a Nix store runtime path')
     header = struct.unpack_from('<HHIQQQIHHHHHH', data, 16)
     kind, machine, version = header[:3]

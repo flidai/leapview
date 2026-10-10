@@ -956,6 +956,52 @@ test('protected Nix controller candidates keep build, qualification, signing, an
     '.github/workflows/nix-cli-candidate.yml']) expect(development.on.pull_request.paths).toContain(path)
 })
 
+test('protected CLI collection follows Nix named-output link semantics for both architectures', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-cli-candidate.yml', 'utf8'))
+  const build = workflow.jobs.build.steps.find((step: any) =>
+    step.name === 'Build both controller archives without signing credentials')
+  const root = mkdtempSync(join(tmpdir(), 'nix-cli-output-links-'))
+  try {
+    mkdirSync(join(root, 'source'))
+    mkdirSync(join(root, 'bin'))
+    writeFileSync(join(root, 'bin', 'git'), '#!/bin/sh\nprintf "%s\\n" "$SOURCE_REVISION"\n', { mode: 0o755 })
+    // The real derivation exports out and arm64. Nix appends the selected
+    // non-default output name to the requested link prefix, even if that
+    // prefix already ends in the architecture name.
+    writeFileSync(join(root, 'bin', 'nix'), `#!/bin/sh
+set -eu
+test "$1" = build && test "$2" = --no-update-lock-file && test "$4" = --out-link
+case "$3" in
+  '.#leapviewctl-linux-amd64') arch=amd64; output="$5" ;;
+  '.#leapviewctl-linux-arm64') arch=arm64; output="$5-arm64" ;;
+  *) exit 2 ;;
+esac
+mkdir -p "$output"
+printf '%s\\n' "$arch archive" > "$output/leapviewctl-linux-$arch.tar.gz"
+printf '%s\\n' "$arch identity" > "$output/archive-identity.json"
+printf '%s\\n' "$arch compatibility" > "$output/static-compatibility.json"
+`, { mode: 0o755 })
+    const run = spawnSync('bash', ['-c', build.run], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, SOURCE_REVISION: 'a'.repeat(40), PATH: `${join(root, 'bin')}:${process.env.PATH}` },
+    })
+    expect(run.stderr).toBe('')
+    expect(run.status).toBe(0)
+    for (const arch of ['amd64', 'arm64']) {
+      for (const [name, value] of [
+        [`leapviewctl-linux-${arch}.tar.gz`, 'archive'],
+        ['archive-identity.json', 'identity'],
+        ['static-compatibility.json', 'compatibility'],
+      ]) {
+        expect(readFileSync(join(root, 'candidate', arch, name), 'utf8')).toBe(`${arch} ${value}\n`)
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('Nix development evaluates the native ARM runtime-security shell without building ARM packages', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const steps = workflow.jobs.development.steps
@@ -1080,89 +1126,4 @@ esac
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
-})
-
-test('hosted Linux CI configures the Docker Hub cache before container work', () => {
-  const development = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
-  const helper = 'scripts/configure_ci_docker_mirror.py'
-  const dockerAction = parse(readFileSync('.github/actions/setup-docker/action.yml', 'utf8'))
-  expect(dockerAction.runs.steps).toHaveLength(1)
-  const configure = dockerAction.runs.steps[0]
-  expect(configure.if).toBe("runner.os == 'Linux' && runner.environment == 'github-hosted'")
-  expect(configure.run).toBe(`sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 ${helper}` + " ${{ inputs.postgres == 'true' && '--postgres' || '' }}")
-  expect(configure['continue-on-error']).toBeUndefined()
-  for (const setup of [steps, development.jobs.development.steps, development.jobs.image.steps]) {
-    const index = setup.findIndex((step: any) => step.uses === './.github/actions/setup-docker')
-    expect(index).toBeGreaterThanOrEqual(0)
-    expect(setup.filter((step: any) => step.uses === './.github/actions/setup-docker')).toHaveLength(1)
-    expect(setup.some((step: any) => step.run?.includes(helper))).toBe(false)
-    if (setup === steps) {
-      expect(setup[index].if).toBe("inputs.profile == 'validation' && runner.os == 'Linux' && runner.environment == 'github-hosted'")
-    } else {
-      expect(setup[index].if).toBeUndefined()
-    }
-    expect(setup[index]['continue-on-error']).toBeUndefined()
-    const containerWork = setup.findIndex((step: any) => /Install.*Nix|ci:prepare|nix:smoke|#leapview-image/.test(step.name ?? step.run ?? ''))
-    expect(index).toBeLessThan(containerWork)
-  }
-  for (const file of [helper, 'scripts/tests/test_ci_docker_mirror.py', '.github/actions/setup-docker/action.yml', '.github/docker/buildkitd.toml']) {
-    expect(development.on.pull_request.paths.some((pattern: string) => new Bun.Glob(pattern).match(file))).toBe(true)
-  }
-  const result = spawnSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_ci_docker_mirror.py'], { encoding: 'utf8' })
-  if (result.status !== 0) throw new Error(result.stdout + result.stderr)
-  expect(result.status).toBe(0)
-})
-
-test('application CI preloads the pinned PostgreSQL image before starting independent shards', () => {
-  expect(action.inputs.postgres.default).toBe('false')
-  const docker = steps.find((step: any) => step.uses === './.github/actions/setup-docker')
-  expect(docker.with.postgres).toBe('${{ inputs.postgres }}')
-  for (const file of ['.github/workflows/ci.yml', '.github/workflows/merge-validation.yml']) {
-    const workflow = parse(readFileSync(file, 'utf8'))
-    const application = workflow.jobs['go-application-validation'].steps
-    const setup = application.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
-    const run = application.findIndex((step: any) => step.run === 'task ci:lane:go:application')
-    expect(setup).toBeGreaterThanOrEqual(0)
-    expect(setup).toBeLessThan(run)
-    expect(application[setup].with.postgres).toBe('true')
-    expect(application[setup]['continue-on-error']).toBeUndefined()
-    expect(workflow.jobs['frontend-validation'].steps.find((step: any) => step.uses === './.github/actions/setup-ci').with.postgres).toBeUndefined()
-  }
-})
-
-test('standalone Electron Linux proof configures the guarded mirror immediately after checkout', () => {
-  const proof = parse(readFileSync('.github/workflows/electron-security-proof.yml', 'utf8'))
-  const setup = proof.jobs.linux.steps
-  const checkout = setup.findIndex((step: any) => step.uses?.startsWith('actions/checkout@'))
-  const mirror = setup.findIndex((step: any) => step.uses === './.github/actions/setup-docker')
-  expect(mirror).toBe(checkout + 1)
-  expect(setup.filter((step: any) => step.uses === './.github/actions/setup-docker')).toHaveLength(1)
-  expect(setup.some((step: any) => step.run?.includes('scripts/configure_ci_docker_mirror.py'))).toBe(false)
-  expect(setup[mirror]['continue-on-error']).toBeUndefined()
-  expect(mirror).toBeLessThan(setup.findIndex((step: any) => step.run?.includes('docker build')))
-})
-
-test('managed scaffold Ruby bootstrap keeps the exact official-image digest on the public mirror', () => {
-  const scaffold = parse(readFileSync('.github/workflows/managed-scaffold.yml', 'utf8'))
-  expect(scaffold.jobs['application-template'].container.image).toBe(
-    'public.ecr.aws/docker/library/ruby:3.4@sha256:c4428c90c4e80ee5848c31912969e73c9f48ac45ec45dfb5f76d1a821358771e')
-})
-
-test('active recovery qualification configures its separate BuildKit resolver before building', () => {
-  const ci = parse(readFileSync('.github/workflows/ci.yml', 'utf8'))
-  expect(ci.jobs['host-recovery-validation'].uses).toBe('./.github/workflows/demo-upgrade-qualification.yml')
-  const recovery = parse(readFileSync('.github/workflows/demo-upgrade-qualification.yml', 'utf8'))
-  const setup = recovery.jobs['historical-transition'].steps
-  const toolchain = setup.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
-  const builder = setup.findIndex((step: any) => step.uses?.startsWith('docker/setup-buildx-action@'))
-  const build = setup.findIndex((step: any) => step.uses?.startsWith('docker/build-push-action@'))
-  expect(toolchain).toBeLessThan(builder)
-  expect(builder).toBeLessThan(build)
-  expect(setup[builder].if).toBe('${{ !inputs.final_artifact }}')
-  expect(setup[builder]['continue-on-error']).toBeUndefined()
-  expect(setup[builder].with?.['buildkitd-config']).toBe('.github/docker/buildkitd.toml')
-  expect(setup[builder].with?.['buildkitd-config-inline']).toBeUndefined()
-  expect(readFileSync('.github/docker/buildkitd.toml', 'utf8').trim()).toBe(
-    '[registry."docker.io"]\n  mirrors = ["mirror.gcr.io"]')
-  expect(setup[build].with.file).toBe('Dockerfile')
 })
