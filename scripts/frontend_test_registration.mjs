@@ -141,7 +141,8 @@ export function bunRunTestScripts(command) {
 export function testPathPatterns(command) {
   const patterns = []
   for (const segment of shellCommandSegments(renderTaskTemplate(command, {}))) {
-    const invocation = stripEnvironment(segment).match(/^bun\s+test\b([\s\S]*)$/)
+    // This known wrapper executes the command after -- without changing test selection.
+    const invocation = stripEnvironment(segment).match(/^(?:node\s+scripts\/browser_test_diagnostics\.mjs\s+--\s+)?bun\s+test\b([\s\S]*)$/)
     if (!invocation) continue
     patterns.push(...[...invocation[1].matchAll(/web\/components\/[A-Za-z0-9_./*?{}-]+\.test\.ts/g)].map((path) => path[0]))
   }
