@@ -95,5 +95,37 @@ class ExcelLibraryProofTests(unittest.TestCase):
             self.check()
 
 
+class ExcelLoaderProofTests(unittest.TestCase):
+    def setUp(self):
+        self.policy = json.loads((Path(__file__).resolve().parents[2] / 'nix/excel-source-lock.json').read_text())
+        self.files = {
+            'excel-link.json': json.dumps({name: {'archive': '/store/excel-libs/' + name, 'sha256': 'a' * 64} for name in excel.ARCHIVES}).encode(),
+            'http-link.json': json.dumps({'lib/libz.a': {'archive': '/store/zlib/lib/libz.a', 'sha256': 'b' * 64}}).encode(),
+        }
+        self.cache = 'EXPAT_LIBRARY:FILEPATH=/store/excel-libs/lib/libexpat.a\nMINIZIP_LIBRARY:FILEPATH=/store/excel-libs/lib/libminizip-ng.a\nZLIB_LIBRARY_RELEASE:FILEPATH=/store/zlib/lib/libz.a\n'
+        self.selection = 'duckdb_extension_load(excel SOURCE_DIR /store/excel INCLUDE_DIR /store/excel/src/excel/include EXTENSION_VERSION ' + self.policy['wrapper']['revision'] + ')'
+        self.commands = [{'file': '/store/excel/' + name, 'command': 'c++ -c source.cpp'} for name in ('src/excel/excel_extension.cpp', 'src/excel/xlsx/zip_file.cpp', 'src/excel/numformat/nf_zformat.cpp')]
+        self.commands.append({'file': '/build/generated_extension_loader.cpp', 'command': 'c++ -I/store/excel/src/excel/include -c generated_extension_loader.cpp'})
+
+    def check(self):
+        excel.check_engine(Path('/evidence'), self.policy, self.cache, self.commands, self.selection, lambda p: self.files[p.name])
+
+    def test_accepts_real_excel_header_directory(self):
+        self.check()
+
+    def test_rejects_default_or_substituted_header_directory(self):
+        original = self.selection
+        for include in ('', ' INCLUDE_DIR /store/excel/src/include', ' INCLUDE_DIR /store/other/src/excel/include'):
+            with self.subTest(include=include):
+                self.selection = original.replace(' INCLUDE_DIR /store/excel/src/excel/include', include)
+                with self.assertRaisesRegex(ValueError, 'Excel loader header'):
+                    self.check()
+
+    def test_rejects_loader_compiled_without_selected_header_directory(self):
+        self.commands[-1]['command'] = 'c++ -I/store/excel/src/include -c generated_extension_loader.cpp'
+        with self.assertRaisesRegex(ValueError, 'Excel loader header'):
+            self.check()
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -85,7 +85,12 @@ def check_engine(evidence, policy, cache, commands, selection, read):
     http = decode(read(evidence / 'http-link.json'))
     if not re.search(r'^ZLIB_LIBRARY_RELEASE:[^=]+=' + re.escape(http['lib/libz.a']['archive']) + r'$', cache, re.M):
         raise ValueError('Excel CMake shared zlib selection differs')
-    selected = re.search(r'duckdb_extension_load\(excel SOURCE_DIR ([^\s()]+) EXTENSION_VERSION ' + policy['wrapper']['revision'] + r'\)', selection)
+    selected = re.search(r'duckdb_extension_load\(excel SOURCE_DIR ([^\s()]+) INCLUDE_DIR ([^\s()]+) EXTENSION_VERSION ' + policy['wrapper']['revision'] + r'\)', selection)
+    if not selected or selected[2] != selected[1] + '/src/excel/include':
+        raise ValueError('Excel loader header directory differs')
+    if not any(Path(c.get('file', '')).name == 'generated_extension_loader.cpp' and
+               '-I' + selected[2] in shlex.split(c.get('command', '')) for c in commands):
+        raise ValueError('Excel loader header directory missing from compilation')
     for name in ('src/excel/excel_extension.cpp', 'src/excel/xlsx/zip_file.cpp', 'src/excel/numformat/nf_zformat.cpp'):
         if not selected or not any(c.get('file') == selected[1] + '/' + name for c in commands):
             raise ValueError('compiled Excel wrapper selection missing: ' + name)

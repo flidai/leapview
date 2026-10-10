@@ -364,8 +364,9 @@ class BuildReceipts(unittest.TestCase):
         receipt.write(evidence / 'excel-link.json', {name: {'archive': str(excel / name), 'sha256': receipt.digest(excel / name)} for name in receipt.excel.ARCHIVES})
         cache.write_text(cache.read_text() + ''.join(macro + ':FILEPATH=' + str(excel / name) + '\n' for name, macro in (('lib/libexpat.a', 'EXPAT_LIBRARY'), ('lib/libminizip-ng.a', 'MINIZIP_LIBRARY'))))
         cache.write_text(cache.read_text() + 'ZLIB_LIBRARY_RELEASE:FILEPATH=' + str(http / 'lib/libz.a') + '\n')
-        selection.write_text(selection.read_text() + 'duckdb_extension_load(excel SOURCE_DIR /store/excel EXTENSION_VERSION ' + receipt.sources(REPO, 'excel')['wrapper']['revision'] + ')\n')
+        selection.write_text(selection.read_text() + 'duckdb_extension_load(excel SOURCE_DIR /store/excel INCLUDE_DIR /store/excel/src/excel/include EXTENSION_VERSION ' + receipt.sources(REPO, 'excel')['wrapper']['revision'] + ')\n')
         commands += [{'file': '/store/excel/' + name, 'command': 'c++ -c source.cpp'} for name in ('src/excel/excel_extension.cpp', 'src/excel/xlsx/zip_file.cpp', 'src/excel/numformat/nf_zformat.cpp')]
+        commands.append({'file': '/build/generated_extension_loader.cpp', 'command': 'c++ -I/store/excel/src/excel/include -c generated_extension_loader.cpp'})
         receipt.write(evidence / 'compile-commands.json', commands)
         receipt.write(evidence / 'http-link.json', {name: {'archive': str(http / name), 'sha256': receipt.digest(http / name)} for name in receipt.HTTP_ARCHIVES})
         receipt.write(evidence / 'database-link.json', {name: {'archive': str(database / name), 'sha256': receipt.digest(database / name)} for name in receipt.database.ARCHIVES})

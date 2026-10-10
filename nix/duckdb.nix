@@ -26,7 +26,7 @@ let
     duckdb_extension_load(mysql_scanner SOURCE_DIR ${database.mysql.source} EXTENSION_VERSION ${database.mysql.revision})
     duckdb_extension_load(httpfs SOURCE_DIR ${http.httpfs.source} EXTENSION_VERSION ${http.httpfs.revision})
     duckdb_extension_load(quack SOURCE_DIR ${http.quack.source} EXTENSION_VERSION ${http.quack.revision})
-    duckdb_extension_load(excel SOURCE_DIR ${excel.source} EXTENSION_VERSION ${excel.revision})
+    duckdb_extension_load(excel SOURCE_DIR ${excel.source} INCLUDE_DIR ${excel.source}/src/excel/include EXTENSION_VERSION ${excel.revision})
     duckdb_extension_load(delta SOURCE_DIR ${delta.source} EXTENSION_VERSION ${delta.revision})
     duckdb_extension_load(avro SOURCE_DIR ${avro.source} EXTENSION_VERSION ${avro.revision})
     duckdb_extension_load(azure SOURCE_DIR ${azure.source} EXTENSION_VERSION ${azure.revision})
