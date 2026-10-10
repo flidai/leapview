@@ -141,7 +141,7 @@ surfaces:
     updater: {ecosystem: docker, directory: /internal/analytics/duckdb/testdata/mysql}
     scanners: [trivy]
     images:
-      - docker.io/library/mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242
+      - docker.io/library/mysql:26.7@sha256:9d48c42f8341068f199116dfccb919b607c99765b5c61e549a548a43033471a4
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}
