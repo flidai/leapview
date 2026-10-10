@@ -12,7 +12,7 @@ import (
 )
 
 const diagnosticLimit = 64 << 10
-const diagnosticPrefix = "LEAPVIEW_MANAGED_FAILURE_V1 "
+const diagnosticPrefix = "leapview-managed-failure-v1 "
 
 // diagnosticTail is private, bounded process output. Only fixed classifications
 // derived from it leave memory; neither this buffer nor the command is logged.

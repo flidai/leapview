@@ -31,7 +31,7 @@ CONTROL_PHASES = frozenset(("prepared", "closing-work", "closing-ingress", "stop
                             "opening-work", "opening-ingress", "committed", "succeeded", "recovered"))
 
 
-COMMAND_DIAGNOSTIC_PREFIX = "LEAPVIEW_MANAGED_FAILURE_V1 "
+COMMAND_DIAGNOSTIC_PREFIX = "leapview-managed-failure-v1 "
 COMMAND_DIAGNOSTIC_STAGES = frozenset(("command", "gate-write", "proxy-reboot", "inventory", "proxy-running"))
 COMMAND_DIAGNOSTIC_REASONS = frozenset(("unknown", "start-failed", "canceled", "ssh-authentication", "ssh-host-key",
     "ssh-connection", "connection-refused", "bundler-dependency", "ruby-load", "docker-daemon", "docker-image",
