@@ -471,7 +471,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(ci, "image:qualify:production") {
 		t.Error("external pull requests must not qualify or publish production images")
 	}
-	for _, required := range []string{"task image:qualify:production IMAGE=\"${immutable_image}\"", "qualify image", "--image {{.IMAGE | quote}}"} {
+	for _, required := range []string{"node scripts/run_performance_comparison.mjs \"${IMAGE_REVISION}\" \"${immutable_image}\"", "qualify image", "--image {{.IMAGE | quote}}"} {
 		if !strings.Contains(artifacts+read(t, filepath.Join(root, "Taskfile.yml")), required) {
 			t.Errorf("main artifact job must qualify its immutable digest remotely: missing %q", required)
 		}

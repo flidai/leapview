@@ -1089,7 +1089,7 @@ test('hosted Linux CI configures the Docker Hub cache before container work', ()
   expect(dockerAction.runs.steps).toHaveLength(1)
   const configure = dockerAction.runs.steps[0]
   expect(configure.if).toBe("runner.os == 'Linux' && runner.environment == 'github-hosted'")
-  expect(configure.run).toBe(`sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 ${helper}`)
+  expect(configure.run).toBe(`sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 ${helper}` + " ${{ inputs.postgres == 'true' && '--postgres' || '' }}")
   expect(configure['continue-on-error']).toBeUndefined()
   for (const setup of [steps, development.jobs.development.steps, development.jobs.image.steps]) {
     const index = setup.findIndex((step: any) => step.uses === './.github/actions/setup-docker')
@@ -1111,6 +1111,23 @@ test('hosted Linux CI configures the Docker Hub cache before container work', ()
   const result = spawnSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_ci_docker_mirror.py'], { encoding: 'utf8' })
   if (result.status !== 0) throw new Error(result.stdout + result.stderr)
   expect(result.status).toBe(0)
+})
+
+test('application CI preloads the pinned PostgreSQL image before starting independent shards', () => {
+  expect(action.inputs.postgres.default).toBe('false')
+  const docker = steps.find((step: any) => step.uses === './.github/actions/setup-docker')
+  expect(docker.with.postgres).toBe('${{ inputs.postgres }}')
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/merge-validation.yml']) {
+    const workflow = parse(readFileSync(file, 'utf8'))
+    const application = workflow.jobs['go-application-validation'].steps
+    const setup = application.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
+    const run = application.findIndex((step: any) => step.run === 'task ci:lane:go:application')
+    expect(setup).toBeGreaterThanOrEqual(0)
+    expect(setup).toBeLessThan(run)
+    expect(application[setup].with.postgres).toBe('true')
+    expect(application[setup]['continue-on-error']).toBeUndefined()
+    expect(workflow.jobs['frontend-validation'].steps.find((step: any) => step.uses === './.github/actions/setup-ci').with.postgres).toBeUndefined()
+  }
 })
 
 test('standalone Electron Linux proof configures the guarded mirror immediately after checkout', () => {

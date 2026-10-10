@@ -1,10 +1,12 @@
-"""Prepare Docker cache and the pinned reaper on early hosted Linux CI only."""
+"""Prepare pinned test images on early hosted Linux CI only."""
 
+import argparse
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import time
 
 MIRROR = "https://mirror.gcr.io"
 # Official publisher index: identical to the SDK's Docker Hub image. Preserve
@@ -29,13 +31,43 @@ def preload_ryuk():
         raise RuntimeError("Ryuk image identity differs after assigning the SDK tag")
 
 
+def postgres_image():
+    harness = Path(__file__).resolve().parents[1] / "internal/platform/postgres/postgrestest/harness.go"
+    match = re.search(r'^const PostgreSQL18Image = "([^"]+)"$', harness.read_text(), re.MULTILINE)
+    if not match or not re.fullmatch(
+            r"public\.ecr\.aws/docker/library/postgres:18-alpine@sha256:[a-f0-9]{64}", match[1]):
+        raise ValueError("Invalid PostgreSQL image pin in conformance harness")
+    return match[1]
+
+
+def preload_postgres():
+    # Populate the exact digest before independent application shards start.
+    # An empty cache otherwise makes all four Testcontainers processes pull
+    # simultaneously, exhausting the public registry's shared runner quota.
+    image = postgres_image()
+    for attempt, delay in enumerate([0, 5, 15]):
+        if delay:
+            time.sleep(delay)
+        try:
+            subprocess.run(["docker", "pull", image], check=True,
+                           capture_output=True, text=True, timeout=180)
+            break
+        except subprocess.CalledProcessError as error:
+            diagnostic = ((error.stdout or "") + (error.stderr or "")).lower()
+            throttled = any(value in diagnostic for value in ["toomanyrequests", "too many requests", "rate exceeded"]) or re.search(r"\b429\b", diagnostic)
+            if not throttled or attempt == 2:
+                raise RuntimeError("Pinned PostgreSQL image pull failed") from None
+            print("PostgreSQL image pull rate-limited; retrying before starting test shards", flush=True)
+    image_id(image)
+
+
 def active_mirror():
     mirrors = json.loads(subprocess.check_output(
         ["docker", "info", "--format", "{{json .RegistryConfig.Mirrors}}"], text=True))
     return MIRROR in [value.rstrip("/") for value in mirrors or []]
 
 
-def configure(config_path=Path("/etc/docker/daemon.json")):
+def configure(config_path=Path("/etc/docker/daemon.json"), *, postgres=False):
     if (os.environ.get("GITHUB_ACTIONS") != "true"
             or os.environ.get("RUNNER_OS") != "Linux"
             or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"):
@@ -57,7 +89,11 @@ def configure(config_path=Path("/etc/docker/daemon.json")):
     if not active_mirror():
         raise RuntimeError("Docker daemon did not activate the CI registry mirror")
     preload_ryuk()
+    if postgres:
+        preload_postgres()
 
 
 if __name__ == "__main__":
-    configure()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--postgres", action="store_true", help="Preload the conformance image before PostgreSQL test shards")
+    configure(postgres=parser.parse_args().postgres)

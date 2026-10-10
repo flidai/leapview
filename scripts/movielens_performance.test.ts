@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test'
+import { interactionCommandForRowIndex } from '../web/components/dashboard/visualization/interaction-command'
+import type { VisualizationEnvelope } from '../web/generated/visualization'
 import {
   aggregateSamples,
+  interactionInput,
+  installPerformanceObserver,
   assertInteractionTrace,
   classifyRapidSupersessionNetworkFailures,
   evaluateThresholds,
@@ -214,4 +218,97 @@ test('performance thresholds are opt-in and report every breached phase', () => 
     'critical KPI settlement p95 250ms exceeds 200ms',
     'all-target settlement p95 480ms exceeds 400ms',
   ])
+})
+
+function envelope() {
+  return {
+    visualID: 'source', dataRevision: 4,
+    spec: {
+      kind: 'cartesian', datasets: [{ id: 'actual', fields: [
+        { id: 'month', role: 'identity' }, { id: 'label', role: 'dimension' },
+      ] }],
+      interactions: [{ id: 'interaction-0', kind: 'select', mode: 'multiple', requiresStableIdentity: true,
+        mappings: [{ source: { dataset: 'actual', field: 'month' }, label: { dataset: 'actual', field: 'label' },
+          targetFieldID: 'purchase_month', targetDatasetID: 'orders', grain: 'month' }],
+        targets: [{ visualID: 'filtered', effect: 'filter' }, { visualID: 'highlighted', effect: 'highlight' },
+          { visualID: 'ignored', effect: 'none' }],
+      }],
+    },
+    dataState: { kind: 'inline', datasets: [{ id: 'actual', columns: ['month', 'label'], rows: [[2017, 'Jan']] }] },
+    selection: [],
+  } as unknown as VisualizationEnvelope
+}
+
+function pageFor(element: any) {
+  return { locator: () => ({ evaluate: (callback: any, arg: any) => callback(element, arg) }) } as any
+}
+
+test('performance input uses the same canonical interaction ID and mapping as product row translation', async () => {
+  const visual = envelope()
+  const input = await interactionInput(pageFor({ shadowRoot: { querySelectorAll: () => [{ envelope: visual }] } }), 'source', 0)
+  const product = interactionCommandForRowIndex(visual, 'actual', 0)!
+  expect(input.command).toEqual({ ...product, action: 'replace', toggle: false })
+  expect(input.targets).toEqual(['filtered'])
+})
+
+test('performance input selects the mapped dataset instead of the first inline dataset', async () => {
+  const visual = envelope()
+  if (visual.dataState.kind === 'inline') visual.dataState.datasets.unshift({ id: 'unrelated', columns: ['month', 'label'], rows: [[9999, 'decoy']] } as any)
+  const input = await interactionInput(pageFor({ shadowRoot: { querySelectorAll: () => [{ envelope: visual }] } }), 'source', 0)
+  expect(input.command.mappings).toEqual([{ field: 'purchase_month', dataset: 'orders', grain: 'month', value: 2017, label: 'Jan' }])
+})
+
+test('performance input includes only the compiled filter targets', async () => {
+  const visual = envelope()
+  const input = await interactionInput(pageFor({ shadowRoot: { querySelectorAll: () => [{ envelope: visual }] } }), 'source', 0)
+  expect(input.targets).toEqual(['filtered'])
+})
+
+test('performance input rejects a missing or unmapped select interaction', async () => {
+  const visual = envelope(); visual.spec.interactions = []
+  await expect(interactionInput(pageFor({ shadowRoot: { querySelectorAll: () => [{ envelope: visual }] } }), 'source', 0)).rejects.toThrow()
+})
+
+test('observer detects current typed data revisions, payload changes and KPI targets', async () => {
+  const previous = (globalThis as any).window
+  ;(globalThis as any).window = {}
+  try {
+    const visual = envelope()
+    const signals: any = {
+      visuals: { filtered: { dataRevision: 1, dataState: { kind: 'inline', datasets: [{ rows: [[1]] }] }, spec: { kind: 'kpi' } } },
+      componentStatus: { 'visual:filtered': { generation: 1, loading: false } },
+      page: { components: [{ visual: 'filtered' }] },
+    }
+    const element = { signals, shadowRoot: { querySelectorAll: () => [{ envelope: visual }] }, requestUpdate: () => {}, updateComplete: Promise.resolve() }
+    await installPerformanceObserver(pageFor(element))
+    const observer = (globalThis as any).window.__ldPerfObserver
+    observer.begin({ visualId: 'source', targets: ['filtered'], command: { mappings: [] } })
+    expect(observer.active.criticalKPIs).toEqual(['visual:filtered'])
+    signals.visuals.filtered.dataRevision = 2
+    observer.capture()
+    signals.visuals.filtered.dataState.datasets[0].rows = [[2]]
+    observer.capture()
+    expect(observer.active.targetUpdates.map((update: any) => update.target)).toEqual(['visual:filtered', 'visual:filtered'])
+  } finally { (globalThis as any).window = previous }
+})
+
+test('observer detects dataRevision and dataState changes without legacy version/data fields', async () => {
+  const previous = (globalThis as any).window
+  ;(globalThis as any).window = {}
+  try {
+    const signals: any = {
+      visuals: { filtered: { dataRevision: 1, dataState: { kind: 'inline', datasets: [{ rows: [[1]] }] }, spec: { kind: 'cartesian' } } },
+      componentStatus: { 'visual:filtered': { generation: 1, loading: false } },
+      page: { components: [{ visual: 'filtered' }] },
+    }
+    const element = { signals, shadowRoot: { querySelectorAll: () => [{ envelope: envelope() }] }, requestUpdate: () => {}, updateComplete: Promise.resolve() }
+    await installPerformanceObserver(pageFor(element))
+    const observer = (globalThis as any).window.__ldPerfObserver
+    observer.begin({ visualId: 'source', targets: ['filtered'], command: { mappings: [] } })
+    signals.visuals.filtered.dataRevision = 2
+    observer.capture()
+    signals.visuals.filtered.dataState.datasets[0].rows = [[2]]
+    observer.capture()
+    expect(observer.active.targetUpdates.map((update: any) => update.target)).toEqual(['visual:filtered', 'visual:filtered'])
+  } finally { (globalThis as any).window = previous }
 })

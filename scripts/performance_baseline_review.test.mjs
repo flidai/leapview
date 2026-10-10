@@ -7,7 +7,7 @@ import {
   verifyTrustedPerformanceReference,
 } from './performance_baseline_review.mjs'
 
-const pull = { number: 42, head: { sha: 'candidate' }, user: { login: 'author' } }
+const pull = { number: 42, changed_files: 1, head: { sha: 'candidate' }, user: { login: 'author' } }
 const approval = { id: 1, state: 'APPROVED', commit_id: 'candidate', user: { login: 'reviewer', type: 'User' }, author_association: 'MEMBER' }
 const reference = {
   commit: 'a'.repeat(40),
@@ -199,4 +199,11 @@ test('renaming a protected policy cannot evade review and missing reviews fail',
     : path.includes('/reviews') ? [[]] : [pull]
   assert.throws(() => checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', api, null), /independent repository collaborator/)
   assert.throws(() => checkPerformanceBaselineReview({}, 'owner/repo', api), /pull-request event/)
+})
+
+test('an incomplete changed-file count cannot silently skip governance review', () => {
+  for (const changed_files of [undefined, -1, 0, 2, '1']) {
+    const api = path => path.includes('/files') ? [[{ filename: 'unrelated.ts' }]] : [{ ...pull, changed_files }]
+    assert.throws(() => checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', api, null), /inconclusive/)
+  }
 })

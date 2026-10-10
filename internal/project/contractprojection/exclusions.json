@@ -27,7 +27,6 @@
           "spec.location.catalog",
           "spec.location.format",
           "spec.location.name",
-          "spec.location.options.compression",
           "spec.location.options.delimiter",
           "spec.location.options.escape",
           "spec.location.options.format",
@@ -44,7 +43,7 @@
           "spec.location.schema",
           "spec.location.type"
         ],
-        "sourceShapeFingerprint": "sha256:4942501cba70eb6248aa70826cb69448a57bb04a683fcb2df9a5186a04950412",
+        "sourceShapeFingerprint": "sha256:0250e97005ca7efab8b35573b04bb62867d938cde384b6178a4b1991ddaa2401",
         "reason": "Connector binding and physical location are deployment inputs rather than public Source guarantees.",
         "securityPrivacyImplications": "Exclusion prevents connection identifiers, catalogs, schemas, relation names, filesystem paths, reader options, and location details from leaking.",
         "compatibilityImplications": "Rebinding or relocating a Source does not change its external contract when the projected schema and guarantees are unchanged."

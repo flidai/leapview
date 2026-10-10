@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { verifyPerformanceReferenceEvidence } from './qualify_performance_reference.mjs'
 
 // Changes to the evidence, its producer, or its enforcement need the same
 // independent review as changing a ceiling. A JSON `approved: true` is not an
@@ -12,9 +13,10 @@ export function requiresPerformanceReview(paths) {
     /^deploy\/compose\/qualification\//.test(path) ||
     /^internal\/app\/cli\/composectl\/qualification/.test(path) ||
     /^internal\/(platform\/ci\/|app\/tools\/(ciplan|cireport|ciadapter)\/)/.test(path) ||
-    /^scripts\/(frontend_bundle|performance_baseline|qualify_performance)/.test(path) ||
+    /^scripts\/(frontend_bundle|performance_baseline|qualify_performance|run_performance_comparison)/.test(path) ||
     ['Taskfile.yml', 'Dockerfile', 'package.json', 'bun.lock', 'tsconfig.json',
       'scripts/build_assets.ts', 'scripts/build_maplibre_worker.ts', 'scripts/frontend_ci_contract.test.ts',
+      'scripts/go_receipts.mjs', 'scripts/audit_source.mjs',
       'scripts/generate_lucide_icon_catalog.ts', 'scripts/generate_visualization_validator.ts',
       '.github/workflows/ci.yml', '.github/workflows/artifacts.yml', '.github/workflows/release.yml',
       '.github/workflows/installed-candidate.yml', '.github/workflows/merge-validation.yml',
@@ -137,11 +139,17 @@ export function verifyTrustedPerformanceReference(reference, api = github) {
   if (run.status !== 'completed' || run.conclusion !== 'success') {
     throw trustedReferenceError(`qualification run ${runId} is ${run.status}/${run.conclusion}; a completed successful run at the reference commit is required.`)
   }
+  if (reference.runAttempt !== undefined && (!Number.isSafeInteger(reference.runAttempt) || reference.runAttempt <= 0 ||
+      run.run_attempt !== reference.runAttempt)) {
+    throw trustedReferenceError('reference attempt must match the latest successful run attempt; a previous attempt cannot inherit later qualification success.')
+  }
   if (run.event !== 'push' || run.head_branch !== 'main' || run.path !== '.github/workflows/artifacts.yml') {
     throw trustedReferenceError(`qualification run ${runId} is not the successful main-branch .github/workflows/artifacts.yml push required for a trusted reference.`)
   }
 
-  const jobsPath = `repos/flidai/leapview/actions/runs/${runId}/jobs?per_page=100`
+  const jobsPath = reference.runAttempt === undefined
+    ? `repos/flidai/leapview/actions/runs/${runId}/jobs?per_page=100`
+    : `repos/flidai/leapview/actions/runs/${runId}/attempts/${reference.runAttempt}/jobs?per_page=100`
   const pages = apiPages(apiPayload(api, jobsPath, 'qualification jobs'), 'qualification jobs')
   const totalCount = pages[0].total_count
   if (!Number.isInteger(totalCount) || totalCount < 0) {
@@ -166,13 +174,19 @@ export function checkPerformanceBaselineReview(event, repository, api = github, 
   const pull = event.pull_request
   if (!pull) throw new Error('Performance review requires a pull-request event; dispatch CI on an open PR for review evidence.')
   const [current] = api(`repos/${repository}/pulls/${pull.number}`)
+  if (!current || current.number !== pull.number || !current.head?.sha || !current.user?.login ||
+      !Number.isSafeInteger(current.changed_files) || current.changed_files < 0) {
+    throw new Error('GitHub returned incomplete pull-request identity or changed-file count; performance review is inconclusive.')
+  }
   if (current.head.sha !== pull.head.sha) throw new Error('Pull-request head changed; rerun CI for the current commit.')
   const files = api(`repos/${repository}/pulls/${pull.number}/files?per_page=100`).flat()
-  if (current.changed_files > files.length) throw new Error('GitHub returned an incomplete changed-file list; performance review is inconclusive.')
+  if (current.changed_files !== files.length || files.some(file => typeof file?.filename !== 'string' || file.filename.length === 0)) {
+    throw new Error('GitHub returned an incomplete changed-file list; performance review is inconclusive.')
+  }
   const paths = files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean))
   if (!requiresPerformanceReview(paths)) return 'No performance baseline or gate changes.'
   if (reference === undefined) reference = readPerformanceReference()
-  if (reference) verifyTrustedPerformanceReference(reference, api)
+  if (reference) verifyPerformanceReferenceEvidence(reference, { api })
   const reviews = api(`repos/${repository}/pulls/${pull.number}/reviews?per_page=100`).flat()
   if (!hasIndependentApproval(current, reviews, user => repositoryWriter(api, repository, user))) {
     throw new Error(`Performance governance changed: an independent repository collaborator must approve PR #${pull.number} at ${pull.head.sha}. Include calibration and regression evidence in the PR, then rerun the failed CI gate job. Editing approval fields or approving an older commit does not satisfy this gate.`)

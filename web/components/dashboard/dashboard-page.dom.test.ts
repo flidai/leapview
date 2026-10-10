@@ -5,6 +5,7 @@ import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
 import { verifyDashboardOptionRequests } from './dashboard-option-requests.test-fixture'
+import { registerRapidSelectionTests } from './dashboard-rapid-selection.test-fixture'
 import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
@@ -1476,6 +1477,8 @@ test('dashboard keeps the source visualization selected through canonicalization
     })
   } finally { await page.close() }
 })
+
+registerRapidSelectionTests(() => ({ browser, baseURL }))
 
 test('visualization host renders the shared title and preserves the live source through fullscreen', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
