@@ -13,12 +13,16 @@ import (
 // changing the authoritative release-transition interface.
 func maintenanceCommand(ctx context.Context, stdin io.Reader, stdout io.Writer) *cobra.Command {
 	root := &cobra.Command{Use: "upgrade", Short: "Operator-authorized single-host maintenance", Args: cobra.NoArgs}
-	for _, action := range []string{"plan", "apply", "recover", "status", "capture", "verify-copy", "migrate", "rehearse", "migrate-copy"} {
-		var request, journal, credential, digest string
+	addAgentRelayCommand(ctx, root, stdout)
+	for _, action := range []string{"plan", "apply", "recover", "status", "capture", "verify-copy", "migrate", "rehearse", "migrate-copy", "agent-intent", "agent-export"} {
+		var request, journal, credential, digest, reference string
 		cmd := &cobra.Command{Use: action, Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
 			r, err := ReadNativeRequest(request)
 			if err != nil {
 				return err
+			}
+			if action == "agent-intent" || action == "agent-export" {
+				return runAgentTransitionCommand(ctx, action, r, reference, stdout)
 			}
 			if action == "plan" {
 				if err := checkMaintenancePlan(ctx, r); err != nil {
@@ -41,6 +45,10 @@ func maintenanceCommand(ctx context.Context, stdin io.Reader, stdout io.Writer) 
 		}}
 		cmd.Flags().StringVar(&request, "request", "", "Private qualified upgrade request")
 		_ = cmd.MarkFlagRequired("request")
+		if action == "agent-intent" {
+			cmd.Flags().StringVar(&reference, "reference", "", "Custodian-owned private transition reference")
+			_ = cmd.MarkFlagRequired("reference")
+		}
 		if action == "migrate" || action == "rehearse" || action == "migrate-copy" {
 			cmd.Flags().StringVar(&journal, "journal", "", "Read-only host journal")
 			cmd.Flags().StringVar(&credential, "credential", "", "Private migration-only connection URL")

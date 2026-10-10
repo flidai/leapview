@@ -15,3 +15,7 @@ func runNative(context.Context, string, NativeRequest, string, string, string, i
 func checkMaintenancePlan(context.Context, NativeRequest) error {
 	return errors.New("operator maintenance requires Linux")
 }
+
+func runAgentTransitionCommand(context.Context, string, NativeRequest, string, io.Writer) error {
+	return errors.New("agent transition requires Linux")
+}

@@ -26,16 +26,17 @@ import (
 // substitute for a generic release-transition owner record, and is never
 // published into those authorities. It binds the operator-selected installation profile.
 type NativeRequest struct {
-	AccessTransition    *admincli.AccessTransitionIntent `json:"accessTransition,omitempty"`
-	PreparationDigest   string                           `json:"preparationDigest,omitempty"`
-	Profile             MaintenanceProfile               `json:"profile"`
-	DeploymentRunID     string                           `json:"deploymentRunId"`
-	DeploymentAttempt   string                           `json:"deploymentAttempt"`
-	Version             int                              `json:"version"`
-	PredecessorImage    string                           `json:"predecessorImage"`
-	PredecessorRevision string                           `json:"predecessorRevision"`
-	CandidateImage      string                           `json:"candidateImage"`
-	CandidateRevision   string                           `json:"candidateRevision"`
+	AgentCredentialTransition *AgentCredentialTransition       `json:"agentCredentialTransition,omitempty"`
+	AccessTransition          *admincli.AccessTransitionIntent `json:"accessTransition,omitempty"`
+	PreparationDigest         string                           `json:"preparationDigest,omitempty"`
+	Profile                   MaintenanceProfile               `json:"profile"`
+	DeploymentRunID           string                           `json:"deploymentRunId"`
+	DeploymentAttempt         string                           `json:"deploymentAttempt"`
+	Version                   int                              `json:"version"`
+	PredecessorImage          string                           `json:"predecessorImage"`
+	PredecessorRevision       string                           `json:"predecessorRevision"`
+	CandidateImage            string                           `json:"candidateImage"`
+	CandidateRevision         string                           `json:"candidateRevision"`
 	// GitHub workflow_dispatch signs the protected workflow SHA, while an
 	// authorized PR image contains its own source SHA. Both identities are
 	// independently bound; omission retains the main-push equality contract.
@@ -96,6 +97,11 @@ func (r NativeRequest) attestationRevision() string {
 }
 
 func (r NativeRequest) Identity() (Identity, error) {
+	if r.AgentCredentialTransition != nil {
+		if err := r.AgentCredentialTransition.validate(r.Profile.ID); err != nil || !agentPublicAddress(r.AgentCredentialTransition.ProviderAddress) {
+			return Identity{}, errAgentTransition
+		}
+	}
 	if r.PreparationDigest != "" && !digestPattern.MatchString(r.PreparationDigest) {
 		return Identity{}, ErrIdentity
 	}

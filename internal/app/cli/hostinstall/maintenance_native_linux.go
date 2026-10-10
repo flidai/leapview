@@ -40,6 +40,7 @@ type dockerInspection struct {
 		RW                              bool
 	}
 	HostConfig struct {
+		ExtraHosts    []string
 		RestartPolicy struct {
 			Name              string
 			MaximumRetryCount int
@@ -63,18 +64,20 @@ type nativeOriginal struct {
 // Installation selectors come from the request profile; external storage and
 // database/extension engine transitions are not supported.
 type NativeEffects struct {
-	detached       bool // Clone-only execution; never participates in the live journal.
-	relay          func(context.Context, string, string) (string, func(), error)
-	root, provider string
-	execute        func(context.Context, ...string) (string, error)
-	reader         *bufio.Reader
-	request        NativeRequest
-	id             Identity
-	operation      string
-	original       nativeOriginal
-	stdin          io.Reader
-	stdout         io.Writer
-	log            *os.File
+	agentCloneAppIP   string
+	agentCloneProxyIP string
+	detached          bool // Clone-only execution; never participates in the live journal.
+	relay             func(context.Context, string, string) (string, func(), error)
+	root, provider    string
+	execute           func(context.Context, ...string) (string, error)
+	reader            *bufio.Reader
+	request           NativeRequest
+	id                Identity
+	operation         string
+	original          nativeOriginal
+	stdin             io.Reader
+	stdout            io.Writer
+	log               *os.File
 }
 
 func NewNativeEffects(request NativeRequest, stdin io.Reader, stdout io.Writer) (*NativeEffects, error) {
@@ -169,6 +172,9 @@ func (e *NativeEffects) compose(ctx context.Context, args ...string) error {
 func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if id != e.id {
 		return ErrIdentity
+	}
+	if err := e.validateAgentTransitionInventory(ctx); err != nil {
+		return err
 	}
 	installed, err := readNativeUpgradeInstallation(e.root, e.request)
 	if err != nil {

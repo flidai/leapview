@@ -21,6 +21,10 @@ on:
         description: 'Runtime operations: successful Build / Main image run ID with qualification receipt'
         type: string
         required: false
+      agent_credential_transition:
+        description: 'Prepare/upgrade only: opaque reference to a custodian-staged private agent credential transition'
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -219,6 +223,7 @@ jobs:
       DEMO_ACTION: ${{ inputs.action }}
       DEMO_IMAGE: ${{ inputs.image }}
       QUALIFICATION_RUN: ${{ inputs.qualification_run }}
+      DEMO_AGENT_CREDENTIAL_TRANSITION: ${{ inputs.agent_credential_transition }}
       DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
       DEMO_DATASET: ${{ vars.DEMO_DATASET || 'cfo' }}
       DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}

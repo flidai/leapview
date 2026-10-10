@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -261,6 +263,8 @@ func TestAdminConfigurationRejectsLegacyCiphertextWithoutCredentialFallback(t *t
 		{Revision: 1, Credential: []byte("legacy ciphertext"), CredentialVersionID: "credential-version:1"},
 		{Revision: 1},
 	} {
+		row.Enabled = true
+		row.Config = Config{Model: "saved-model", BaseURL: "https://provider.example/v1", APIMode: "responses", ReasoningEffort: "high", APIKey: "must-not-project-key"}
 		repo := &configurationMemory{rows: []ConfigurationRevision{row}}
 		credentials := newConfigurationLifecycleStub(repo)
 		service := NewService(nil, Config{})
@@ -275,6 +279,19 @@ func TestAdminConfigurationRejectsLegacyCiphertextWithoutCredentialFallback(t *t
 		}
 		if err == nil || !strings.Contains(err.Error(), expected) {
 			t.Fatalf("unsupported revision: %v", err)
+		}
+		var unsupported *UnsupportedConfigurationError
+		if !errors.As(err, &unsupported) || unsupported.Revision != row.Revision || unsupported.Enabled != row.Enabled || unsupported.Model != row.Config.Model || unsupported.BaseURL != row.Config.BaseURL || unsupported.APIMode != row.Config.APIMode || unsupported.ReasoningEffort != row.Config.ReasoningEffort {
+			t.Fatal("unsupported configuration did not expose its exact safe settings")
+		}
+		metadata, marshalErr := json.Marshal(unsupported)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		for _, secret := range []string{row.Config.APIKey, row.CredentialVersionID, base64.StdEncoding.EncodeToString(row.Credential)} {
+			if secret != "" && strings.Contains(string(metadata), secret) {
+				t.Fatal("unsupported error exposed credential material or its unusable version")
+			}
 		}
 		if _, err = manager.RestoreInput(t.Context(), 1); err == nil {
 			t.Fatal("unsupported history was restored")
