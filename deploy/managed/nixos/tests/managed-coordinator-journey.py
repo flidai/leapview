@@ -125,7 +125,9 @@ with subtest("actual installed backup frontier has real source preparation and i
                 "timeline": int(sql(source, "SELECT timeline_id FROM pg_control_checkpoint();"))}
     sql(source, "SELECT pg_switch_wal();")
     execute(source, backup_command + "check", "archive-check")
-    expires = datetime.now(timezone.utc) + timedelta(hours=2)
+    # Recovery occurrence stale-after is a whole-second duration. Retention
+    # and the later enrollment must share that precision before subtraction.
+    expires = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=2)
     prepare = {"config": fixture.source_configuration(value, state + "/ca.crt"), "set": value["set"],
                "frontier": frontier, "expiresAt": expires.isoformat(), "receiptFile": state + "/prepared.json"}
     # Use the same separate private client allowed by the installed database
@@ -159,7 +161,7 @@ with subtest("actual installed backup frontier has real source preparation and i
     request = {"instanceHome": home, "recoverySetId": retained["id"], "frontierDigest": retained["frontier_digest"],
                "retentionRootId": prepared["rootId"], "sourceSystemId": system, "authoritySystemId": authority_system,
                "artifactIdentity": intended["artifact"]["image"], "actor": "installed-coordinator-component",
-               "plannedAt": datetime.now(timezone.utc).isoformat(), "expiresAt": (expires - timedelta(minutes=5)).isoformat()}
+               "plannedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "expiresAt": (expires - timedelta(minutes=5)).isoformat()}
     document(source, state + "/enrollment.json", {"schemaVersion": 1, "request": request,
              "source": dict(bootstrap, urlFile=state + "/source.url", systemIdentifier=system),
              "authority": operator, "receiptFile": state + "/enrollment-receipt.json"})
