@@ -57,6 +57,7 @@ export class VisualizationHost extends LitElement {
 
   private assignEnvelope(value: VisualizationEnvelope | undefined): void {
     const previous = this.envelopeValue
+    this.failedEnvelopeValidation = undefined
     if (Object.is(previous, value)) return
     if (!value || !['table', 'matrix', 'pivot'].includes(value.spec.kind)) {
       this.removeAttribute('data-table-fit')
@@ -71,7 +72,10 @@ export class VisualizationHost extends LitElement {
   private rejectInitialEnvelope(): void {
     // Retain a previously valid visual, but do not leave an initial malformed
     // result spinning forever when there is no accepted envelope to render.
-    if (!this.envelopeValue) this.error = 'invalid visualization envelope'
+    if (!this.envelopeValue) {
+      this.failedEnvelopeValidation = undefined
+      this.error = 'invalid visualization envelope'
+    }
   }
 
   private isStaleEnvelope(value: VisualizationEnvelope): boolean {
@@ -90,7 +94,12 @@ export class VisualizationHost extends LitElement {
       if (!validate(value)) this.rejectInitialEnvelope()
       else if (!this.isStaleEnvelope(value)) this.assignEnvelope(value)
     }).catch((error: unknown) => {
-      if (generation === this.envelopeAssignmentGeneration) this.error = error instanceof Error ? error.message : String(error)
+      if (generation === this.envelopeAssignmentGeneration) {
+        // An initial validator load has no accepted envelope yet. Retain its
+        // input so recovery can validate it again without another signal patch.
+        this.failedEnvelopeValidation = value
+        this.error = error instanceof Error ? error.message : String(error)
+      }
     })
     this.pendingEnvelopeValidation = pending
     void pending.then(() => {
@@ -134,6 +143,7 @@ export class VisualizationHost extends LitElement {
   private mountEpoch = 0
   private envelopeAssignmentGeneration = 0
   private pendingEnvelopeValidation?: Promise<void>
+  private failedEnvelopeValidation?: VisualizationEnvelope
   private focusPreview?: VisualizationHost
   private focusPreviewSource?: VisualizationHost
   private optionsScrollRoots: Array<Document | ShadowRoot> = []
@@ -373,7 +383,7 @@ export class VisualizationHost extends LitElement {
       </div>
       <div id="visualization-fallback" class="fallback">${this.accessibleFallback()}</div>
       ${this.announcement ? html`<div class="announcement" role="status" aria-live="polite">${this.announcement}</div>` : null}
-      ${error ? html`<div class="error" role="alert"><div><p>${error}</p>${this.error && this.envelope ? html`<button class="icon-action retry-action" type="button" data-visualization-retry ?disabled=${this.applying} @click=${this.retry}>Try again</button>` : null}</div></div>` : null}
+      ${error ? html`<div class="error" role="alert"><div><p>${error}</p>${this.error && (this.envelope || this.failedEnvelopeValidation) ? html`<button class="icon-action retry-action" type="button" data-visualization-retry ?disabled=${this.applying} @click=${this.retry}>Try again</button>` : null}</div></div>` : null}
     </div>`
   }
 
@@ -398,6 +408,9 @@ export class VisualizationHost extends LitElement {
 
   private retry = (): void => {
     this.error = ''
+    const failedValidation = this.failedEnvelopeValidation
+    this.failedEnvelopeValidation = undefined
+    if (failedValidation) this.envelope = failedValidation
     this.requestMount(true)
   }
 

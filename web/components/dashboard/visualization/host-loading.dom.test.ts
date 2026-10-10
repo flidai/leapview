@@ -1,8 +1,54 @@
 import { expect, test } from 'bun:test'
 import type { Page } from '@playwright/test'
 import { hostBrowserFixture, hostBrowserStep } from './host-browser.test-fixture'
+import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
 
 const fixture = hostBrowserFixture()
+
+test('initial deferred validation timeout retains a retryable payload', async () => {
+  const page = await fixture.newPage()
+  let releaseValidator!: () => void
+  let validatorRequested!: () => void
+  const blocked = new Promise<void>(resolve => { releaseValidator = resolve })
+  const requested = new Promise<void>(resolve => { validatorRequested = resolve })
+  try {
+    await page.route(fixture.baseURL + '/', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><body><script type="module">
+      import '/visualization-host-under-test.js';
+      window.__envelope = ${JSON.stringify(testVisualizationEnvelopes().orders_kpi)};
+    </script></body>` }))
+    await page.route('**/chunks/validate-*.js', async route => {
+      validatorRequested()
+      await blocked
+      await route.continue().catch(error => { if (!page.isClosed()) throw error })
+    })
+    await page.goto(fixture.baseURL, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => (window as any).__envelope)
+    await page.evaluate(() => {
+      const original = window.setTimeout.bind(window)
+      window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        if (timeout === 30_000 && typeof handler === 'function') (window as any).__expireValidation = () => handler(...args)
+        return original(handler, timeout, ...args)
+      }) as typeof window.setTimeout
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      host.style.cssText = 'display:block;width:600px;height:320px'
+      host.envelope = (window as any).__envelope
+      document.body.append(host)
+      ;(window as any).__lvValidationHost = host
+    })
+    await hostBrowserStep('request envelope validator', requested)
+    await page.evaluate(() => (window as any).__expireValidation())
+    await page.waitForFunction(() => (window as any).__lvValidationHost.shadowRoot.querySelector('[role="alert"]'))
+    const host = page.locator('lv-visualization-host')
+    expect(await host.getByRole('button', { name: 'Try again', exact: true }).count()).toBe(1)
+    releaseValidator()
+    await host.getByRole('button', { name: 'Try again', exact: true }).click()
+    await page.waitForFunction(() => {
+      const host = (window as any).__lvValidationHost
+      return host.presented && !host.shadowRoot.querySelector('[role="alert"]') && !host.shadowRoot.querySelector('[data-visualization-loading]')
+    })
+  } finally { releaseValidator(); await hostBrowserStep('close validation-test page', page.close(), 2_000) }
+}, 20_000)
 
 async function waitForPanelState(page: Page, stage: 'failure' | 'visibility' | 'recovery'): Promise<void> {
   try {
