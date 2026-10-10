@@ -10,6 +10,7 @@ import json
 import sys
 import subprocess
 import types
+import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -18,6 +19,26 @@ def load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+class CredentialTransitionWorkflowTests(unittest.TestCase):
+    def test_private_driver_protocol_regressions(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/tests/demo_agent_credential_transition.test.mjs')],
+                       cwd=ROOT, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+
+    def test_private_transition_dispatch_carries_only_a_reference_to_runtime(self):
+        workflow = (ROOT / '.github/workflows/demo-deploy.yml').read_text()
+        inputs = workflow.split('\npermissions:', 1)[0]
+        transition = re.search(r'^      agent_credential_transition:\n(?P<fields>(?:        .*\n)+)', inputs, re.M)
+        self.assertIsNotNone(transition, 'protected dispatch must accept a private transition reference')
+        self.assertIn('type: string', transition['fields'])
+        self.assertIn('required: false', transition['fields'])
+        self.assertNotRegex(inputs, r'(?i)^      .*?(?:password|api_?key|secret):', 'dispatch must not accept plaintext credentials')
+        runtime = workflow.split('\n  runtime:\n', 1)[1].split('\n  reconcile:\n', 1)[0]
+        environment = runtime.split('\n    env:\n', 1)[1].split('\n    steps:\n', 1)[0]
+        binding = 'DEMO_AGENT_CREDENTIAL_TRANSITION: ${{ inputs.agent_credential_transition }}'
+        self.assertIn(binding, environment)
+        self.assertEqual(workflow.count('${{ inputs.agent_credential_transition }}'), 1,
+                         'reference must enter through an environment binding, not an interpolated shell command')
 
 class AdmissionTests(unittest.TestCase):
     def setUp(self):

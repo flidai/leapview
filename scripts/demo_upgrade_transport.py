@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pinned-SSH upgrade transport and original-origin private browser validation."""
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import json
 import os
 from pathlib import Path
@@ -108,12 +108,25 @@ def prepare(ssh, remote, action, previous, image, revision, plan):
                    input=(ROOT/'scripts/demo_upgrade_remote.py').read_bytes(), check=True)
     if action == 'recover':
         request = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'pending', image, revision]))
+        reference = os.environ.get('DEMO_AGENT_CREDENTIAL_TRANSITION', '')
+        if reference and reference != (request.get('agentCredentialTransition') or {}).get('reference'):
+            raise ValueError('Recovery must use the original credential transition intent')
     else:
         request = qualified_request(previous, image, revision, plan)
         if plan['sourceBefore']['permissionProfile'] != plan['sourceAfter']['permissionProfile']:
             request['accessTransition'] = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'intent', image, revision]))
+        reference = os.environ.get('DEMO_AGENT_CREDENTIAL_TRANSITION', '')
+        if reference:
+            if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}', reference):
+                raise ValueError('Invalid agent credential transition reference')
+            # Only intent metadata is captured; actual credentials later stream
+            # directly from authenticated SSH to the private browser child's stdin.
+            subprocess.run([*ssh, f'umask 077; cat > {request_path}'], input=json.dumps(request).encode(), check=True)
+            request['agentCredentialTransition'] = json.loads(subprocess.check_output([
+                *ssh, 'python3', helper, 'agent-intent', image, revision, request_path, reference]))
         if action == 'upgrade':
-            rehearsal = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'prepared', image, revision, previous['image']]))
+            subprocess.run([*ssh, f'umask 077; cat > {request_path}'], input=json.dumps(request).encode(), check=True)
+            rehearsal = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'prepared', image, revision, previous['image'], request_path]))
             request['preparationDigest'] = rehearsal['preparationDigest']
     subprocess.run([*ssh, f'umask 077; cat > {request_path}'],
                    input=json.dumps(request).encode(), check=True)
@@ -125,7 +138,98 @@ def prepare(ssh, remote, action, previous, image, revision, plan):
     return helper, request_path, dict(request, operationDigest=report['operationDigest'])
 
 
-def rollout(ssh, helper, request_path, action, image, revision, browser_env, expected_digest, profile, validate=None):
+
+
+_AGENT_DRIVER_ENVIRONMENT = frozenset((
+    'PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL',
+    'LD_LIBRARY_PATH', 'PLAYWRIGHT_BROWSERS_PATH', 'NIX_LD', 'NIX_LD_LIBRARY_PATH',
+))
+
+
+def agent_driver_environment(environment):
+    """Only browser/toolchain runtime variables reach the credential driver."""
+    return {name: value for name, value in environment.items() if name in _AGENT_DRIVER_ENVIRONMENT}
+
+
+class AgentCredentialDriver:
+    """One private browser session retains the exact Test token through Save."""
+    def __init__(self, ssh, helper, request_path, image, revision, port, browser_env, digest):
+        self.stack = ExitStack()
+        self.process = None
+        self.ssh = ssh
+        self.helper, self.request_path = helper, request_path
+        self.image, self.revision, self.digest = image, revision, digest
+        try:
+            env = self.stack.enter_context(private_browser(ssh, port, browser_env))
+            proxy_url = env['DEMO_BROWSER_PROXY']
+            # Deployment secrets and debugging/preload/TLS overrides have no
+            # place in this child; only explicit browser runtime inputs survive.
+            env = agent_driver_environment(env)
+            self.process = subprocess.Popen([
+                'node', 'scripts/demo_agent_credential_transition.mjs',
+                '--base-url', 'https://demo.leapview.dev', '--proxy-url', proxy_url],
+                cwd=ROOT, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True)
+        except BaseException:
+            self.close()
+            raise RuntimeError('Private agent credential driver failed to start') from None
+
+    def receipt(self, expected):
+        if self.process is None:
+            raise RuntimeError('Private agent credential driver is unavailable')
+        ready, _, _ = select.select([self.process.stdout], [], [], 150)
+        if not ready or self.process.stdout.readline(128) != expected+'\n':
+            raise RuntimeError('Private agent credential checkpoint failed')
+
+    def test(self):
+        # SSH stdout is attached directly to Node stdin. Neither credential JSON
+        # nor its hash is materialized in runner files, environment, or Python.
+        try:
+            export = subprocess.run([
+                *self.ssh, 'python3', self.helper, 'agent-export', self.image,
+                self.revision, self.request_path], stdout=self.process.stdin,
+                stderr=subprocess.DEVNULL, timeout=30)
+            if export.returncode:
+                raise RuntimeError('Private agent credential handoff failed')
+            self.receipt('TEST_PASSED')
+        except (OSError, subprocess.TimeoutExpired):
+            raise RuntimeError('Private agent credential handoff failed') from None
+
+    def save(self):
+        self.process.stdin.write(json.dumps({'action': 'save', 'operationDigest': self.digest})+'\n')
+        self.process.stdin.flush()
+        self.receipt('SAVE_PASSED')
+        if self.process.wait(timeout=15) != 0:
+            raise RuntimeError('Private agent credential driver did not close')
+
+    def close(self):
+        process, self.process = self.process, None
+        try:
+            if process is not None:
+                try:
+                    process.stdin.close()
+                except (OSError, ValueError):
+                    pass  # Broken pipe must not skip shutdown or tunnel cleanup.
+                try:
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            try:
+                                process.wait(timeout=5)
+                            except subprocess.TimeoutExpired:
+                                raise RuntimeError('Private agent credential driver cleanup failed') from None
+                finally:
+                    process.stdout.close()
+        finally:
+            self.stack.close()
+
+
+def rollout(ssh, helper, request_path, action, image, revision, browser_env, expected_digest, profile, validate=None, agent_transition=None):
     if action not in ('upgrade', 'recover', 'prepare'):
         raise ValueError('Unsupported maintenance transport operation')
     command = {'upgrade':'apply', 'recover':'recover', 'prepare':'verify-copy'}[action]
@@ -140,12 +244,43 @@ def rollout(ssh, helper, request_path, action, image, revision, browser_env, exp
                                 image, revision, request_path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     approved = set()
     result = None
+    agent = None
+    agent_approved = set()
     try:
         for line in process.stdout:
             marker, _, identity = line.strip().partition(' ')
             print(marker, flush=True)
             ports = {'AWAITING_RECOVERY_BROWSER_VALIDATION': int(profile['rehearsalBinding'].rsplit(':',1)[1]), 'AWAITING_REHEARSAL_BROWSER_VALIDATION': int(profile['rehearsalBinding'].rsplit(':',1)[1]), 'AWAITING_CANDIDATE_BROWSER_VALIDATION': int(profile['httpsBinding'].rsplit(':',1)[1])}
+            agent_markers = {
+                'AWAITING_REHEARSAL_AGENT_CREDENTIAL_TEST': ('test', ports['AWAITING_REHEARSAL_BROWSER_VALIDATION']),
+                'AWAITING_REHEARSAL_AGENT_CREDENTIAL_SAVE': ('save', ports['AWAITING_REHEARSAL_BROWSER_VALIDATION']),
+                'AWAITING_CANDIDATE_AGENT_CREDENTIAL_TEST': ('test', ports['AWAITING_CANDIDATE_BROWSER_VALIDATION']),
+                'AWAITING_CANDIDATE_AGENT_CREDENTIAL_SAVE': ('save', ports['AWAITING_CANDIDATE_BROWSER_VALIDATION']),
+            }
+            if marker in agent_markers:
+                if (not agent_transition or action == 'recover' or identity != expected_digest or marker in agent_approved or
+                        (action == 'prepare' and marker.startswith('AWAITING_CANDIDATE_'))):
+                    raise RuntimeError('Unexpected agent credential checkpoint')
+                stage, port = agent_markers[marker]
+                if stage == 'test':
+                    preceding = 'AWAITING_RECOVERY_BROWSER_VALIDATION' if marker.startswith('AWAITING_REHEARSAL_') else 'AWAITING_REHEARSAL_BROWSER_VALIDATION'
+                    if agent is not None or preceding not in approved:
+                        raise RuntimeError('Agent credential checkpoint order differs from admission')
+                    agent = AgentCredentialDriver(ssh, helper, request_path, image, revision, port, browser_env, expected_digest)
+                    agent.test()
+                else:
+                    if agent is None or marker.replace('_SAVE', '_TEST') not in agent_approved:
+                        raise RuntimeError('Agent Save lacks its same-process Test receipt')
+                    agent.save()
+                    agent.close()
+                    agent = None
+                process.stdin.write(f'commit {identity} {marker}\n'); process.stdin.flush()
+                agent_approved.add(marker)
             if marker in ports:
+                if agent is not None:
+                    raise RuntimeError('Browser approval precedes credential cleanup')
+                if agent_transition and marker != 'AWAITING_RECOVERY_BROWSER_VALIDATION' and marker.replace('_BROWSER_VALIDATION', '_AGENT_CREDENTIAL_SAVE') not in agent_approved:
+                    raise RuntimeError('Browser approval lacks credential activation checkpoint')
                 if action not in ('upgrade', 'prepare') or (action == 'prepare' and marker == 'AWAITING_CANDIDATE_BROWSER_VALIDATION') or marker in approved or identity != expected_digest:
                     raise RuntimeError('Unexpected or repeated browser approval request')
                 with private_browser(ssh, ports[marker], browser_env) as env:
@@ -166,13 +301,25 @@ def rollout(ssh, helper, request_path, action, image, revision, browser_env, exp
             raise RuntimeError('Upgrade did not complete all recovery/rehearsal/candidate browser gates')
         if action == 'prepare' and (result != 'REHEARSAL_PASSED' or len(approved) != 2):
             raise RuntimeError('Detached rehearsal did not complete both clone gates')
+        expected_agent_count = (2 if action == 'prepare' else 4) if agent_transition and action != 'recover' else 0
+        if len(agent_approved) != expected_agent_count:
+            raise RuntimeError('Agent credential checkpoints did not complete')
         return result
     finally:
-        process.stdin.close()  # EOF cancels approval and invokes paired recovery.
-        try: process.wait(timeout=960)
-        except subprocess.TimeoutExpired:
-            process.kill(); process.wait()
-            raise RuntimeError('Recovery exceeded timeout; use the explicit recover action after inspecting the journal')
+        try:
+            if agent is not None:
+                agent.close()
+        finally:
+            # Driver/tunnel cleanup failure cannot bypass controller EOF or its
+            # bounded recovery wait. This is the paired-recovery trigger.
+            try:
+                process.stdin.close()
+            except (OSError, ValueError):
+                pass
+            try: process.wait(timeout=960)
+            except subprocess.TimeoutExpired:
+                process.kill(); process.wait()
+                raise RuntimeError('Recovery exceeded timeout; use the explicit recover action after inspecting the journal')
 
 
 def stage_credentials(ssh, helper, request_path, image, revision, request):
