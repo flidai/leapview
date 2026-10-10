@@ -165,9 +165,42 @@ func portableSchema(value any, definitions map[string]any, resolving map[string]
 		if hasConstant {
 			out["enum"] = []any{constant}
 		}
+		if typed["unevaluatedProperties"] == false {
+			declareInheritedProperties(out)
+		}
 		return out, nil
 	default:
 		return value, nil
+	}
+}
+
+// additionalProperties only sees sibling declarations, unlike
+// unevaluatedProperties. Declare inherited properties at the closed object
+// while retaining allOf to enforce every base and derived constraint.
+func declareInheritedProperties(schema map[string]any) {
+	branches, _ := schema["allOf"].([]any)
+	pending := append([]any(nil), branches...)
+	properties, _ := schema["properties"].(map[string]any)
+	for len(pending) > 0 {
+		branch := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		base, ok := branch.(map[string]any)
+		if !ok {
+			continue
+		}
+		ancestors, _ := base["allOf"].([]any)
+		pending = append(pending, ancestors...)
+		inherited, _ := base["properties"].(map[string]any)
+		for name := range inherited {
+			if properties == nil {
+				properties = map[string]any{}
+				schema["properties"] = properties
+			}
+			if _, exists := properties[name]; !exists {
+				// The allOf branch still owns the property's constraints.
+				properties[name] = map[string]any{}
+			}
+		}
 	}
 }
 

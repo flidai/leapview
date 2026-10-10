@@ -209,9 +209,15 @@ class WindowedTable extends LitElement {
   private blockCache: Record<WindowedTableBlockID, WindowedTableBlock> = emptyBlocks()
   private viewportRef: Ref<HTMLDivElement> = createRef()
   private resizeObserver?: ResizeObserver
+  private observedViewport?: HTMLDivElement
+  private sizingObserver?: ResizeObserver
+  private sizingElements = new Set<Element>()
+  private sizingFrame = 0
+  private shellHeight = -1
 
   static styles = css`
     :host {
+      --lv-windowed-table-height: 100%;
       display: grid;
       min-width: 0;
       min-height: 0;
@@ -222,6 +228,9 @@ class WindowedTable extends LitElement {
 
     .shell {
       display: grid;
+      align-self: start;
+      box-sizing: border-box;
+      height: var(--lv-windowed-table-height);
       min-width: 0;
       min-height: 0;
       grid-template-rows: auto minmax(0, 1fr) auto auto;
@@ -321,6 +330,10 @@ class WindowedTable extends LitElement {
       min-height: 0;
       overflow: hidden;
       background: var(--lv-bg-app);
+    }
+
+    .frame.message {
+      overflow: auto;
     }
 
     .scrollport {
@@ -592,7 +605,12 @@ class WindowedTable extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
-    if (this.hasUpdated) queueMicrotask(() => this.observeViewport())
+    if (this.hasUpdated) queueMicrotask(() => {
+      if (!this.isConnected) return
+      this.observeViewport()
+      this.observeSizing()
+      this.scheduleSizing()
+    })
   }
 
   updated(): void {
@@ -609,6 +627,8 @@ class WindowedTable extends LitElement {
       })
     }
     this.observeViewport()
+    this.observeSizing()
+    this.scheduleSizing()
   }
 
   willUpdate(): void {
@@ -642,7 +662,14 @@ class WindowedTable extends LitElement {
   disconnectedCallback(): void {
     this.resizeObserver?.disconnect()
     this.resizeObserver = undefined
+    this.observedViewport = undefined
+    this.sizingObserver?.disconnect()
+    this.sizingObserver = undefined
+    this.sizingElements.clear()
+    if (this.sizingFrame) cancelAnimationFrame(this.sizingFrame)
+    this.sizingFrame = 0
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
     if (this.resizeFrame) cancelAnimationFrame(this.resizeFrame)
     this.clearJumpTimer()
     this.clearResize()
@@ -689,7 +716,7 @@ class WindowedTable extends LitElement {
             </div>
           </details>
         </div>
-        <div class="frame">
+        <div class=${`frame${table.error || availableRows === 0 && !loading ? ' message' : ''}`}>
           ${loading ? html`<div class="loading" aria-hidden="true"></div>` : nothing}
           ${table.error ? html`<p class="error">${table.error}</p>` : nothing}
           ${!table.error && availableRows === 0 && !loading ? html`<p class="empty">No rows to show.</p>` : nothing}
@@ -760,17 +787,77 @@ class WindowedTable extends LitElement {
 
   private observeViewport(): void {
     const viewport = this.viewportRef.value
-    if (!viewport || this.resizeObserver) return
+    if (viewport === this.observedViewport) return
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = undefined
+    this.observedViewport = viewport
+    if (!viewport) return
+    this.viewportTop = viewport.scrollTop
     this.viewportHeight = viewport.clientHeight
     this.viewportWidth = viewport.clientWidth
     this.resizeObserver = new ResizeObserver(() => {
-      this.viewportHeight = viewport.clientHeight
-      this.viewportWidth = viewport.clientWidth
+      const height = viewport.clientHeight
+      const width = viewport.clientWidth
+      if (height === this.viewportHeight && width === this.viewportWidth) return
+      this.viewportHeight = height
+      this.viewportWidth = width
       this.requestUpdate()
+      this.scheduleSizing()
       this.scheduleEnsureBlocksForScroll()
     })
     this.resizeObserver.observe(viewport)
+    this.requestUpdate()
     this.scheduleEnsureBlocksForScroll()
+  }
+
+  private observeSizing(): void {
+    if (!this.isConnected) return
+    this.sizingObserver ??= new ResizeObserver(() => this.scheduleSizing())
+    // The host retains its allocated grid track. Observe it and fixed chrome,
+    // never the shrinking shell/frame, so fitting cannot reduce its own budget.
+    const elements = new Set<Element>([this, ...this.renderRoot.querySelectorAll('.toolbar, .footer, .scroll-hint, .head, .empty, .error')])
+    for (const element of this.sizingElements) {
+      if (!elements.has(element)) this.sizingObserver.unobserve(element)
+    }
+    for (const element of elements) {
+      if (!this.sizingElements.has(element)) this.sizingObserver.observe(element)
+    }
+    this.sizingElements = elements
+  }
+
+  private scheduleSizing(): void {
+    if (!this.isConnected || this.sizingFrame) return
+    this.sizingFrame = requestAnimationFrame(() => {
+      this.sizingFrame = 0
+      this.fitShell()
+    })
+  }
+
+  private fitShell(): void {
+    const shell = this.renderRoot.querySelector<HTMLElement>('.shell')
+    if (!this.isConnected || !shell || this.clientWidth <= 0) return
+    const table = normalizeTable(this.table)
+    const availableRows = this.effectiveAvailableRows(table)
+    const viewport = this.viewportRef.value
+    const outerHeight = (element: HTMLElement | null): number => {
+      if (!element || getComputedStyle(element).display === 'none') return 0
+      const style = getComputedStyle(element)
+      return element.offsetHeight + (Number.parseFloat(style.marginTop) || 0) + (Number.parseFloat(style.marginBottom) || 0)
+    }
+    const shellStyle = getComputedStyle(shell)
+    const borderAndPadding = ['border-top-width', 'border-bottom-width', 'padding-top', 'padding-bottom']
+      .reduce((height, key) => height + (Number.parseFloat(shellStyle.getPropertyValue(key)) || 0), 0)
+    const chrome = ['.toolbar', '.footer', '.scroll-hint'].reduce((height, selector) => height + outerHeight(this.renderRoot.querySelector<HTMLElement>(selector)), borderAndPadding)
+    const body = viewport
+      ? outerHeight(this.renderRoot.querySelector<HTMLElement>('.head')) + Math.max(table.rowHeight, availableRows * table.rowHeight)
+        + Math.max(0, viewport.offsetHeight - viewport.clientHeight)
+      : outerHeight(this.renderRoot.querySelector<HTMLElement>('.empty, .error'))
+    const hostStyle = getComputedStyle(this)
+    const allocation = Math.max(0, this.clientHeight - (Number.parseFloat(hostStyle.paddingTop) || 0) - (Number.parseFloat(hostStyle.paddingBottom) || 0))
+    const height = Math.min(allocation, Math.ceil(chrome + body))
+    if (height === this.shellHeight) return
+    this.shellHeight = height
+    shell.style.setProperty('--lv-windowed-table-height', `${height}px`)
   }
 
   private visibleColumns(table: Required<WindowedTablePayload>): WindowedTableColumn[] {

@@ -35,8 +35,8 @@ type VisualFormatChoice struct {
 	Label string
 }
 
-// VisualFormatOption describes one scalar, renderer-neutral presentation
-// property. Object bindings and rule arrays deliberately stay in Build/YAML.
+// VisualFormatOption describes one scalar presentation property, including
+// properties within a field's cell content configuration.
 type VisualFormatOption struct {
 	Key         string
 	Label       string
@@ -44,6 +44,10 @@ type VisualFormatOption struct {
 	Control     string
 	Value       string
 	Placeholder string
+	Description string
+	Minimum     *float64
+	Maximum     *float64
+	Step        *float64
 	Choices     []VisualFormatChoice
 }
 
@@ -150,6 +154,10 @@ type visualFormatSpec struct {
 	path                                                    []string
 	choices                                                 []VisualFormatChoice
 	optional                                                bool
+	description                                             string
+	minimum, maximum, step                                  *float64
+	integer                                                 bool
+	cellDisplay                                             bool
 }
 
 func choices(values ...string) []VisualFormatChoice {
@@ -292,6 +300,9 @@ func applicableVisualFormatSpecs(visual document.DashboardVisual, presentationTy
 			result = append(result, spec)
 		}
 	}
+	if presentationType == "table" && document.SupportsPresentationFamily(visual.Type, presentationType) {
+		result = append(result, gridCellContentFormatSpecs(visual)...)
+	}
 	return result
 }
 
@@ -394,13 +405,17 @@ func CanonicalVisualFormatOptions(visual document.DashboardVisual) ([]VisualForm
 	for _, spec := range specs {
 		value := spec.defaultValue
 		if current, ok := lookupFormatPath(raw, spec.path); ok {
-			value = scalarFormatValue(current)
+			if spec.cellDisplay {
+				value = gridCellContentDisplayValue(current)
+			} else {
+				value = scalarFormatValue(current)
+			}
 		}
 		optionChoices := append([]VisualFormatChoice(nil), spec.choices...)
-		if spec.control == "select" && spec.optional && spec.defaultValue == "" {
+		if spec.control == "select" && spec.optional && spec.defaultValue == "" && (len(optionChoices) == 0 || optionChoices[0].Value != "") {
 			optionChoices = append(choices(""), optionChoices...)
 		}
-		result = append(result, VisualFormatOption{Key: spec.key, Label: spec.label, Section: spec.section, Control: spec.control, Value: value, Placeholder: spec.placeholder, Choices: optionChoices})
+		result = append(result, VisualFormatOption{Key: spec.key, Label: spec.label, Section: spec.section, Control: spec.control, Value: value, Placeholder: spec.placeholder, Description: spec.description, Minimum: spec.minimum, Maximum: spec.maximum, Step: spec.step, Choices: optionChoices})
 	}
 	return result, nil
 }
@@ -428,7 +443,12 @@ func applyCanonicalVisualFormatOption(visual *document.DashboardVisual, key, val
 	if err != nil {
 		return fmt.Errorf("%w: visual presentation: %v", ErrInvalidPayload, err)
 	}
-	if value == "" && spec.optional {
+	if spec.cellDisplay {
+		if _, err := parseFormatValue(*spec, value); err != nil {
+			return err
+		}
+		applyGridCellContentDisplay(raw, spec.path, value)
+	} else if value == "" && spec.optional {
 		deleteFormatPath(raw, spec.path)
 	} else {
 		parsed, err := parseFormatValue(*spec, value)
@@ -478,6 +498,12 @@ func parseFormatValue(spec visualFormatSpec, value string) (any, error) {
 		parsed, err := strconv.ParseFloat(value, 64)
 		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
 			return nil, fmt.Errorf("%w: format option %q requires a finite number", ErrInvalidPayload, spec.key)
+		}
+		if spec.integer && math.Trunc(parsed) != parsed {
+			return nil, fmt.Errorf("%w: format option %q requires a whole number", ErrInvalidPayload, spec.key)
+		}
+		if (spec.minimum != nil && parsed < *spec.minimum) || (spec.maximum != nil && parsed > *spec.maximum) {
+			return nil, fmt.Errorf("%w: format option %q is outside its allowed range", ErrInvalidPayload, spec.key)
 		}
 		return parsed, nil
 	case "select":

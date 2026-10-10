@@ -18,6 +18,7 @@ import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, di
 import { clearInteractionCommand } from './interaction-command'
 import { resolveVisualizationMetadata, visualizationSharedHeader } from './metadata'
 import { visualizationHostStyles } from './host-styles'
+import { applyTableContentSize } from './host-layout'
 import { generatedEnvelopeValidator, loadEnvelopeValidator, prepareVisual, VisualPreparationTimeout } from './preparation'
 
 export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, supportsHostDataActions, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
@@ -57,6 +58,10 @@ export class VisualizationHost extends LitElement {
   private assignEnvelope(value: VisualizationEnvelope | undefined): void {
     const previous = this.envelopeValue
     if (Object.is(previous, value)) return
+    if (!value || !['table', 'matrix', 'pivot'].includes(value.spec.kind)) {
+      this.removeAttribute('data-table-fit')
+      this.style.removeProperty('--lv-table-content-height')
+    }
     this.envelopeValue = value
     if (!previous && value) this.error = ''
     if (this.focusPreview) this.focusPreview.envelope = value
@@ -142,6 +147,13 @@ export class VisualizationHost extends LitElement {
   connectedCallback(): void {
     super.connectedCallback()
     const generation = ++this.connectionGeneration
+    if (this.controller) {
+      queueMicrotask(() => {
+        if (generation !== this.connectionGeneration || !this.isConnected || !this.rendererContainer) return
+        this.controller?.resize(this.rendererContainer.clientWidth, this.rendererContainer.clientHeight, window.devicePixelRatio || 1)
+      })
+      return
+    }
     if (!this.hasUpdated || this.controller || this.mountObserver) return
     queueMicrotask(() => {
       if (generation === this.connectionGeneration && this.isConnected) {
@@ -353,7 +365,7 @@ export class VisualizationHost extends LitElement {
         </header>
       ` : !this.actionsEnabled ? html`<div class="headerless-actions"><div class="visual-actions"><slot name="focus-action"></slot></div></div>` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
-        ${keyed(this.rendererGeneration, html`<div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>`)}
+        ${keyed(this.rendererGeneration, html`<div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation} @lv-table-size-change=${this.handleTableSizeChange}></div>`)}
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
           <lv-loading-spinner size="medium" aria-hidden="true"></lv-loading-spinner>
           <span>${loadingLabel}</span>
@@ -374,9 +386,8 @@ export class VisualizationHost extends LitElement {
     this.mountRequested = true
     try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
     this.mountObserver = undefined
-    // Eager callers retain the original firstUpdated timing. The explicit
-    // ensureMounted path below still waits for Lit to settle before observing
-    // the result, while event callbacks can start the renderer immediately.
+    // Event callbacks preserve eager firstUpdated timing. ensureMounted
+    // separately waits for Lit before observing the completed renderer.
     if (this.rendererContainer) {
       this.ensureController()
       this.scheduleApply(force)
@@ -403,26 +414,16 @@ export class VisualizationHost extends LitElement {
     this.pendingApplyEnvelope = this.envelope
     const pending = this.applyEnvelope()
     this.pendingApply = pending
-    void pending.then(
-      () => {
-        if (this.pendingApply !== pending) return
-        this.pendingApply = undefined
-        this.pendingApplyEnvelope = undefined
-        if (this.applyQueued) {
-          this.applyQueued = false
-          this.scheduleApply()
-        }
-      },
-      () => {
-        if (this.pendingApply !== pending) return
-        this.pendingApply = undefined
-        this.pendingApplyEnvelope = undefined
-        if (this.applyQueued) {
-          this.applyQueued = false
-          this.scheduleApply()
-        }
-      },
-    )
+    const settle = (): void => {
+      if (this.pendingApply !== pending) return
+      this.pendingApply = undefined
+      this.pendingApplyEnvelope = undefined
+      if (this.applyQueued) {
+        this.applyQueued = false
+        this.scheduleApply()
+      }
+    }
+    void pending.then(settle, settle)
   }
 
   private async waitForApply(): Promise<void> {
@@ -475,6 +476,8 @@ export class VisualizationHost extends LitElement {
       if (generation === this.applyGeneration && envelope === this.envelope) this.applying = false
     }
   }
+
+  private readonly handleTableSizeChange = (event: Event): void => applyTableContentSize(this, this.envelope, event, this.rendererContainer)
 
   private expand = (): void => {
     const envelope = this.envelope

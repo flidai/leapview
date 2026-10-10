@@ -1514,7 +1514,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                             @click=${() => this.setChartPage({ key: categoryPage.key, index: categoryPage.index + 1 })}>Next</button>
                         </div>
                       </nav>` : nothing}
-                    <div class="result-visual" role="region" tabindex="0" aria-label=${resultView === 'chart' ? 'Chart results' : 'Pivot results'}>
+                    <div class="result-visual" ?data-table-allocation=${['table', 'matrix', 'pivot'].includes(resultVisualization.envelope.spec.kind)} role="region" tabindex="0" aria-label=${resultView === 'chart' ? 'Chart results' : 'Pivot results'}>
                       <lv-visualization-host
                         style=${`--explorer-visual-min-height: ${resultVisualization.minimumHeight}px`}
                         .envelope=${resultVisualization.envelope}

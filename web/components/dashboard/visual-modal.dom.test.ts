@@ -187,6 +187,59 @@ test('opening another focused source restores the previous element first', async
   }
 })
 
+test('focused tables fit a few rows and cap tall tables at the viewport', async () => {
+  const page = await setupPage()
+  const renderSourceRows = async (rowCount: number) => {
+    await page.evaluate((rowCount) => {
+      const source = document.getElementById('second')!
+      const table = document.createElement('table')
+      table.style.borderCollapse = 'collapse'
+      const body = document.createElement('tbody')
+      for (let index = 0; index < rowCount; index++) {
+        const row = document.createElement('tr')
+        row.style.height = '34px'
+        const cell = document.createElement('td')
+        cell.textContent = `Row ${index + 1}`
+        row.append(cell)
+        body.append(row)
+      }
+      table.append(body)
+      source.replaceChildren(table)
+    }, rowCount)
+  }
+  try {
+    // Focus measures the moved live source, rather than the action's row metadata.
+    await renderSourceRows(2)
+    await dispatchVisualAction(page, 'second', 'focus')
+    const compactHeight = await page.locator('lv-visual-modal').evaluate((modal: any) => (
+      (modal.shadowRoot as ShadowRoot).querySelector('.focus-dialog')!.getBoundingClientRect().height
+    ))
+    expect(compactHeight).toBeLessThan(500)
+
+    await page.getByRole('button', { name: 'Close visual modal' }).click()
+    await renderSourceRows(100)
+    await page.evaluate(() => {
+      document.getElementById('second')!.dispatchEvent(new CustomEvent('lv-visual-action', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          action: 'focus', visualType: 'table', visualId: 'second', title: 'Large table',
+          columns: [{ key: 'label', label: 'Label' }], rows: [], selection: [],
+          table: { availableRows: 100, rowHeight: 34 },
+        },
+      }))
+    })
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.updateComplete)
+    const tallHeight = await page.locator('lv-visual-modal').evaluate((modal: any) => (
+      (modal.shadowRoot as ShadowRoot).querySelector('.focus-dialog')!.getBoundingClientRect().height
+    ))
+    expect(tallHeight).toBeGreaterThan(compactHeight)
+    expect(tallHeight).toBeLessThanOrEqual(Math.min(920, await page.evaluate(() => window.innerHeight - 56)))
+  } finally {
+    await page.close()
+  }
+})
+
 test('non-focus visual actions do not move the source element', async () => {
   const page = await setupPage()
   try {

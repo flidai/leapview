@@ -315,6 +315,8 @@ func CapabilityImportViolation(sourcePath string, source PackageRule, packagePat
 
 var PackageRules = []PackageRule{
 	{Prefix: "cmd", Capability: "composition", Layer: LayerComposition},
+	// The local formatting playground adapts JSON input/output to dashboard authoring.
+	{Prefix: "scripts/table_formatting_demo", Capability: "dashboard", Layer: LayerAdapter},
 	{Prefix: "docs", Capability: "composition", Layer: LayerAdapter},
 	{Prefix: "site", Capability: "composition", Layer: LayerAdapter},
 	{Prefix: "schemas", Capability: "project", Layer: LayerContract},

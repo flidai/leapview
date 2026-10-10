@@ -872,10 +872,42 @@ model PolarVisualizationPresentation extends VisualizationPresentation {
   `thresholds`?: VisualizationThreshold[];
 }
 
+/** Tree rows are expanded locally over the complete governed result frame. */
+@discriminator("mode")
+model GridRowHierarchy {
+  mode: string;
+  @minValue(0)
+  defaultExpandedDepth?: int32;
+}
+
+model GridLevelHierarchy extends GridRowHierarchy {
+  mode: "levels";
+  @minItems(1)
+  fields: string[];
+  label?: string;
+}
+
+model GridParentChildHierarchy extends GridRowHierarchy {
+  mode: "parent_child";
+  idField: string;
+  parentField: string;
+  labelField: string;
+}
+
+model GridNestedHierarchy extends GridRowHierarchy {
+  mode: "nested";
+  childrenField: string;
+  labelField: string;
+  idField?: string;
+}
+
 model GridVisualizationPresentation {
   `rowHeight`: int64;
   `striped`: boolean;
   `showHeader`: boolean;
+  hierarchy?: GridRowHierarchy;
+  /** Cell presentation keyed by delivered query field aliases. */
+  cellContent?: Record<TableCellContent>;
 }
 
 model KPIVisualizationPresentation {
@@ -1031,6 +1063,34 @@ model TableDataBarFormattingRule extends TableVisualizationFormattingRule {
   `background`?: string;
 }
 
+enum TableImageDisplay {
+  inline: "inline",
+  tooltip: "tooltip",
+}
+
+@discriminator("kind")
+model TableCellContent {
+  kind: string;
+}
+
+model TableImageCellContent extends TableCellContent {
+  kind: "image";
+  display: TableImageDisplay;
+  @minValue(1)
+  @maxValue(512)
+  width?: int32;
+  @minValue(1)
+  @maxValue(512)
+  height?: int32;
+  altField?: string;
+}
+
+model TableLinkCellContent extends TableCellContent {
+  kind: "link";
+  labelField?: string;
+  newTab?: boolean;
+}
+
 model TableVisualizationColumn {
   `field`: VisualizationFieldRef;
   `label`: string;
@@ -1039,6 +1099,7 @@ model TableVisualizationColumn {
   `metric`?: string;
   `columnValue`?: string;
   `formatting`: TableVisualizationFormattingRule[];
+  content?: TableCellContent;
 }
 
 model VisualizationSort {

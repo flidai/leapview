@@ -733,7 +733,9 @@ test('windowed table recreates viewport observation after reconnecting the same 
         private readonly callback: ResizeObserverCallback
         constructor(callback: ResizeObserverCallback) { this.callback = callback }
         observe(target: Element): void {
-          observations.push(target)
+          // Content sizing observes the host and chrome separately; this
+          // regression concerns reconnecting the scroll viewport observer.
+          if (target.classList.contains('scrollport')) observations.push(target)
         }
         disconnect(): void {}
         trigger(): void { this.callback([], this as unknown as ResizeObserver) }

@@ -255,8 +255,10 @@ class ReportCanvas extends LitElement {
     :host([data-layout='mobile']) ::slotted([data-component-kind='visual'][data-visual-type='table']),
     :host([data-layout='mobile']) ::slotted([data-component-kind='visual'][data-visual-type='matrix']),
     :host([data-layout='mobile']) ::slotted([data-component-kind='visual'][data-visual-type='pivot']) {
-      height: var(--lv-mobile-table-height, 400px) !important;
+      height: auto !important;
       min-height: 0;
+      --lv-visual-height: auto;
+      --lv-table-max-height: var(--lv-mobile-table-height, 400px);
     }
 
     @media (max-width: 640px) {

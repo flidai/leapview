@@ -313,9 +313,62 @@ export const dashboardBuilderCanvasStyles = css`
     .grid-stack-item > .ui-resizable-se { cursor: se-resize; }
     .grid-stack-item > .ui-resizable-sw { cursor: sw-resize; }
 
+    /* Table paint shrinks within its authored GridStack allocation. Move the
+     * real resize targets along with the visible edge, leaving gs-h and the
+     * native pointer-delta resize calculation intact. */
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) {
+      --builder-table-fit-bottom: max(var(--gs-item-margin-bottom), calc(100% - var(--gs-item-margin-top) - var(--lv-table-content-height) - 2px));
+    }
+
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]):focus-visible {
+      outline: none;
+    }
+
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]):focus-visible > .grid-stack-item-content {
+      outline: 2px solid var(--lv-fg-accent);
+      outline-offset: -2px;
+    }
+
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .ui-resizable-s,
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .ui-resizable-se,
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .ui-resizable-sw {
+      bottom: var(--builder-table-fit-bottom);
+    }
+
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .ui-resizable-e,
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .ui-resizable-w {
+      bottom: calc(var(--builder-table-fit-bottom) + 18px);
+    }
+
+    /* Native resize changes the authored allocation even when all rows fit
+     * in a smaller card. Show that moving boundary only during the gesture. */
+    .visual.has-preview.ui-resizable-resizing:has(lv-visualization-host[data-table-fit])::before {
+      position: absolute;
+      z-index: 1;
+      inset: var(--gs-item-margin-top) var(--gs-item-margin-right) var(--gs-item-margin-bottom) var(--gs-item-margin-left);
+      border: 1px dashed var(--lv-fg-accent);
+      border-radius: var(--lv-radius-default);
+      content: '';
+      pointer-events: none;
+    }
+
+    .visual.has-preview.ui-resizable-resizing:has(lv-visualization-host[data-table-fit])::after {
+      position: absolute;
+      z-index: 1;
+      right: calc(var(--gs-item-margin-right) + 8px);
+      bottom: calc(var(--gs-item-margin-bottom) + 8px);
+      border-radius: var(--lv-radius-small);
+      padding: 2px 6px;
+      color: var(--lv-fg-accent);
+      background: var(--lv-bg-panel);
+      font: var(--lv-type-caption);
+      content: 'Table area';
+      pointer-events: none;
+    }
+
     .grid-stack-item > .ui-resizable-handle::after {
       position: absolute;
-      border: var(--lv-border-default);
+      border: 1px solid var(--lv-fg-accent);
       background: var(--lv-bg-panel);
       content: '';
       pointer-events: none;
@@ -385,19 +438,24 @@ export const dashboardBuilderCanvasStyles = css`
       padding: 0;
     }
 
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .grid-stack-item-content {
+      bottom: auto;
+      height: min(calc(100% - var(--gs-item-margin-top) - var(--gs-item-margin-bottom)), calc(var(--lv-table-content-height) + 2px));
+    }
+
     .visual:hover > .grid-stack-item-content {
       border-color: var(--lv-line-emphasis);
       box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-control-hover);
     }
 
     .visual[data-selected='true'] > .grid-stack-item-content {
-      border-color: var(--lv-data-3);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-3-muted);
+      border-color: var(--lv-fg-accent);
+      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-accent-muted, var(--lv-bg-control-active));
     }
 
     .filter-component[data-selected='true'] > .grid-stack-item-content {
-      border-color: var(--lv-data-2);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-2-muted);
+      border-color: var(--lv-fg-accent);
+      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-accent-muted, var(--lv-bg-control-active));
     }
 
     .header-component > .grid-stack-item-content,
@@ -407,8 +465,8 @@ export const dashboardBuilderCanvasStyles = css`
     }
 
     .header-component[data-selected='true'] > .grid-stack-item-content {
-      border-color: var(--lv-data-4);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-4-muted);
+      border-color: var(--lv-fg-accent);
+      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-accent-muted, var(--lv-bg-control-active));
     }
 
     .header-copy {

@@ -14,7 +14,8 @@ export const dashboardBuilderSurfaceStyles = css`
     :host {
       position: relative;
       display: block;
-      min-height: 100svh;
+      height: 100svh;
+      min-height: 0;
       color: var(--lv-fg-default);
       background: var(--lv-bg-app);
       font-family: var(--fontStack-system);
@@ -33,8 +34,8 @@ export const dashboardBuilderSurfaceStyles = css`
 
     .builder {
       display: grid;
-      height: 100svh;
-      min-height: 100svh;
+      height: 100%;
+      min-height: 0;
       grid-template-rows: auto minmax(0, 1fr);
     }
 

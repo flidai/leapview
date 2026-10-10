@@ -202,6 +202,13 @@ export class VisualModal extends LitElement {
       --lv-table-max-body-height: none;
     }
 
+    :host([tabular-focus]) .focus-slot,
+    :host([tabular-focus]) ::slotted([slot='focus-visual']) {
+      height: auto;
+      --lv-visual-height: auto;
+      --lv-table-max-height: min(918px, calc(100dvh - 58px));
+    }
+
     .focus-chart,
     .focus-table {
       height: 100%;
@@ -416,6 +423,7 @@ export class VisualModal extends LitElement {
     const focusToRestore = this.deepActiveElement()
     this.restoreFocusedVisual(false)
     this.restoreFocusTo = focusToRestore
+    this.toggleAttribute('tabular-focus', detail.visualType === 'table')
     this.detail = detail
     this.mode = 'focus'
     this.focusSource = source
@@ -471,6 +479,7 @@ export class VisualModal extends LitElement {
     this.focusClose = null
     if (this.focusMount) restoreVisualFocus(this.focusMount)
     this.focusMount = null
+    this.removeAttribute('tabular-focus')
     this.focusSource = null
     this.restoreFocusTo = null
     if (restoreFocus && focusToRestore?.isConnected) {

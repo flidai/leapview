@@ -109,7 +109,7 @@ async function runWorkload(path) {
 
     const table = page.locator('lv-report-table')
     const filterValues = ['SP', 'RJ', 'MG', 'PR']
-    const filter = page.getByRole('button', { name: /^State:/ })
+    const filter = page.locator('lv-slicer').getByRole('button', { name: /^State:/ })
     for (let index = 0; index < policy.assumptions.samples.filterInteractions; index += 1) {
       const value = filterValues[index % filterValues.length]
       if (index > 0) {
@@ -126,7 +126,7 @@ async function runWorkload(path) {
       await page.keyboard.press('Escape')
       await options.waitFor({ state: 'hidden', timeout: 30_000 })
       await table.locator('.row:not(.skeleton-row) button.cell-action').first().waitFor({ state: 'visible', timeout: 30_000 })
-      await table.locator(`button.cell-action[aria-label="state: ${value}"]`).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator(`button.cell-action[aria-label="State: ${value}"]`).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
     }

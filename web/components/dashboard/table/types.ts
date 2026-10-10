@@ -35,7 +35,12 @@ export interface TableColumn {
   visualizationFormat?: VisualizationFormat
   formatting?: TableFormattingRule[]
   conditionalFormatting?: VisualizationConditionalFormat[]
+  content?: TableCellContent
 }
+
+export type TableCellContent =
+  | { kind: 'image'; display: 'inline' | 'tooltip'; width?: number; height?: number; altField?: string }
+  | { kind: 'link'; labelField?: string; newTab?: boolean }
 
 export interface TableFormattingRule {
   kind: 'badge' | 'text_color' | 'background_scale' | 'data_bar'
@@ -64,6 +69,11 @@ export interface InteractionConfig {
 
 export type TableRow = Record<string, unknown>
 
+export type TableHierarchy =
+  | { mode: 'levels'; fields: string[]; label?: string; defaultExpandedDepth?: number }
+  | { mode: 'parent_child'; idField: string; parentField: string; labelField: string; defaultExpandedDepth?: number }
+  | { mode: 'nested'; childrenField: string; labelField: string; idField?: string; defaultExpandedDepth?: number }
+
 export interface TableBlock {
   start: number
   requestSeq: number
@@ -82,6 +92,7 @@ export interface TableSignal {
   selection?: InteractionSelectionEntry[]
   highlight?: { active: boolean; announcement: string }
   columns: TableColumn[]
+  hierarchy?: TableHierarchy
   cardinality: TableCardinality
   availableRows: number
   isCapped: boolean

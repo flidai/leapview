@@ -228,6 +228,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private pendingVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
   private reversibleVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
   private copiedVisual: BuilderClipboard | null = null
+  private readonly formatColumnOpen = new Map<string, boolean>()
   private readonly visualizationDecoder = new BuilderVisualizationState()
   private gridInteracting = false
   private previewResizeSuspended = false
@@ -1861,6 +1862,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     `
   }
 
+  private readonly handleVisualSizeChange = (event: Event): void => {
+    const height = (event as CustomEvent<{ height: number }>).detail.height
+    if (Number.isFinite(height) && height >= 0) {
+      (event.currentTarget as HTMLElement).style.setProperty('--lv-table-content-height', `${height}px`)
+    }
+  }
+
   private renderVisual(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal, previews: Record<string, VisualizationEnvelope>) {
     const selected = visual.id === this.effectiveVisualID(this.builder, page)
     const visualType = this.visualTypeForRender(visual)
@@ -1881,7 +1889,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const previewLoading = visualTypeSwitchPending || Boolean(this.builder?.preview.loading)
     const fallbackMessage = this.builder?.preview.error ? 'Preview unavailable. Try again after the draft is valid.' : 'Add fields to preview.'
     return html`
-      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${styleMap({ '--mobile-order': mobileOrder })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
+      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-table-allocation @lv-visualization-size-change=${this.handleVisualSizeChange} data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${styleMap({ '--mobile-order': mobileOrder })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
             ? keyed(preview.dataState.kind === 'windowed' ? `${visual.id}:${preview.specRevision}:${this.builderFilterState.revision}` : visual.id, html`<span class="visual-preview"><lv-visualization-host .resizeSuspended=${this.previewResizeSuspended} ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`)
@@ -2378,13 +2386,29 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             </label>
             ${this.renderFormatToggle(visual, 'title-visible', 'Show title', visual.titleVisible !== false, editable, 'titleVisible')}
           </div>
-          ${[...sections.entries()].map(([section, options]) => html`
-            <div class="format-section" data-format-section=${section}>
-              <h3>${section}</h3>
-              ${options.map((option) => this.renderFormatOption(visual, option, editable))}
-              ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
-            </div>
-          `)}
+          ${[...sections.entries()].map(([section, options]) => {
+            const display = options.find(option => option.key.startsWith('cellContent.') && option.key.endsWith('.displayAs'))
+            if (display) {
+              const key = JSON.stringify([this.builder?.dashboardId, visual.visualId ?? visual.id, display.key])
+              const open = this.formatColumnOpen.get(key) ?? display.value !== 'text'
+              return html`
+                <details class="format-section format-column" data-format-section=${section} ?open=${open}
+                  @toggle=${(event: Event) => this.formatColumnOpen.set(key, (event.currentTarget as HTMLDetailsElement).open)}>
+                  <summary>${section}</summary>
+                  <div class="format-column-controls">
+                    ${options.map(option => this.renderFormatOption(visual, option, editable))}
+                  </div>
+                </details>
+              `
+            }
+            return html`
+              <div class="format-section" data-format-section=${section}>
+                <h3>${section}</h3>
+                ${options.map((option) => this.renderFormatOption(visual, option, editable))}
+                ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
+              </div>
+            `
+          })}
           ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no additional formatting controls. Configure advanced options in dashboard code.</p>` : nothing}
           ${reference ? html`<a class="visual-reference-link" href=${reference.referenceHref}>View every ${reference.label} option in the visual reference</a>` : nothing}
         </section>
@@ -2393,31 +2417,59 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderFormatOption(visual: DashboardBuilderVisualSignal, option: DashboardBuilderFormatOptionSignal, editable: boolean) {
+    const descriptionID = `format-help-${encodeURIComponent(visual.id)}-${encodeURIComponent(option.key)}`
+    const description = option.description
+      ? html`<p class="pane-hint" id=${descriptionID}>${option.description}</p>` : nothing
     if (option.control === 'toggle') {
       return html`
-        <label class="format-toggle">
-          <span>${option.label}</span>
-          <input type="checkbox" data-format-control=${option.key} aria-label=${option.label} .checked=${option.value === 'true'} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualFormatOption(visual, option.key, String((event.currentTarget as HTMLInputElement).checked))} />
-        </label>
+        <div class="format-option">
+          <label class="format-toggle">
+            <span>${option.label}</span>
+            <input type="checkbox" data-format-control=${option.key} aria-label=${option.label} aria-describedby=${option.description ? descriptionID : nothing} .checked=${option.value === 'true'} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualFormatOption(visual, option.key, String((event.currentTarget as HTMLInputElement).checked))} />
+          </label>
+          ${description}
+        </div>
       `
     }
     if (option.control === 'select') {
       return html`
-        <label class="format-text-field">
-          <span>${option.label}</span>
-          <select data-format-control=${option.key} aria-label=${option.label} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualFormatOption(visual, option.key, (event.currentTarget as HTMLSelectElement).value)}>
-            ${option.choices.map((choice) => html`<option value=${choice.value} ?selected=${choice.value === option.value}>${choice.label}</option>`)}
-          </select>
-        </label>
+        <div class="format-option">
+          <label class="format-text-field">
+            <span>${option.label}</span>
+            <select data-format-control=${option.key} aria-label=${option.label} aria-describedby=${option.description ? descriptionID : nothing} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualFormatOption(visual, option.key, (event.currentTarget as HTMLSelectElement).value)}>
+              ${option.choices.map((choice) => html`<option value=${choice.value} ?selected=${choice.value === option.value}>${choice.label}</option>`)}
+            </select>
+          </label>
+          ${description}
+        </div>
       `
     }
     const inputType = option.control === 'number' ? 'number' : 'text'
     return html`
-      <label class="format-text-field">
-        <span>${option.label}</span>
-        <input type=${inputType} maxlength=${inputType === 'text' ? '256' : nothing} step=${inputType === 'number' ? 'any' : nothing} data-format-control=${option.key} aria-label=${option.label} placeholder=${option.placeholder ?? ''} .value=${option.value} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualFormatOption(visual, option.key, (event.currentTarget as HTMLInputElement).value)} />
-      </label>
+      <div class="format-option">
+        <label class="format-text-field">
+          <span>${option.label}</span>
+          <input type=${inputType} maxlength=${inputType === 'text' ? '256' : nothing}
+            min=${inputType === 'number' ? option.min ?? nothing : nothing}
+            max=${inputType === 'number' ? option.max ?? nothing : nothing}
+            step=${inputType === 'number' ? option.step ?? 'any' : nothing}
+            data-format-control=${option.key} aria-label=${option.label} aria-describedby=${option.description ? descriptionID : nothing}
+            placeholder=${option.placeholder ?? ''} .value=${option.value} ?disabled=${!editable}
+            @change=${(event: Event) => this.commitVisualFormatInput(visual, option, event)} />
+        </label>
+        ${description}
+      </div>
     `
+  }
+
+  private commitVisualFormatInput(visual: DashboardBuilderVisualSignal, option: DashboardBuilderFormatOptionSignal, event: Event): void {
+    const input = event.currentTarget as HTMLInputElement
+    if (option.control === 'number' && !input.checkValidity()) {
+      input.reportValidity()
+      return
+    }
+    const value = option.control === 'number' && input.value !== '' ? String(input.valueAsNumber) : input.value
+    this.updateVisualFormatOption(visual, option.key, value)
   }
 
   private renderFormatToggle(visual: DashboardBuilderVisualSignal, control: string, label: string, checked: boolean, enabled: boolean, field: keyof Omit<BuilderVisualFormatPatch, 'title'>) {

@@ -1127,6 +1127,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 			&& reference.reference.id === askReference.reference.id) : false
     return html`
               <lv-dashboard-visual-frame
+                data-table-allocation
                 data-canvas-visual
                 data-component-kind=${component.kind}
                 data-visual-type=${visualType}
@@ -1604,6 +1605,10 @@ class DashboardVisualFrame extends LitElement {
       box-sizing: border-box;
     }
 
+    :host(:has(lv-visualization-host[data-table-fit])) .frame {
+      height: min(100%, calc(var(--lv-table-content-height, 100%) + 2px));
+    }
+
 		:host([data-agent-referenced]) .frame {
 			box-shadow: inset 0 0 0 2px var(--lv-line-accent);
 		}
@@ -1641,7 +1646,7 @@ class DashboardVisualFrame extends LitElement {
 
   render() {
     return html`
-      <article class="frame" @lv-visual-options-toggle=${this.handleVisualOptionsToggle}>
+      <article class="frame" @lv-visualization-size-change=${this.handleVisualSizeChange} @lv-visual-options-toggle=${this.handleVisualOptionsToggle}>
         <slot></slot>
       </article>
     `
@@ -1649,6 +1654,11 @@ class DashboardVisualFrame extends LitElement {
 
   private handleVisualOptionsToggle = (event: CustomEvent<{ open?: boolean }>): void => {
     this.toggleAttribute('data-visual-options-open', event.detail?.open === true)
+  }
+
+  private readonly handleVisualSizeChange = (event: Event): void => {
+    const height = (event as CustomEvent<{ height: number }>).detail.height
+    if (Number.isFinite(height) && height >= 0) this.style.setProperty('--lv-table-content-height', `${height}px`)
   }
 }
 

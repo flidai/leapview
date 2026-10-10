@@ -1028,6 +1028,8 @@ model TableDashboardPresentation extends DashboardPresentation {
   rowHeight: int32;
   showHeader: boolean;
   striped: boolean;
+  hierarchy?: LeapViewVisualization.GridRowHierarchy;
+  cellContent?: Record<LeapViewVisualization.TableCellContent>;
 }
 
 model KPIDashboardPresentation extends DashboardPresentation {

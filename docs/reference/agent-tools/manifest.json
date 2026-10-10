@@ -6150,6 +6150,7 @@
                           },
                           "type": "array"
                         },
+                        "targets": {},
                         "toggle": {
                           "type": "boolean"
                         },
@@ -6274,6 +6275,7 @@
                           },
                           "type": "array"
                         },
+                        "targets": {},
                         "type": {
                           "enum": [
                             "spatialSelection"
@@ -7151,6 +7153,8 @@
                         },
                         "type": "array"
                       },
+                      "axisVisible": {},
+                      "conditionalFormatting": {},
                       "dataZoom": {
                         "type": "boolean"
                       },
@@ -8929,6 +8933,7 @@
                         },
                         "type": "array"
                       },
+                      "axisVisible": {},
                       "brush": {
                         "items": {
                           "enum": [
@@ -8967,6 +8972,7 @@
                         ],
                         "type": "object"
                       },
+                      "conditionalFormatting": {},
                       "eventAnnotations": {
                         "items": {
                           "additionalProperties": false,
@@ -10539,9 +10545,11 @@
                         ],
                         "type": "string"
                       },
+                      "axisVisible": {},
                       "centerLabel": {
                         "type": "string"
                       },
+                      "conditionalFormatting": {},
                       "displayUnits": {
                         "enum": [
                           "auto",
@@ -11462,9 +11470,11 @@
                       }
                     ],
                     "properties": {
+                      "axisVisible": {},
                       "breadcrumb": {
                         "type": "boolean"
                       },
+                      "conditionalFormatting": {},
                       "curveness": {
                         "type": "number"
                       },
@@ -12138,6 +12148,8 @@
                       "area": {
                         "type": "boolean"
                       },
+                      "axisVisible": {},
+                      "conditionalFormatting": {},
                       "displayUnits": {
                         "enum": [
                           "auto",
@@ -12827,6 +12839,7 @@
                       }
                     ],
                     "properties": {
+                      "axisVisible": {},
                       "basemap": {
                         "type": "string"
                       },
@@ -12862,6 +12875,7 @@
                         },
                         "type": "object"
                       },
+                      "conditionalFormatting": {},
                       "controls": {
                         "additionalProperties": false,
                         "properties": {
@@ -13234,6 +13248,7 @@
                                   },
                                   "type": "object"
                                 },
+                                "id": {},
                                 "kind": {
                                   "enum": [
                                     "point"
@@ -13255,9 +13270,12 @@
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                   "type": "string"
                                 },
+                                "maximumZoom": {},
+                                "minimumZoom": {},
                                 "opacity": {
                                   "type": "number"
                                 },
+                                "position": {},
                                 "size": {
                                   "additionalProperties": false,
                                   "properties": {
@@ -13291,6 +13309,7 @@
                                   },
                                   "type": "object"
                                 },
+                                "tooltip": {},
                                 "value": {
                                   "minLength": 1,
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -13629,6 +13648,7 @@
                                 "geometryAsset": {
                                   "type": "string"
                                 },
+                                "id": {},
                                 "join": {
                                   "minLength": 1,
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -13645,9 +13665,12 @@
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                   "type": "string"
                                 },
+                                "maximumZoom": {},
+                                "minimumZoom": {},
                                 "opacity": {
                                   "type": "number"
                                 },
+                                "position": {},
                                 "stroke": {
                                   "additionalProperties": false,
                                   "properties": {
@@ -13663,6 +13686,7 @@
                                   },
                                   "type": "object"
                                 },
+                                "tooltip": {},
                                 "value": {
                                   "minLength": 1,
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -13996,15 +14020,19 @@
                                 "geometryAsset": {
                                   "type": "string"
                                 },
+                                "id": {},
                                 "kind": {
                                   "enum": [
                                     "reference"
                                   ],
                                   "type": "string"
                                 },
+                                "maximumZoom": {},
+                                "minimumZoom": {},
                                 "opacity": {
                                   "type": "number"
                                 },
+                                "position": {},
                                 "stroke": {
                                   "additionalProperties": false,
                                   "properties": {
@@ -14019,7 +14047,8 @@
                                     }
                                   },
                                   "type": "object"
-                                }
+                                },
+                                "tooltip": {}
                               },
                               "required": [
                                 "geometryAsset",
@@ -14356,6 +14385,7 @@
                                   },
                                   "type": "object"
                                 },
+                                "id": {},
                                 "kind": {
                                   "enum": [
                                     "heat"
@@ -14372,9 +14402,13 @@
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                   "type": "string"
                                 },
+                                "maximumZoom": {},
+                                "minimumZoom": {},
                                 "opacity": {
                                   "type": "number"
                                 },
+                                "position": {},
+                                "tooltip": {},
                                 "value": {
                                   "minLength": 1,
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -14717,6 +14751,7 @@
                                   },
                                   "type": "object"
                                 },
+                                "id": {},
                                 "kind": {
                                   "enum": [
                                     "density"
@@ -14733,9 +14768,13 @@
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                   "type": "string"
                                 },
+                                "maximumZoom": {},
+                                "minimumZoom": {},
                                 "opacity": {
                                   "type": "number"
                                 },
+                                "position": {},
+                                "tooltip": {},
                                 "value": {
                                   "minLength": 1,
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -15071,6 +15110,7 @@
                                   },
                                   "type": "object"
                                 },
+                                "id": {},
                                 "kind": {
                                   "enum": [
                                     "path"
@@ -15096,6 +15136,8 @@
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                   "type": "string"
                                 },
+                                "maximumZoom": {},
+                                "minimumZoom": {},
                                 "opacity": {
                                   "type": "number"
                                 },
@@ -15109,6 +15151,7 @@
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                   "type": "string"
                                 },
+                                "position": {},
                                 "stroke": {
                                   "additionalProperties": false,
                                   "properties": {
@@ -15124,6 +15167,7 @@
                                   },
                                   "type": "object"
                                 },
+                                "tooltip": {},
                                 "value": {
                                   "minLength": 1,
                                   "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -15721,6 +15765,237 @@
                       }
                     ],
                     "properties": {
+                      "axisVisible": {},
+                      "cellContent": {
+                        "additionalProperties": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "allOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "type": "object"
+                                }
+                              ],
+                              "properties": {
+                                "altField": {
+                                  "type": "string"
+                                },
+                                "display": {
+                                  "enum": [
+                                    "inline",
+                                    "tooltip"
+                                  ],
+                                  "type": "string"
+                                },
+                                "height": {
+                                  "maximum": 512,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "kind": {
+                                  "enum": [
+                                    "image"
+                                  ],
+                                  "type": "string"
+                                },
+                                "width": {
+                                  "maximum": 512,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "display",
+                                "kind"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "allOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "type": "object"
+                                }
+                              ],
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "link"
+                                  ],
+                                  "type": "string"
+                                },
+                                "labelField": {
+                                  "type": "string"
+                                },
+                                "newTab": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "object"
+                      },
+                      "conditionalFormatting": {},
+                      "hierarchy": {
+                        "oneOf": [
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "description": "Tree rows are expanded locally over the complete governed result frame.",
+                                "properties": {
+                                  "defaultExpandedDepth": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "mode"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "defaultExpandedDepth": {},
+                              "fields": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "enum": [
+                                  "levels"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fields",
+                              "mode"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "description": "Tree rows are expanded locally over the complete governed result frame.",
+                                "properties": {
+                                  "defaultExpandedDepth": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "mode"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "defaultExpandedDepth": {},
+                              "idField": {
+                                "type": "string"
+                              },
+                              "labelField": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "enum": [
+                                  "parent_child"
+                                ],
+                                "type": "string"
+                              },
+                              "parentField": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "idField",
+                              "labelField",
+                              "mode",
+                              "parentField"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "description": "Tree rows are expanded locally over the complete governed result frame.",
+                                "properties": {
+                                  "defaultExpandedDepth": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "mode": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "mode"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "childrenField": {
+                                "type": "string"
+                              },
+                              "defaultExpandedDepth": {},
+                              "idField": {
+                                "type": "string"
+                              },
+                              "labelField": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "enum": [
+                                  "nested"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "childrenField",
+                              "labelField",
+                              "mode"
+                            ],
+                            "type": "object"
+                          }
+                        ]
+                      },
                       "rowHeight": {
                         "type": "integer"
                       },
@@ -16300,6 +16575,7 @@
                       }
                     ],
                     "properties": {
+                      "axisVisible": {},
                       "comparison": {
                         "additionalProperties": false,
                         "description": "A governed numeric result used for a KPI comparison or goal.",
@@ -16337,6 +16613,7 @@
                         ],
                         "type": "object"
                       },
+                      "conditionalFormatting": {},
                       "delta": {
                         "enum": [
                           "absolute",
