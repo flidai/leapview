@@ -22,7 +22,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 )
 
-const qualificationBrowserImage = "mcr.microsoft.com/playwright:v1.63.0-noble"
+const qualificationBrowserImage = "mcr.microsoft.com/playwright:v1.64.0-noble"
 
 const (
 	qualificationReviewerEmail = "authoring-reviewer@qualification.invalid"
