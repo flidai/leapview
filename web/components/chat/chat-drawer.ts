@@ -17,6 +17,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
+import { wrapModalTab } from '../shared/modal-focus'
 import { chatVisualsFromSignals } from './visual-signals'
 import './chat-visual-panel'
 import './chat-composer'
@@ -72,6 +73,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ attribute: false }) commandError = ''
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
   @property({ attribute: false }) dashboardSavedVisualIds: string[] = []
+  @state() private covering = false
+  private coverObserver: ResizeObserver | null = null
   @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
@@ -94,16 +97,28 @@ class ChatDrawer extends DatastarLit(LitElement) {
     super.connectedCallback()
     window.addEventListener('popstate', this.syncExpandedLocation)
     this.syncExpandedLocation()
+    this.coverObserver = new ResizeObserver(this.syncCovering)
+    this.coverObserver.observe(this)
+    window.addEventListener('resize', this.syncCovering)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('popstate', this.syncExpandedLocation)
+    window.removeEventListener('resize', this.syncCovering)
+    this.coverObserver?.disconnect()
+    this.coverObserver = null
     super.disconnectedCallback()
+  }
+
+  private syncCovering = (): void => {
+    const covering = this.open && (this.expanded || (!this.embedded && getComputedStyle(this).position === 'fixed'))
+    if (covering !== this.covering) this.covering = covering
   }
 
   private syncExpandedLocation = (): void => {
     this.expanded = new URL(window.location.href).searchParams.get('chat') === 'expanded'
     if (this.expanded) this.open = true
+    this.syncCovering()
   }
 
   private toggleExpanded = async (): Promise<void> => {
@@ -197,6 +212,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
   protected updated(changed: Map<string, unknown>): void {
+    this.syncCovering()
 		this.syncEditState()
 		if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
     if (!changed.has('open')) return
@@ -263,7 +279,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
       @lv-chat-edit-cancel=${this.cancelEdit}
     ></lv-chat-composer>`
     return html`
-		<aside class=${showWelcome ? 'drawer welcome-mode' : 'drawer'} role="dialog" aria-modal="false" aria-label=${agentTitle} aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
+		<aside class=${showWelcome ? 'drawer welcome-mode' : 'drawer'} role="dialog" aria-modal=${String(this.covering)} aria-label=${agentTitle} aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
         <header class="header">
           <div class="toolbar">
             <div class="title">${agentIcon()}<span>${agentTitle}</span></div>
@@ -395,6 +411,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
   private handleKeydown = (event: KeyboardEvent): void => {
+    if (this.open && this.covering) wrapModalTab(event, this.renderRoot)
     if (event.key !== 'Escape' || !this.open || event.defaultPrevented) return
     event.preventDefault()
     event.stopPropagation()

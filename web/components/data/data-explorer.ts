@@ -242,6 +242,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       min-height: 0;
     }
 
+    lv-chat-drawer:not([open]) { display: none; }
+
     /* Use the existing full-screen drawer mode when this container cannot
        fit both a useful query surface and the 28rem agent pane. */
     @container explorer (max-width: 900px) {
@@ -660,11 +662,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (!this.embedded && window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
     if (!this.agentStateInitialized) {
       const stored = this.agentStateController.initialize()
-      this.agentDrawerOpen = stored.open
+      this.agentDrawerOpen = stored.open || new URL(window.location.href).searchParams.get('chat') === 'expanded'
+      this.agentStateController.setOpen(this.agentDrawerOpen)
       this.restoredAgentConversationId = stored.conversationId
       this.agentStateInitialized = true
     }
     if (typeof document !== 'undefined') document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+    window.addEventListener('popstate', this.handleAgentLocation)
     document.addEventListener('pointerdown', this.savedViewController.handleOutsidePointer)
     document.addEventListener('pointerdown', this.handleSemanticFieldsOutsidePointer)
     super.connectedCallback()
@@ -675,6 +679,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     window.clearTimeout(this.filterSuggestionTimer)
     this.browserResizeCleanup?.()
     if (typeof document !== 'undefined') document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    window.removeEventListener('popstate', this.handleAgentLocation)
     document.removeEventListener('pointerdown', this.savedViewController.handleOutsidePointer)
     document.removeEventListener('pointerdown', this.handleSemanticFieldsOutsidePointer)
     super.disconnectedCallback()
@@ -897,8 +902,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 : loading ? 'Loading Data Explorer…' : 'No data objects are available.'}</p>`}
           </main>
         </div>
-        ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
-          open
+        ${agentEnabled ? html`<lv-chat-drawer
+          .open=${this.agentDrawerOpen}
           .commandError=${this.agentCommandError}
           @lv-chat-submit=${this.handleAgentSubmit}
           .suggestions=${dataExplorerAgentSuggestions(explorer, this.optimisticExplore ?? explorer.explore.command, this.page?.context)}
@@ -1251,6 +1256,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.agentRestoreDispatched = true
     this.agentStateController.newConversation()
     this.persistAgentState()
+  }
+
+  private handleAgentLocation = (): void => {
+    if (new URL(window.location.href).searchParams.get('chat') === 'expanded') this.setAgentDrawerOpen(true)
   }
 
   private setAgentDrawerOpen(open: boolean): void {

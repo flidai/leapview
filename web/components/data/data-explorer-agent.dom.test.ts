@@ -7,6 +7,7 @@ let baseURL = ''
 let browser: Browser
 let inspectorModule = ''
 let appCSS = ''
+let appShellModule = ''
 
 beforeAll(async () => {
   fixture = await createDataExplorerDOMFixture()
@@ -17,6 +18,9 @@ beforeAll(async () => {
   })
   if (!inspectorBuild.success) throw new Error('Inspector fixture build failed')
   inspectorModule = await inspectorBuild.outputs[0].text()
+  const shellBuild = await Bun.build({ entrypoints: ['web/components/app/app-shell.ts'], target: 'browser', format: 'esm' })
+  if (!shellBuild.success) throw new Error('App shell fixture build failed')
+  appShellModule = await shellBuild.outputs[0].text()
   const cssPath = '.tmp/data-explorer-test/agent-inspector-app.css'
   const cssBuild = Bun.spawn(['./node_modules/.bin/tailwindcss', '-i', './static/app.input.css', '-o', cssPath], {
     stdout: 'ignore', stderr: 'pipe',
@@ -136,7 +140,10 @@ test('Explorer agent waits for governed data context while keeping active Stop r
     })
     expect(await composer.getByRole('combobox').isEnabled()).toBe(true)
     await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
-    expect(await explorer.locator('lv-chat-drawer').count()).toBe(0)
+    expect(await explorer.locator('lv-chat-drawer').count()).toBe(1)
+      expect(await explorer.locator('lv-chat-drawer').isVisible()).toBe(false)
+      expect(await explorer.locator('lv-chat-drawer').getAttribute('open')).toBeNull()
+      expect(await explorer.locator('lv-chat-drawer').locator('aside').getAttribute('inert')).toBe('')
   } finally { await page.close() }
 })
 
@@ -183,13 +190,19 @@ for (const width of [375, 767, 768, 769, 1024, 1280, 1440]) {
       }
       await explorer.locator('lv-chat-drawer').getByRole('button', { name: 'Close agent', exact: true }).click()
       await explorer.evaluate((element: any) => element.updateComplete)
-      expect(await explorer.locator('lv-chat-drawer').count()).toBe(0)
+      expect(await explorer.locator('lv-chat-drawer').count()).toBe(1)
+      expect(await explorer.locator('lv-chat-drawer').isVisible()).toBe(false)
+      expect(await explorer.locator('lv-chat-drawer').getAttribute('open')).toBeNull()
+      expect(await explorer.locator('lv-chat-drawer').locator('aside').getAttribute('inert')).toBe('')
       expect((await geometry()).headerWidth).toBe(closed.headerWidth)
       expect(await ask.getAttribute('aria-expanded')).toBe('false')
       await ask.click()
       await explorer.locator('lv-chat-drawer').getByRole('button', { name: 'Close agent', exact: true }).press('Escape')
       await explorer.evaluate((element: any) => element.updateComplete)
-      expect(await explorer.locator('lv-chat-drawer').count()).toBe(0)
+      expect(await explorer.locator('lv-chat-drawer').count()).toBe(1)
+      expect(await explorer.locator('lv-chat-drawer').isVisible()).toBe(false)
+      expect(await explorer.locator('lv-chat-drawer').getAttribute('open')).toBeNull()
+      expect(await explorer.locator('lv-chat-drawer').locator('aside').getAttribute('inert')).toBe('')
       expect((await geometry()).headerWidth).toBe(closed.headerWidth)
     } finally {
       await page.close()
@@ -256,15 +269,20 @@ for (const width of [375, 390, 768]) {
 
 
 
-async function openTransportAgent(page: Page, command = false) {
+async function openTransportAgent(page: Page, command = false, styled = false, expanded = false) {
   if (command) await page.route(baseURL + '/', route => route.fulfill({ contentType: 'text/html', body: `
     <!doctype html><main data-signals="{}"></main>
     <lv-data-explorer data-indicator="agentTurnPending" data-on:lv-chat-submit="$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; @post('/chats/turns', {retry: 'never', retryMaxCount: 0, openWhenHidden: true})"></lv-data-explorer>
     <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
     <script type="module" src="/data-explorer-under-test.js"></script>` }))
-  await page.goto(baseURL)
+  await page.goto(expanded ? baseURL + '/?chat=expanded' : baseURL)
   await page.waitForFunction(() => customElements.get('lv-data-explorer'))
-  await page.evaluate(async () => {
+  if (styled) {
+    await page.addStyleTag({ content: appCSS })
+    await page.addScriptTag({ type: 'module', content: appShellModule })
+    await page.waitForFunction(() => customElements.get('lv-app-shell'))
+  }
+  await page.evaluate(async (styled) => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
     mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] },
       agent: { conversations: [], activeConversationId: 'existing-conversation',
@@ -275,13 +293,21 @@ async function openTransportAgent(page: Page, command = false) {
         exploration: { schemaVersion: 1, modelId: 'governed-model', datasetId: 'governed-dataset',
           dimensions: [], metrics: [], filters: [], sort: [], limit: 10 } } })
     const element = document.querySelector('lv-data-explorer') as any ?? document.createElement('lv-data-explorer')
-    if (!element.isConnected) document.body.append(element)
+    if (styled) {
+      const shell = document.createElement('lv-app-shell')
+      element.slot = 'page'
+      shell.append(element)
+      document.body.append(shell)
+    } else if (!element.isConnected) document.body.append(element)
     element.requestUpdate(); await element.updateComplete
     ;(window as any).fetchFinished = 0
     document.addEventListener('datastar-fetch', event => { if ((event as CustomEvent).detail.type === 'finished') (window as any).fetchFinished++ })
-  })
+  }, styled)
   const explorer = page.locator('lv-data-explorer')
-  await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).click()
+  await explorer.locator('lv-chat-drawer').evaluate((element: any) => element.updateComplete)
+  if (await explorer.locator('lv-chat-drawer').getAttribute('open') === null) {
+    await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).click()
+  }
   await explorer.locator('lv-chat-drawer lv-chat-composer textarea').waitFor()
   return explorer
 }
@@ -501,3 +527,113 @@ for (const width of [375, 768, 1440]) {
     }
   }, 15_000)
 }
+
+
+async function styledFocus(page: Page) {
+  return page.evaluate(() => {
+    let focused = document.activeElement as HTMLElement | null
+    while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement as HTMLElement
+    const rect = focused?.getBoundingClientRect()
+    let inside = false
+    for (let node: Node | null = focused; node; node = node.parentNode ?? (node.getRootNode() as ShadowRoot).host ?? null) {
+      if (node instanceof Element && node.localName === 'lv-chat-drawer') inside = true
+    }
+    let hit = rect ? document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) : null
+    while (hit?.shadowRoot) {
+      const next = hit.shadowRoot.elementFromPoint(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2)
+      if (!next || next === hit) break
+      hit = next
+    }
+    let reachable = false
+    for (let node: Node | null = hit; node; node = node.parentNode ?? (node.getRootNode() as ShadowRoot).host ?? null) {
+      if (node === focused) reachable = true
+    }
+    return { inside, reachable, label: focused?.getAttribute('aria-label'), visible: Boolean(rect && rect.width > 0 && rect.height > 0
+      && rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight) }
+  })
+}
+
+for (const width of [375, 1440]) test(`styled Explorer preserves draft and references across Close and Escape at ${width}px`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  try {
+    const explorer = await openTransportAgent(page, false, true)
+    const drawer = explorer.locator('lv-chat-drawer'), input = drawer.locator('lv-chat-composer textarea')
+    const draft = 'Unsent governed question with trailing spaces  '
+    await drawer.evaluate((element: any) => element.openWithReference({ reference: { kind: 'dataset', id: 'governed-dataset' }, name: 'Governed dataset' }))
+    await input.fill(draft)
+    for (const close of ['button', 'escape']) {
+      if (close === 'button') await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+      else await input.press('Escape')
+      await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).click()
+      expect(await input.inputValue()).toBe(draft)
+      expect(await drawer.locator('lv-chat-composer').evaluate((element: any) => element.references.map((item: any) => item.reference.id))).toEqual(['governed-dataset'])
+      expect((await styledFocus(page)).inside).toBe(true)
+    }
+    await drawer.getByRole('button', { name: 'New chat', exact: true }).click()
+    expect(await input.inputValue()).toBe('')
+    expect(await drawer.locator('lv-chat-composer').evaluate((element: any) => element.references)).toEqual([])
+  } finally { await page.close() }
+})
+
+for (const width of [375, 768, 1440]) test(`styled covering Explorer chat contains composed keyboard focus and restores alongside mode at ${width}px`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  try {
+    const explorer = await openTransportAgent(page, false, true)
+    const drawer = explorer.locator('lv-chat-drawer'), input = drawer.locator('lv-chat-composer textarea')
+    const first = drawer.getByRole('button', { name: 'New chat', exact: true })
+    const last = drawer.getByRole('button', { name: 'Send', exact: true })
+    await input.fill('Preserve this responsive draft')
+    if (width === 1440) {
+      await first.focus(); await page.keyboard.press('Shift+Tab')
+      expect(await styledFocus(page)).toMatchObject({ inside: false, visible: true, reachable: true })
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).click()
+    }
+    await last.focus(); await page.keyboard.press('Tab')
+    expect(await styledFocus(page)).toMatchObject({ inside: true, label: 'New chat', visible: true, reachable: true })
+    await page.keyboard.press('Shift+Tab')
+    expect(await styledFocus(page)).toMatchObject({ inside: true, label: 'Send', visible: true, reachable: true })
+    expect(await drawer.getByRole('dialog').getAttribute('aria-modal')).toBe('true')
+    if (width !== 1440) {
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.waitForFunction(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('aside')?.getAttribute('aria-modal') === 'false')
+      await first.focus(); await page.keyboard.press('Shift+Tab')
+      expect(await styledFocus(page)).toMatchObject({ inside: false, visible: true, reachable: true })
+      await page.setViewportSize({ width, height: 900 })
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).click()
+    }
+    await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+    expect(await drawer.getByRole('dialog').isVisible()).toBe(true)
+    expect(await input.inputValue()).toBe('Preserve this responsive draft')
+    expect(await drawer.getByRole('button', { name: 'Expand chat', exact: true }).count()).toBe(1)
+    await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+    expect(await styledFocus(page)).toMatchObject({ inside: false, label: 'Ask about this data', visible: true, reachable: true })
+  } finally { await page.close() }
+})
+
+
+for (const width of [375, 1440]) test(`expanded Explorer URL and history keep parent and drawer open state consistent at ${width}px`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  try {
+    const explorer = await openTransportAgent(page, false, true, true)
+    const drawer = explorer.locator('lv-chat-drawer'), input = drawer.locator('lv-chat-composer textarea')
+    expect(await drawer.getByRole('dialog').getAttribute('aria-modal')).toBe('true')
+    expect(await explorer.getAttribute('data-agent-open')).toBe('')
+    await input.fill('Retain this history draft')
+    await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+    expect(await drawer.getByRole('dialog').isVisible()).toBe(true)
+    expect(new URL(page.url()).searchParams.get('chat')).toBeNull()
+    await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+    expect(await drawer.isVisible()).toBe(false)
+    expect(await explorer.getAttribute('data-agent-open')).toBeNull()
+    await page.evaluate(() => {
+      const url = new URL(location.href)
+      url.searchParams.set('chat', 'expanded')
+      history.pushState(null, '', url)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await drawer.getByRole('dialog').waitFor({ state: 'visible' })
+    expect(await explorer.getAttribute('data-agent-open')).toBe('')
+    expect(await drawer.getByRole('dialog').getAttribute('aria-modal')).toBe('true')
+    expect(await input.inputValue()).toBe('Retain this history draft')
+  } finally { await page.close() }
+})

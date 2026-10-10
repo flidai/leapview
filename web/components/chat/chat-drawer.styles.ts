@@ -15,6 +15,8 @@ export const chatDrawerStyles = css`
       --lv-chat-stack-width: 100%;
     }
 
+    :host(:not([open])) { display: none; }
+
     :host([open]) {
 			width: 100%;
       border-left-width: 1px;
