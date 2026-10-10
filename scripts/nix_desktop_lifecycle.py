@@ -71,11 +71,10 @@ class Runtime:
             raise ValueError('retained Desktop archive bytes changed')
         desktop.validate_package_paths(archive)
         desktop.reject_maintainer_scripts(archive, Path(self.state['work']))
-        # APT's download-only step caches dependencies, but not this local deb.
-        # Unpack the verified archive directly, then configure it using only
-        # the cached dependencies while the network namespace is isolated.
-        desktop.run_command(['sudo', 'dpkg', '--unpack', str(archive)])
-        desktop.run_command(['sudo', 'apt-get', 'install', '--no-download', '--yes', '--fix-broken'])
+        # APT 2.4 needs local-file acquisition even for a retained .deb;
+        # --no-download leaves an unresolved cache basename. The executor's
+        # verified loopback-only namespace enforces offline installation.
+        desktop.run_command(['sudo', 'apt-get', 'install', '--yes', '--allow-downgrades', str(archive)])
         version = desktop.command_output(['dpkg-query', '-W', '-f=${Version}', desktop.PACKAGE_NAME])
         if version != value['version']:
             raise ValueError('installed package version differs from selected exact archive')

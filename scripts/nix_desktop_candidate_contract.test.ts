@@ -65,7 +65,6 @@ test('desktop lifecycle isolates execution and uploads only public exact-version
   const runtime = readFileSync('scripts/nix_desktop_lifecycle.py', 'utf8')
   expect(runtime).toContain("'--net', '--fork', '--kill-child=SIGKILL'")
   expect(runtime).toContain("'env', '-i'")
-  expect(runtime).toContain("'--no-download'")
   const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
   expect(tasks['ci:test:frontend:core'].cmds).toContain("python3 -m unittest discover -s scripts/tests -p 'test_nix_desktop_lifecycle*.py'")
 })

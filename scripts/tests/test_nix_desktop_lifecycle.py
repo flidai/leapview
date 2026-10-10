@@ -57,38 +57,15 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(runtime.events[-1], ('install', 'candidate'))
         self.assertEqual(len(runtime.events), 3)
 
-    def test_retained_archive_installs_without_apt_caching_the_local_deb(self):
-        state = {'work': '/private/work', 'packages': {'predecessor': {
-            'archive': '/private/predecessor.deb', 'sha256': 'retained',
-            'version': '0.1.0', 'staged': '/private/staged'}}}
-        unpacked = False
-        configured = False
-
-        def command(arguments):
-            nonlocal unpacked, configured
-            if arguments[1] == 'dpkg':
-                self.assertEqual(arguments[2:], ['--unpack', state['packages']['predecessor']['archive']])
-                unpacked = True
-            else:
-                self.assertIn('--no-download', arguments)
-                if not unpacked:
-                    raise ValueError('APT local archive is absent from its download cache')
-                self.assertIn('--fix-broken', arguments)
-                configured = True
-
-        def installed(*_):
-            self.assertTrue(configured)
-
-        with patch.object(lifecycle.desktop, 'digest_file', return_value='retained'), \
-             patch.object(lifecycle.desktop, 'validate_package_paths'), \
-             patch.object(lifecycle.desktop, 'reject_maintainer_scripts'), \
-             patch.object(lifecycle.desktop, 'run_command', side_effect=command), \
-             patch.object(lifecycle.desktop, 'command_output', return_value='0.1.0'), \
-             patch.object(lifecycle.desktop, 'installed_executable', side_effect=installed):
-            runtime = lifecycle.Runtime(state)
-            runtime.install('predecessor')
-            self.assertTrue(configured)
-            self.assertEqual(len(runtime.results), 1)
+    def test_changed_retained_archive_is_rejected_before_package_mutation(self):
+        runtime = lifecycle.Runtime({'packages': {'predecessor': {
+            'archive': '/private/predecessor.deb', 'sha256': 'sha256:' + 'a' * 64}}})
+        with patch.object(lifecycle.desktop, 'digest_file', return_value='sha256:' + 'b' * 64), \
+             patch.object(lifecycle.desktop, 'run_command') as mutate:
+            with self.assertRaisesRegex(ValueError, 'archive bytes changed'):
+                runtime.install('predecessor')
+            mutate.assert_not_called()
+        self.assertEqual(runtime.results, [])
 
     def test_offline_executor_rejects_host_interfaces_before_any_mutation(self):
         with patch.object(lifecycle.os, 'getuid', return_value=1000), \
