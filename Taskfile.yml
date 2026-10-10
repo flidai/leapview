@@ -334,16 +334,16 @@ tasks:
             -run '^Test(DemoUpgrade|HostUpgrade|UpgradeBoundary)' -count=1 -timeout=5m -v
       - |
         set -eu
-        recovery_tests="$(go test -list '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' ./internal/app/cli/hostinstall)"
-        for test_name in TestColdPostgreSQLPairRecovery TestInternalNetworkRecoveryRelay TestVolumeTLSMountQualification; do
+        recovery_tests="$(go test -list '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification|AgentProviderPrivateConfigContainer)$' ./internal/app/cli/hostinstall)"
+        for test_name in TestColdPostgreSQLPairRecovery TestInternalNetworkRecoveryRelay TestVolumeTLSMountQualification TestAgentProviderPrivateConfigContainer; do
           if ! printf '%s\n' "$recovery_tests" | grep -Fx "$test_name" >/dev/null; then
             printf 'required physical recovery test missing: %s\n' "$test_name" >&2
             exit 1
           fi
         done
-        LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
+        CGO_ENABLED=0 LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
           go test ./internal/app/cli/hostinstall \
-            -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' \
+            -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification|AgentProviderPrivateConfigContainer)$' \
             -count=1 -timeout=10m -v
 
   test:qualification:historical-transition:

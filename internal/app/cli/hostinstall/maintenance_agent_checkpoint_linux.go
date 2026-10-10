@@ -304,7 +304,9 @@ func (e *NativeEffects) startAgentCloneProvider(ctx context.Context, candidate d
 		stopped = true
 		return nil
 	}
-	_, err = e.docker(ctx, "run", "-d", "--name", name, "--network", e.clonePrefix(), "--ip", sidecarIP, "--restart=no", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--sysctl", "net.ipv4.ip_unprivileged_port_start=0", "--mount", "type=bind,src="+path+",dst=/run/agent-relay.json,readonly", "--entrypoint", "/usr/local/libexec/leapviewctl", e.id.Candidate, "host", "upgrade", "agent-relay", "--config", "/run/agent-relay.json")
+	// Only this isolated helper needs the controller's root-owned 0600 config;
+	// the application continues to use the candidate image's unprivileged user.
+	_, err = e.docker(ctx, "run", "-d", "--name", name, "--user", "0:0", "--network", e.clonePrefix(), "--ip", sidecarIP, "--restart=no", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--sysctl", "net.ipv4.ip_unprivileged_port_start=0", "--mount", "type=bind,src="+path+",dst=/run/agent-relay.json,readonly", "--entrypoint", "/usr/local/libexec/leapviewctl", e.id.Candidate, "host", "upgrade", "agent-relay", "--config", "/run/agent-relay.json")
 	if err != nil {
 		_ = cleanup()
 		return nil, errAgentTransition
