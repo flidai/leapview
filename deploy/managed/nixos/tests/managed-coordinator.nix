@@ -68,7 +68,11 @@ let
       useBootLoader = true;
       directBoot.enable = false;
       diskSize = lib.mkForce 8192;
+      fileSystems."/".autoResize = true;
     };
+    # The installed image starts at its closure size; grow its partition and
+    # filesystem to the declared disk before importing tools and recovery data.
+    boot.growPartition = true;
     boot.loader.timeout = 1;
     # Private POSIX transport tests the installed coordinator mechanics only.
     # Customer object-store credentials and protected artifacts remain gates.
