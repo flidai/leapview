@@ -708,7 +708,17 @@ tasks:
   ci:test:frontend:data:
     desc: Run administration and data browser tests
     cmds:
+      - task: ci:test:frontend:data:explorer
+      - task: ci:test:frontend:data:pages
+
+  ci:test:frontend:data:explorer:
+    desc: Run governed Explorer browser tests
+    cmds:
       - bun run test:data-explorer
+
+  ci:test:frontend:data:pages:
+    desc: Run administration and data page browser tests
+    cmds:
       - bun run test:project-page
       - bun run test:admin-page
       - bun run test:code-editor
@@ -2221,9 +2231,12 @@ tasks:
       # Hosted CI gives each shard its own runner; local CI avoids CPU contention.
       # Reports retains every viewer, playground, and builder test, with
       # independent bounds for each suite rather than a cumulative timeout.
+      # Data keeps Explorer and the remaining pages under separate bounds.
       - |
         {{if eq .SHARD "reports"}}
         task ci:lane:frontend:reports
+        {{else if eq .SHARD "data"}}
+        task ci:lane:frontend:data
         {{else}}
         node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}
         {{end}}
@@ -2234,6 +2247,12 @@ tasks:
       - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:viewer
       - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:playground
       - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:builder
+
+  ci:lane:frontend:data:
+    desc: Run independently bounded Explorer and data page validation
+    cmds:
+      - node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:data:explorer
+      - node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:data:pages
 
   ci:lane:frontend:local:
     desc: Run the frontend lane locally with the hosted-CI hang watchdog
