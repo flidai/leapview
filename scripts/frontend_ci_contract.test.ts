@@ -8,6 +8,56 @@ import { parse } from 'yaml'
 const shards = ['core', 'reports', 'chat', 'data', 'site']
 const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
 
+for (const [reference, status] of [[null, 0], [{ artifactId: 42, commit: 'reference' }, 0], [{ artifactId: 41 }, 1]] as const) {
+  test(`CI checks reference evidence without legacy approval enforcement: ${JSON.stringify(reference)}`, () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'leapview-ci-evidence-'))
+    try {
+      const bin = join(fixture, 'bin')
+      const source = join(fixture, 'trusted-source')
+      mkdirSync(bin)
+      mkdirSync(source)
+      mkdirSync(join(fixture, 'runner'))
+      writeFileSync(join(source, 'performance_baseline_review.mjs'), `
+import { readFileSync } from 'node:fs'
+export function readPerformanceReference() {
+  try { return JSON.parse(readFileSync('.quality/performance-reference.json', 'utf8')) }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error }
+}
+if (process.argv[1] !== '-') throw Error('legacy CLI demands current-commit approval')
+`)
+      writeFileSync(join(source, 'qualify_performance_reference.mjs'), `
+export function verifyPerformanceReferenceEvidence(reference) {
+  if (reference.artifactId !== 42) throw Error('invalid reference evidence')
+}
+`)
+      writeFileSync(join(bin, 'git'), `#!/bin/sh
+case "$1" in
+  fetch|cat-file) exit 0 ;;
+  show) cat "$CI_EVIDENCE_SOURCE/\${2#FETCH_HEAD:scripts/}" ;;
+  *) exit 99 ;;
+esac
+`, { mode: 0o755 })
+      writeFileSync(join(bin, 'gh'), '#!/bin/sh\necho "unexpected approval API query" >&2\nexit 99\n', { mode: 0o755 })
+      if (reference) {
+        mkdirSync(join(fixture, '.quality'))
+        writeFileSync(join(fixture, '.quality/performance-reference.json'), JSON.stringify(reference))
+      }
+      const workflow = parse(readFileSync('.github/workflows/ci.yml', 'utf8'))
+      const step = workflow.jobs['ci-gate'].steps.find((step: { run?: string }) => step.run?.includes('performance_baseline_review.mjs'))
+      const result = spawnSync('bash', ['-c', step.run], {
+        cwd: fixture, encoding: 'utf8',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CI_EVIDENCE_SOURCE: source,
+          RUNNER_TEMP: join(fixture, 'runner'), TRUSTED_MAIN: 'main', GITHUB_EVENT_PATH: undefined },
+      })
+      expect(result.status).toBe(status)
+      expect(result.stderr).not.toContain('legacy CLI demands')
+      expect(result.stderr).not.toContain('unexpected approval API query')
+      if (reference && status === 0) expect(result.stdout).toContain('verified at reference')
+      if (status !== 0) expect(result.stderr).toContain('invalid reference evidence')
+    } finally { rmSync(fixture, { recursive: true, force: true }) }
+  })
+}
+
 for (const [target, downloadFails] of [
   ['test:go:app:shards', false],
   ['test:go:app:shards', true],

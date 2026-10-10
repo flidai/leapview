@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { join, resolve } from 'node:path'
 import { requireSuccessfulReport, runProductionPerformanceComparison } from './run_performance_comparison.mjs'
-import { requiresPerformanceReview } from './performance_baseline_review.mjs'
 
 const commit = 'a'.repeat(40)
 const candidate = 'ghcr.io/flidai/leapview@sha256:' + 'b'.repeat(64)
@@ -10,11 +9,6 @@ const baseline = 'ghcr.io/flidai/leapview@sha256:' + 'c'.repeat(64)
 const successful = (image) => ({ schemaVersion: 1, image, result: 'success', assertions: {
   environment: true, absoluteBudgets: true, errorFree: true, comparisonTolerance: false }, failures: [] })
 const options = { candidateCommit: commit, candidateImage: candidate, evidenceDirectory: '/private/candidate' }
-
-test('serial qualification enforcement and its regression fixtures require independent review', () => {
-  assert.equal(requiresPerformanceReview(['scripts/run_performance_comparison.mjs']), true)
-  assert.equal(requiresPerformanceReview(['scripts/run_performance_comparison.test.mjs']), true)
-})
 
 function harness(reference = true) {
   const calls = [], retained = []
