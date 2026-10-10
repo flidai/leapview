@@ -194,6 +194,11 @@ type CreatorCommandInvocation struct {
 	Revision       int64
 }
 
+// DataExplorerAgentBootstrap and DataExplorerAgentCommandBindings are the neutral
+// agent projections accepted by the project's browser composition surface.
+type DataExplorerAgentBootstrap = projectui.DataExplorerAgentBootstrap
+type DataExplorerAgentCommandBindings = projectui.DataExplorerAgentCommandBindings
+
 type BrowserHandler struct {
 	// Agent state and subscriptions are feature-owned projections supplied by app composition.
 	AgentBootstrap     func(*stdhttp.Request) projectui.DataExplorerAgentBootstrap

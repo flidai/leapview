@@ -297,7 +297,7 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 	spec := dataExplorerCanonicalSpec(command)
 	modelID := spec.ModelID
 	datasetID := uisignals.ValueOrZero(spec.DatasetID)
-	return uisignals.AgentContextSignal{
+	context := uisignals.AgentContextSignal{
 		Surface: "data", ModelID: modelID, DatasetID: &datasetID,
 		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "",
 		Exploration: &spec,
@@ -307,4 +307,12 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 		},
 		ReferenceLimit: 12, References: []uisignals.AgentReferenceSignal{},
 	}
+	// A data turn requires a governed semantic exploration. Raw source rows
+	// must not borrow an unrelated default semantic model's context.
+	if strings.TrimSpace(modelID) == "" || (uisignals.ValueOrZero(explorer.Command.Mode) != "explore" && explorer.SelectedObject != nil && explorer.SelectedObject.Layer == "source") {
+		context.ModelID = ""
+		context.DatasetID = nil
+		context.Exploration = nil
+	}
+	return context
 }

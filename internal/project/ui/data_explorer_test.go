@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"testing"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
@@ -118,5 +119,63 @@ func TestDataExplorerCombinedBootstrapPreservesAgentAndSavedState(t *testing.T) 
 	fallback := DataExplorerBootstrapSignalsWithAgentAndSavedExplorations(catalogFixture(), uisignals.DataExplorerPageSignal{}, uisignals.DataExplorerSignal{}, DataExplorerAgentBootstrap{}, saved)
 	if !fallback["agent"].(uisignals.ChatSignal).Composer.Disabled {
 		t.Fatalf("missing agent must remain unavailable: %#v", fallback["agent"])
+	}
+}
+
+func TestDataExplorerAgentContextRequiresGovernedSelection(t *testing.T) {
+	for _, scenario := range []struct {
+		name, mode, modelID, layer string
+		available                  bool
+	}{
+		{"initial auto-selected semantic model", "browse", "semantic:sales", "", true},
+		{"Rows governed dataset", "browse", "semantic:sales", "model", true},
+		{"Analyze governed dataset", "explore", "semantic:sales", "model", true},
+		{"empty semantic catalog", "browse", "", "", false},
+		{"Rows raw source with previous semantic selection", "browse", "semantic:unrelated", "source", false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: scenario.modelID, Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+			if scenario.modelID != "" {
+				spec.DatasetID = uisignals.Pointer("orders")
+			}
+			explorer := uisignals.DataExplorerSignal{Command: uisignals.DataExplorerCommand{Mode: uisignals.Pointer(scenario.mode)}, Explore: uisignals.DataExploreSignal{Command: uisignals.DataExploreCommand{Spec: spec}}}
+			if scenario.layer != "" {
+				explorer.SelectedObject = &uisignals.DataExplorerObjectSignal{Layer: scenario.layer}
+			}
+			context := DataExplorerAgentContext(uisignals.DataExplorerPageSignal{}, explorer)
+			if context.Surface != "data" {
+				t.Fatalf("Explorer surface changed: %q", context.Surface)
+			}
+			if scenario.available {
+				if context.Exploration == nil || context.ModelID != scenario.modelID || uisignals.ValueOrZero(context.DatasetID) != "orders" {
+					t.Fatalf("governed data context lost: %#v", context)
+				}
+				if err := exploration.ValidateShape(context.Exploration); err != nil {
+					t.Fatalf("projected context rejected by data-turn shape validation: %v", err)
+				}
+			} else if context.Exploration != nil || context.ModelID != "" || context.DatasetID != nil {
+				t.Fatalf("unavailable data context retained unrelated/invalid semantic selection: %#v", context)
+			}
+			encoded, err := json.Marshal(DataExplorerAgentContextPayload(context))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(encoded, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if !scenario.available {
+				for _, key := range []string{"exploration", "datasetId"} {
+					if value, present := wire[key]; !present || value != nil {
+						t.Fatalf("context %s must explicitly clear stale browser value: %s", key, encoded)
+					}
+				}
+			}
+			provider := map[string]any{"status": map[string]any{"enabled": true}}
+			bootstrap := DataExplorerBootstrapSignalsWithAgent(catalogFixture(), uisignals.DataExplorerPageSignal{}, explorer, DataExplorerAgentBootstrap{Agent: provider})
+			if bootstrap["agent"].(map[string]any)["status"].(map[string]any)["enabled"] != true {
+				t.Fatal("missing governed context must not disable provider availability")
+			}
+		})
 	}
 }

@@ -140,12 +140,13 @@ func explorationSpecPayload(spec exploration.ExplorationSpec) explorationSpecWir
 
 type dataExplorerAgentContextWire struct {
 	uisignals.AgentContextSignal
+	DatasetID   *string              `json:"datasetId"`
 	Exploration *explorationSpecWire `json:"exploration"`
 }
 
 // DataExplorerAgentContextPayload clears removed time settings in agent context.
 func DataExplorerAgentContextPayload(context uisignals.AgentContextSignal) dataExplorerAgentContextWire {
-	wire := dataExplorerAgentContextWire{AgentContextSignal: context}
+	wire := dataExplorerAgentContextWire{AgentContextSignal: context, DatasetID: context.DatasetID}
 	if context.Exploration != nil {
 		spec := explorationSpecPayload(*context.Exploration)
 		wire.Exploration = &spec

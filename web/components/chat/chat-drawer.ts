@@ -237,15 +237,16 @@ class ChatDrawer extends DatastarLit(LitElement) {
     const dataContext = context?.surface === 'data'
     const agentTitle = dataContext ? 'Explorer agent' : 'Dashboard agent'
     const agentEnabled = Boolean(agent.status?.enabled)
+    const dataContextReady = !dataContext || Boolean(context?.exploration?.modelId?.trim())
     const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
     const composer = html`<lv-chat-composer
       .value=${agent.composer.value ?? ''}
-      .disabled=${this.pending || agent.composer.disabled || !agentEnabled}
+      .disabled=${this.pending || agent.composer.disabled || !agentEnabled || !dataContextReady}
       .pending=${this.pending}
       .running=${Boolean(agent.status.running)}
       .runId=${agent.status.runId ?? ''}
       .canContinue=${Boolean(agent.status.canContinue)}
-      .placeholder=${agentEnabled ? this.embedded ? 'Ask to change this dashboard…' : context?.exploration ? 'Ask about this data…' : 'Ask about this dashboard…' : 'Agent is not configured'}
+      .placeholder=${agentEnabled ? !dataContextReady ? 'Select a model or switch to Analyze' : this.embedded ? 'Ask to change this dashboard…' : context?.exploration ? 'Ask about this data…' : 'Ask about this dashboard…' : 'Agent is not configured'}
       .references=${this.references}
       .referenceLimit=${context?.referenceLimit ?? defaultAgentReferenceLimit}
       .pinnedSuggestions=${pinnedSuggestions}
@@ -274,6 +275,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
               <span class="page-context">${context?.pageTitle || (dataContext ? 'Current exploration' : 'Current page')}</span>
               ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : null}
             </div>
+            ${agentEnabled && !dataContextReady ? html`<p class="reference-limit-status" role="status">Select a model or switch to Analyze to ask about data.</p>` : null}
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>
             ` : null}
@@ -284,7 +286,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <div class="welcome-heading"><span class="agent-mark" aria-hidden="true">${agentIcon()}</span><h2>${this.embedded ? 'What should I change?' : 'What would you like to understand?'}</h2></div>
             ${composer}
             <div class="prompts">
-              ${(this.embedded ? builderPrompts : dashboardPrompts).map(({ label, prompt, icon }) => html`<button class="prompt" type="button" title=${prompt} aria-label=${`${label}: ${prompt}`} @click=${() => this.fillPrompt(prompt)}>${lucideIcon(icon, { size: 16, strokeWidth: 2 })}<span>${label}</span></button>`)}
+              ${(this.embedded ? builderPrompts : dashboardPrompts).map(({ label, prompt, icon }) => html`<button class="prompt" type="button" title=${prompt} aria-label=${`${label}: ${prompt}`} ?disabled=${!dataContextReady} @click=${() => this.fillPrompt(prompt)}>${lucideIcon(icon, { size: 16, strokeWidth: 2 })}<span>${label}</span></button>`)}
             </div>
             <p class="welcome-hint">Type <kbd>@</kbd> to attach ${this.embedded ? 'a chart on this page.' : 'a dashboard, metric, model, page, or visual.'}</p>
           </section>

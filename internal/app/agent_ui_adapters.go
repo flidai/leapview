@@ -8,7 +8,6 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	agentui "github.com/flidai/leapview/internal/agent/ui"
 	"github.com/flidai/leapview/internal/app/brand"
 	appshell "github.com/flidai/leapview/internal/app/shell"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -16,7 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	projectui "github.com/flidai/leapview/internal/project/ui"
+	projecthttp "github.com/flidai/leapview/internal/project/http"
 )
 
 func authorizedProductNavigationAccess(ctx context.Context, access *accessmodule.Module, catalog *projectcatalog.Service, r *http.Request) appshell.ProductNavigationAccess {
@@ -189,14 +188,14 @@ func dashboardChatSignal(state agentmodule.ChatSignal) dashboardmodule.ChatSigna
 	}
 }
 
-func dataExplorerAgentBootstrap(state agentmodule.ChatViewState) projectui.DataExplorerAgentBootstrap {
-	return projectui.DataExplorerAgentBootstrap{Agent: agentui.ChatSignalPatch(state)["agent"], Visuals: state.Visuals}
+func dataExplorerAgentBootstrap(state agentmodule.ChatViewState) projecthttp.DataExplorerAgentBootstrap {
+	return projecthttp.DataExplorerAgentBootstrap{Agent: agentmodule.ChatSignalPatch(state)["agent"], Visuals: state.Visuals}
 }
 
-func dataExplorerAgentCommands(module *agentmodule.Module) projectui.DataExplorerAgentCommandBindings {
+func dataExplorerAgentCommands(module *agentmodule.Module) projecthttp.DataExplorerAgentCommandBindings {
 	if module == nil {
-		return projectui.DataExplorerAgentCommandBindings{}
+		return projecthttp.DataExplorerAgentCommandBindings{}
 	}
 	bindings := module.UICommandBindings()
-	return projectui.DataExplorerAgentCommandBindings{CreateConversation: bindings.CreateConversation, CreateRun: bindings.CreateRun, CancelRun: bindings.CancelRun}
+	return projecthttp.DataExplorerAgentCommandBindings{CreateConversation: bindings.CreateConversation, CreateRun: bindings.CreateRun, CancelRun: bindings.CancelRun}
 }

@@ -116,6 +116,12 @@ func TypedChatArtifacts(artifacts agent.ChatArtifactSignals) map[string]visualiz
 }
 
 func chatSignalPatch(signal ui.ChatViewState) map[string]any {
+	return ChatSignalPatch(signal)
+}
+
+// ChatSignalPatch projects browser state through the agent-owned serializer,
+// including explicit resets for nullable status fields.
+func ChatSignalPatch(signal ChatViewState) map[string]any {
 	return ui.ChatSignalPatch(signal)
 }
 

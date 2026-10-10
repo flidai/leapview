@@ -497,6 +497,66 @@ test('Explorer agent labels describe data while dashboard and builder labels rem
   } finally { await page.close() }
 })
 
+test('Explorer agent waits for governed data context while keeping active Stop reachable', async () => {
+  const page = await browser.newPage({ viewport: { width: 375, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        agent: { conversations: [], activeConversationId: '', transcript: [],
+          status: { enabled: true, running: false, canContinue: false },
+          composer: { value: 'Keep this unsent data question', disabled: false, placeholder: '' } },
+        agentContext: { surface: 'data', modelId: '', datasetId: null, exploration: null,
+          referenceLimit: 12, references: [] } })
+      const element = document.createElement('lv-data-explorer') as any
+      document.body.append(element)
+      await element.updateComplete
+    })
+    const explorer = page.locator('lv-data-explorer')
+    await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).click()
+    const drawer = explorer.locator('lv-chat-drawer'), composer = drawer.locator('lv-chat-composer')
+    await expect(composer.getByRole('combobox').isDisabled()).resolves.toBe(true)
+    await expect(composer.getByRole('button', { name: 'Send', exact: true }).isDisabled()).resolves.toBe(true)
+    expect(await drawer.getByRole('status').textContent()).toBe('Select a model or switch to Analyze to ask about data.')
+    const disabledPrompts = await drawer.locator('.prompt').evaluateAll((items: HTMLButtonElement[]) => items.length > 0 && items.every(item => item.disabled))
+    expect(disabledPrompts).toBe(true)
+    expect(await composer.getByRole('combobox').inputValue()).toBe('Keep this unsent data question')
+    await drawer.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ agent: { status: { canContinue: true }, composer: { value: '' } } })
+      e.requestUpdate(); await e.updateComplete
+    })
+    expect(await composer.getByRole('button', { name: 'Continue response', exact: true }).isDisabled()).toBe(true)
+    await drawer.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ agent: { status: { running: true, runId: 'owned-active-run' } } })
+      e.requestUpdate(); await e.updateComplete
+    })
+    expect(await composer.getByRole('button', { name: 'Stop response', exact: true }).isEnabled()).toBe(true)
+    await drawer.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ agent: { status: { running: false, runId: '', canContinue: true } },
+        agentContext: { modelId: 'selected-model', datasetId: 'selected-dataset',
+          exploration: { schemaVersion: 1, modelId: 'selected-model', datasetId: 'selected-dataset', dimensions: [], metrics: [], filters: [], sort: [], limit: 10 } } })
+      e.requestUpdate(); await e.updateComplete
+    })
+    expect(await composer.getByRole('combobox').isEnabled()).toBe(true)
+    expect(await composer.getByRole('button', { name: 'Continue response', exact: true }).isEnabled()).toBe(true)
+    expect(await drawer.getByRole('status').count()).toBe(0)
+    expect(await drawer.locator('.prompt').evaluateAll((items: HTMLButtonElement[]) => items.every(item => !item.disabled))).toBe(true)
+    await drawer.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ agentContext: { surface: 'dashboard', exploration: null } })
+      e.requestUpdate(); await e.updateComplete
+    })
+    expect(await composer.getByRole('combobox').isEnabled()).toBe(true)
+    await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+    expect(await explorer.locator('lv-chat-drawer').count()).toBe(0)
+  } finally { await page.close() }
+})
+
 for (const width of [375, 767, 768, 769, 1024, 1280, 1440]) {
   test(`Explorer agent preserves a usable route at ${width}px beside app navigation`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 844 } })
