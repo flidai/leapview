@@ -62,7 +62,9 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 	}
 	run(filepath.Join(pgbin, "pg_basebackup"), "--dbname="+f.harness.PhysicalBackupURL(t), "--pgdata="+source, "--wal-method=stream", "--checkpoint=fast")
 	providerFile := filepath.Join(base, "archive.conf")
-	provider := []byte(fmt.Sprintf("[global]\nrepo1-path=%s\nrepo1-retention-full=2\nstart-fast=y\nprocess-max=2\narchive-timeout=60\nlog-level-console=off\nlog-level-file=off\n[managed]\npg1-path=%s\npg1-port=5432\npg1-socket-path=%s\npg1-user=postgres\n", filepath.Join(base, "repository"), source, socket))
+	// Keep locks private and outside the retained base, which confinement
+	// mounts read-only. The sandbox can recreate this path in its private /tmp.
+	provider := []byte(fmt.Sprintf("[global]\nrepo1-path=%s\nlock-path=%s\nrepo1-retention-full=2\nstart-fast=y\nprocess-max=2\narchive-timeout=60\nlog-level-console=off\nlog-level-file=off\n[managed]\npg1-path=%s\npg1-port=5432\npg1-socket-path=%s\npg1-user=postgres\n", filepath.Join(base, "repository"), filepath.Join(socket, "pgbackrest-locks"), source, socket))
 	require.NoError(t, os.WriteFile(providerFile, provider, 0600))
 	configuration := fmt.Sprintf("listen_addresses=''\nport=5432\nunix_socket_directories='%s'\narchive_mode=on\narchive_command='%s --config=%s --stanza=managed archive-push %%p'\n", socket, pgbackrest, providerFile)
 	require.NoError(t, os.WriteFile(filepath.Join(source, "postgresql.conf"), []byte(configuration), 0600))
