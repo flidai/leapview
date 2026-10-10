@@ -116,7 +116,7 @@ func TypedChatArtifacts(artifacts agent.ChatArtifactSignals) map[string]visualiz
 }
 
 func chatSignalPatch(signal ui.ChatViewState) map[string]any {
-	return map[string]any{"agent": signal.Agent, "visuals": signal.Visuals}
+	return ui.ChatSignalPatch(signal)
 }
 
 func (m *Module) chatConversations(ctx context.Context, scope agent.Scope) []ui.ChatConversationSummary {
