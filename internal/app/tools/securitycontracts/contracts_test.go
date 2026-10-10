@@ -110,7 +110,7 @@ func TestOCIAdmissionDiagnosticUploadsAreBoundedAndAttemptScoped(t *testing.T) {
 				if step.If != "always()" {
 					t.Errorf("%s diagnostic upload condition is %q, want always()", path, step.If)
 				}
-				if step.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" {
+				if step.Uses != "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" {
 					t.Errorf("%s diagnostic upload action is not commit-pinned", path)
 				}
 				if step.With["path"] != "${{ runner.temp }}/oci-vulnerability-report.json" {
@@ -503,7 +503,7 @@ func TestSASTWorkflowPreparesEachWorkspaceAndRetainsFailureDiagnostics(t *testin
 		t.Fatal("integrity must run on preparation/extraction failure")
 	}
 	upload := job.Steps[indices["Retain raw CodeQL diagnostics"]]
-	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["retention-days"] != "14" || upload.With["if-no-files-found"] != "ignore" {
+	if upload.Uses != "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" || upload.With["retention-days"] != "14" || upload.With["if-no-files-found"] != "ignore" {
 		t.Fatal("diagnostic retention contract changed")
 	}
 	for _, fragment := range []string{"matrix.language", "github.job", "github.run_id", "github.run_attempt"} {
