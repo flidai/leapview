@@ -1,9 +1,17 @@
 # Isolated Kamal public-site trial
 
-This evaluates the approved Kamal-first solution to public-site disk exhaustion.
-It is **not a production deployment controller or authorization to migrate**.
-The existing site workflows, host controller, Caddy and image package are unchanged.
-PR #748 remains the unmerged fallback.
+This retains the isolated qualification fixtures and September 2026 evidence for
+the Kamal-first solution to public-site disk exhaustion. Production deployment
+now lives in [`deploy/kamal-site`](../kamal-site/README.md). These fixtures are
+not a production deployment controller.
+
+The experimental image publisher is retired. The historical package contents
+and admission artifacts are retained in the
+[10 October retirement archive](https://github.com/flidai/leapview/releases/tag/archive-kamal-trial-20261010).
+The [assessment and deletion receipt](evidence/retirement-20261010.md) record the
+dependency audit, archive checks and completed deletion.
+Synthetic lifecycle, storage and recovery fixtures remain available; they do not
+depend on that registry package.
 
 ## Isolation and tooling
 
@@ -60,35 +68,48 @@ and mount access. Logs and `report.json` remain under the state directory. Names
 fixture processes. Inspect/report evidence before deleting disposable state.
 Never upload generated private SSH keys or registry/Docker configuration.
 
-## Experimental image qualification
+## Reproduce historical real-image qualification
 
-`site-kamal-trial.yml` is branch-only and requires exactly one open, same-repo PR
-at the pushed SHA carrying the `kamal-trial` label. Create/label the PR, then
-rerun the initial workflow or push an update. It publishes only
-`ghcr.io/flidai/leapview-site-kamal-trial`, with `service=leapview-site-trial`.
-It preserves the native platform builds, SBOM/provenance, OCI admission and site
-runtime checks from `site-image.yml`. It has no production environment, host
-credentials, production package writes or promotion step. Trial images do not
-satisfy the production workflow identity policy.
+The removed `site-kamal-trial.yml` published only
+`ghcr.io/flidai/leapview-site-kamal-trial`, with `service=leapview-site-trial`, from
+the opt-in `ganesh/site-kamal-trial` branch. Its workflow identity remains in
+historical admission records. Production continues to reject trial images;
+production Kamal uses `ghcr.io/flidai/leapview-site`.
 
-This corrects one mechanism in the approved plan: a normal `pull_request` event
-binds GitHub's source identity to its merge commit. Checking out the PR head does
-not change that event identity. A push on the dedicated branch plus the opt-in
-PR lookup keeps the attested source and checked-out source identical, without
-weakening admission or using `pull_request_target`.
+The retirement archive contains the package version/tag inventory, a complete OCI
+layout with original content digests, and the available trial admission artifacts.
+It preserves the exact images referenced by `evidence/real-site.json` and the
+earlier manual experiment in `../kamal-site/evidence/manual-vps.json`.
 
-The admitted image at source `b83767f8a5c6a2d158968e3458295ff50890e4c1`
-has also passed the private Kamal/Caddy probe; see `evidence/real-site.json`.
-Standalone image qualification and this compatibility test do not authorize
-production activation.
+Download and verify the archive before extraction:
 
-To reproduce the real-image probe, download the `kamal-trial-image-*` artifact
-from the successful run. Find its `oci-admission.json` (the upload preserves
-nested directories), then run:
+```sh
+gh release download archive-kamal-trial-20261010 --repo flidai/leapview \
+  --dir "$ARCHIVE_DIRECTORY" --pattern 'trial-package-oci.tar.gz.part-*' \
+  --pattern retirement-manifest.json --pattern SHA256SUMS
+(cd "$ARCHIVE_DIRECTORY" && sha256sum --check SHA256SUMS && \
+  cat trial-package-oci.tar.gz.part-* > trial-package-oci.tar.gz && \
+  jq -r '"\(.archiveSha256)  \(.archive)"' retirement-manifest.json | sha256sum --check && \
+  tar -xzf trial-package-oci.tar.gz)
+```
+
+Extract the selected original admission ZIP from
+`trial-package/admission-artifacts/`; `admission-artifacts.json` maps each ZIP to
+its source run. Find its `oci-admission.json` (the upload preserves nested
+directories), then use the current checkout's preparer to select the image
+without contacting GHCR:
 
 ```sh
 python3 deploy/kamal-trial/prepare_site_image.py \
-  --admission "$DOWNLOADED_ADMISSION_JSON" --output "$NEW_IMAGE_DIRECTORY"
+  --admission "$DOWNLOADED_ADMISSION_JSON" --output "$NEW_IMAGE_DIRECTORY" \
+  --archive-layout "$ARCHIVE_DIRECTORY/trial-package/oci"
+```
+
+Run the following probe from a checkout at the admission's
+`attestation.sourceRevision`, using absolute paths for the prepared artifacts.
+That checkout supplies release documentation matching the historical image:
+
+```sh
 sudo unshare --mount --net --pid --fork --mount-proc \
   python3 -B deploy/kamal-trial/site_probe.py \
   --state "$NEW_STATE_DIRECTORY" --artifacts "$ARTIFACTS" \
