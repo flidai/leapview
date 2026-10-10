@@ -19,7 +19,7 @@ func assertFrontendWatchdogBounds(t *testing.T, taskfile string) {
 		}
 	}
 	reports := taskfileTaskBlock(t, taskfile, "ci:lane:frontend:reports")
-	for _, suite := range []string{"viewer", "builder"} {
+	for _, suite := range []string{"viewer", "playground", "builder"} {
 		want := "node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:" + suite
 		if !strings.Contains(reports, want) {
 			t.Fatalf("frontend reports lane missing bounded retry contract %q", want)

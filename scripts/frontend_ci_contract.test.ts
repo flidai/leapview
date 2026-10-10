@@ -127,12 +127,24 @@ test('local frontend validation runs every bounded shard without suppressing fai
   ])
   expect(tasks['ci:lane:frontend:reports'].cmds).toEqual([
     'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:viewer',
+    'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:playground',
     'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:builder',
   ])
   expect(tasks['ci:test:frontend:reports'].cmds).toEqual([
     { task: 'ci:test:frontend:reports:viewer' },
+    { task: 'ci:test:frontend:reports:playground' },
     { task: 'ci:test:frontend:reports:builder' },
   ])
+  expect(tasks['ci:test:frontend:reports:viewer'].cmds).toEqual([
+    'bun run test:visualization-ir', 'bun run test:table-selection', 'bun run test:interaction-selection',
+    'bun run test:record-table', 'bun run test:visual-modal', 'bun run test:catalog-page',
+    'bun run test:dashboard-page', 'bun run test:date-picker', 'bun run test:windowed-table', 'bun run test:filter-menu',
+  ])
+  expect(tasks['ci:test:frontend:reports:playground'].cmds).toEqual(['bun run test:playground'])
+  expect(tasks['ci:test:frontend:reports:builder'].cmds).toEqual(['bun run test:dashboard-builder'])
+  for (const unit of ['viewer', 'playground', 'builder']) {
+    expect(tasks[`ci:test:frontend:reports:${unit}`].ignore_error).toBeUndefined()
+  }
   expect(tasks['ci:lane:frontend:reports'].ignore_error).toBeUndefined()
   expect(tasks['ci:lane:frontend:local'].cmds).toEqual([{ task: 'ci:lane:frontend' }])
   expect(tasks['ci:lane:frontend'].ignore_error).toBeUndefined()

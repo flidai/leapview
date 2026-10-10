@@ -669,6 +669,7 @@ tasks:
     desc: Run dashboard, visualization, and report browser tests
     cmds:
       - task: ci:test:frontend:reports:viewer
+      - task: ci:test:frontend:reports:playground
       - task: ci:test:frontend:reports:builder
 
   ci:test:frontend:reports:viewer:
@@ -685,10 +686,14 @@ tasks:
       - bun run test:windowed-table
       - bun run test:filter-menu
 
-  ci:test:frontend:reports:builder:
-    desc: Run visual previews and dashboard builder browser tests
+  ci:test:frontend:reports:playground:
+    desc: Run standalone visual preview and report browser tests
     cmds:
       - bun run test:playground
+
+  ci:test:frontend:reports:builder:
+    desc: Run dashboard builder browser tests
+    cmds:
       - bun run test:dashboard-builder
 
   ci:test:frontend:chat:
@@ -2214,8 +2219,8 @@ tasks:
     cmds:
       # Bound a single unit of work, not the cumulative runtime of all five.
       # Hosted CI gives each shard its own runner; local CI avoids CPU contention.
-      # Reports retains every viewer and builder test, with separate bounds
-      # for those units rather than one cumulative timeout for both suites.
+      # Reports retains every viewer, playground, and builder test, with
+      # independent bounds for each suite rather than a cumulative timeout.
       - |
         {{if eq .SHARD "reports"}}
         task ci:lane:frontend:reports
@@ -2224,9 +2229,10 @@ tasks:
         {{end}}
 
   ci:lane:frontend:reports:
-    desc: Run independently bounded viewer and builder validation
+    desc: Run independently bounded viewer, playground, and builder validation
     cmds:
       - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:viewer
+      - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:playground
       - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:builder
 
   ci:lane:frontend:local:
