@@ -1,0 +1,48 @@
+--- a/src/include/azure_extension.hpp
++++ b/src/include/azure_extension.hpp
+@@ -9,0 +10 @@
++	std::string Version() const override;
+--- a/src/azure_extension.cpp
++++ b/src/azure_extension.cpp
+@@ -112,0 +113,4 @@
++std::string AzureExtension::Version() const {
++	return EXT_VERSION_AZURE;
++}
++
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -29,8 +29,3 @@
+-find_package(azure-identity-cpp CONFIG)
+-find_package(azure-storage-blobs-cpp CONFIG)
+-find_package(azure-storage-files-datalake-cpp CONFIG)
+-
+-if(NOT ${azure-identity-cpp_FOUND}
+-   OR NOT ${azure-storage-blobs-cpp_FOUND}
+-   OR NOT ${azure-storage-files-datalake-cpp_FOUND})
+-  message(FATAL_ERROR "Azure SDK not found, did you set up vcpkg correctly?")
++# Bind only the explicitly selected, source-built SDK and HTTP archives.
++if(NOT AZURE_LIBRARIES OR NOT AZURE_HTTP_LIBRARIES OR NOT AZURE_INCLUDE_DIRS)
++  message(FATAL_ERROR "Explicit Azure static dependency paths are required")
+@@ -38,17 +33,5 @@
+-
+-# Static lib
+-target_link_libraries(
+-  ${EXTENSION_NAME} Azure::azure-identity Azure::azure-storage-blobs
+-  Azure::azure-storage-files-datalake)
+-target_include_directories(
+-  ${EXTENSION_NAME} PRIVATE Azure::azure-identity Azure::azure-storage-blobs
+-                            Azure::azure-storage-files-datalake)
+-
+-# Loadable binary
+-target_link_libraries(
+-  ${TARGET_NAME}_loadable_extension Azure::azure-identity
+-  Azure::azure-storage-blobs Azure::azure-storage-files-datalake)
+-target_include_directories(
+-  ${TARGET_NAME}_loadable_extension
+-  PRIVATE Azure::azure-identity Azure::azure-storage-blobs
+-          Azure::azure-storage-files-datalake)
++foreach(target ${EXTENSION_NAME} ${TARGET_NAME}_loadable_extension)
++  target_include_directories(${target} PRIVATE ${AZURE_INCLUDE_DIRS})
++  target_link_libraries(${target} "-Wl,--start-group" ${AZURE_LIBRARIES}
++                        ${AZURE_HTTP_LIBRARIES} "-Wl,--end-group" pthread dl)
++endforeach()

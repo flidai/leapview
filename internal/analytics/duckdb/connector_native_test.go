@@ -160,60 +160,63 @@ func TestNativeDuckLakeSourceReadAndRecovery(t *testing.T) {
 
 func TestNativeHTTPAndAzureSourceReadAndRecovery(t *testing.T) {
 	for _, kind := range []string{"http", "azure_blob"} {
-		t.Run(kind, func(t *testing.T) {
-			var signed atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/fixtures/rows.csv" {
-					http.NotFound(w, r)
-					return
-				}
-				if strings.HasPrefix(r.Header.Get("Authorization"), "SharedKey fixture:") {
-					signed.Add(1)
-				}
-				w.Header().Set("Content-Type", "text/csv")
-				w.Header().Set("ETag", `"native-fixture"`)
-				w.Header().Set("x-ms-blob-type", "BlockBlob")
-				w.Header().Set("x-ms-version", "2021-12-02")
-				w.Header().Set("x-ms-request-id", "native-fixture")
-				w.Header().Set("x-ms-creation-time", "Thu, 01 Jan 2026 00:00:00 GMT")
-				w.Header().Set("x-ms-server-encrypted", "true")
-				w.Header().Set("x-ms-lease-status", "unlocked")
-				w.Header().Set("x-ms-lease-state", "available")
-				http.ServeContent(w, r, "rows.csv", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), bytes.NewReader([]byte("id,value\n1,x\n")))
-			}))
-			t.Cleanup(server.Close)
-			connection := semanticmodel.Connection{Kind: kind, Scope: server.URL + "/fixtures/"}
-			extensions := []string{"httpfs"}
-			if kind == "azure_blob" {
-				extensions = []string{"azure"}
-				connection.Scope = "az://fixtures/"
-				key := base64.StdEncoding.EncodeToString([]byte("owned-native-fixture-key"))
-				connection.Auth = semanticmodel.ConnectionAuth{"connection_string": "DefaultEndpointsProtocol=http;AccountName=fixture;AccountKey=" + key + ";BlobEndpoint=" + server.URL + ";"}
-			}
-			db := openNativeConnectorDB(t, extensions...)
-			source := semanticmodel.Source{Connection: "local", Path: "rows.csv", Format: "csv", EffectivePathLocation: testCSVPathLocationWithHeader("rows.csv", true)}
-			model := &semanticmodel.Model{Connections: map[string]semanticmodel.Connection{"local": connection}, Sources: map[string]semanticmodel.Source{"rows": source}}
-			if err := prepareRefreshSourceAccess(t.Context(), db, model, nil); err != nil {
-				t.Fatal(err)
-			}
-			assertNativeConnectorRow(t, db, model, source)
-			if kind == "azure_blob" && signed.Load() == 0 {
-				t.Fatal("native Azure reader did not use the configured scoped SharedKey credential")
-			}
-			missing := source
-			missing.Path = "missing.csv"
-			missing.EffectivePathLocation = testCSVPathLocationWithHeader(missing.Path, true)
-			relation, err := SourceRelation(model, missing)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if rows, err := db.QueryContext(t.Context(), relation); err == nil {
-				_ = rows.Close()
-				t.Fatal("absent remote object unexpectedly read")
-			}
-			assertNativeConnectorRow(t, db, model, source)
-		})
+		t.Run(kind, func(t *testing.T) { testNativeHTTPAndAzureSourceReadAndRecovery(t, kind) })
 	}
+}
+
+func testNativeHTTPAndAzureSourceReadAndRecovery(t *testing.T, kind string) {
+	t.Helper()
+	var signed atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fixtures/rows.csv" {
+			http.NotFound(w, r)
+			return
+		}
+		if strings.HasPrefix(r.Header.Get("Authorization"), "SharedKey fixture:") {
+			signed.Add(1)
+		}
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("ETag", `"native-fixture"`)
+		w.Header().Set("x-ms-blob-type", "BlockBlob")
+		w.Header().Set("x-ms-version", "2021-12-02")
+		w.Header().Set("x-ms-request-id", "native-fixture")
+		w.Header().Set("x-ms-creation-time", "Thu, 01 Jan 2026 00:00:00 GMT")
+		w.Header().Set("x-ms-server-encrypted", "true")
+		w.Header().Set("x-ms-lease-status", "unlocked")
+		w.Header().Set("x-ms-lease-state", "available")
+		http.ServeContent(w, r, "rows.csv", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), bytes.NewReader([]byte("id,value\n1,x\n")))
+	}))
+	t.Cleanup(server.Close)
+	connection := semanticmodel.Connection{Kind: kind, Scope: server.URL + "/fixtures/"}
+	extensions := []string{"httpfs"}
+	if kind == "azure_blob" {
+		extensions = []string{"azure"}
+		connection.Scope = "az://fixtures/"
+		key := base64.StdEncoding.EncodeToString([]byte("owned-native-fixture-key"))
+		connection.Auth = semanticmodel.ConnectionAuth{"connection_string": "DefaultEndpointsProtocol=http;AccountName=fixture;AccountKey=" + key + ";BlobEndpoint=" + server.URL + ";"}
+	}
+	db := openNativeConnectorDB(t, extensions...)
+	source := semanticmodel.Source{Connection: "local", Path: "rows.csv", Format: "csv", EffectivePathLocation: testCSVPathLocationWithHeader("rows.csv", true)}
+	model := &semanticmodel.Model{Connections: map[string]semanticmodel.Connection{"local": connection}, Sources: map[string]semanticmodel.Source{"rows": source}}
+	if err := prepareRefreshSourceAccess(t.Context(), db, model, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertNativeConnectorRow(t, db, model, source)
+	if kind == "azure_blob" && signed.Load() == 0 {
+		t.Fatal("native Azure reader did not use the configured scoped SharedKey credential")
+	}
+	missing := source
+	missing.Path = "missing.csv"
+	missing.EffectivePathLocation = testCSVPathLocationWithHeader(missing.Path, true)
+	relation, err := SourceRelation(model, missing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := db.QueryContext(t.Context(), relation); err == nil {
+		_ = rows.Close()
+		t.Fatal("absent remote object unexpectedly read")
+	}
+	assertNativeConnectorRow(t, db, model, source)
 }
 
 func TestNativeQuackSourceReadDenialAndRecovery(t *testing.T) {

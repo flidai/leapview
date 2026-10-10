@@ -1660,7 +1660,7 @@
     },
     {
       "component": "native extension components",
-      "reason": "5 remaining signed extension payload closures (Azure, Delta, Iceberg, Spatial, Vortex) are not bound to actual compiled dependency selections on both architectures; revised source-built HTTP, database, Excel and Avro engine runtime and publisher qualification remain pending; source-built receipts are build-composition evidence, not exhaustive binary closure"
+      "reason": "3 remaining signed extension payload closures (Iceberg, Spatial, Vortex) are not bound to actual compiled dependency selections on both architectures; revised source-built HTTP, database, Excel, Avro, Delta and Azure whole-engine runtime and publisher qualification remain pending; source-built receipts are build-composition evidence, not exhaustive binary closure"
     },
     {
       "component": "native vulnerability assessment",
@@ -1668,8 +1668,8 @@
     }
   ],
   "extensionSupplyHashes": {
-    "linux/amd64": "sha256-wLSZ2dQ8nlSxeQkzO18EuPJFLZruPV8g0g3uX6gzanU=",
-    "linux/arm64": "sha256-yvi6Rhmnc63K2eXDqY/UwT++E3EBRD8sRzrIhrQa258="
+    "linux/amd64": "sha256-jJ/L7HcshXVTZ4+1YHFAmCSBaRtDJFatpbjnfLAGT4U=",
+    "linux/arm64": "sha256-SSBMoMlcrv6UuO2audQ3wKrJZDxe5SGIZ/SMboR1gsA="
   },
   "sourceBuiltReplacements": [
     {
@@ -1833,6 +1833,21 @@
       },
       "nativeDependencyLock": "nix/delta-source-lock.json",
       "nativeDependencyLockSHA256": "sha256:6575f8fb88fcee4407b8ea5bf7ad9b9ce8de0480dbeb69a003b3f365ee2c55a3",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "azure",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-azure",
+        "revision": "563589b2f24290a4dcdd4247eaedf2b544f9dbcd",
+        "sourceNARHash": "sha256-4gnj1OCdyhFosaCPVmiyFx9nSCSemNRxIC+nmVwtHjs=",
+        "patchSHA256": "304f93c4133a471e3c12aca726fd0eaef2c5f913ba7fed8d96fd2f02951ea87e"
+      },
+      "nativeDependencyLock": "nix/azure-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:c4c2f1e57c8d863efd45a3d50fdfcad18e0936f564f717c62fc8f5cf98ae9513",
       "installation": "STATICALLY_LINKED",
       "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
       "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",

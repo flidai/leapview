@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "wrapper": {
+    "revision": "563589b2f24290a4dcdd4247eaedf2b544f9dbcd",
+    "sourceNARHash": "sha256-4gnj1OCdyhFosaCPVmiyFx9nSCSemNRxIC+nmVwtHjs=",
+    "patchSHA256": "304f93c4133a471e3c12aca726fd0eaef2c5f913ba7fed8d96fd2f02951ea87e"
+  },
+  "libraries": {
+    "core": {
+      "version": "1.16.3",
+      "sourceNARHash": "sha256-1OLyTwjfSunwvDMbMTNw0w8txhJxXthtAVeFf7abrIs=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "src/http/curl/curl.cpp": "9bda240b231d5d0b1955b5b3b48f03bc3a2eb37d4bf922b39ef02eb307a0bc2e"
+      }
+    },
+    "identity": {
+      "version": "1.13.3",
+      "sourceNARHash": "sha256-IGhJi8fnNY/NXnZ6ZGclJxG1gEx7BRj9setMaFUJZNQ=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "src/client_secret_credential.cpp": "dad2a8e2df19c3dfbff658cbd8e240f45d1d910b038d88d7cb9a696a05ec549e"
+      }
+    },
+    "libxml2": {
+      "version": "2.15.4",
+      "sourceNARHash": "sha256-NHk5HIGBRmWwRbX2JMBmMDiIDdee2atZEfhz3QTgcOo=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "parser.c": "b77dc43e5e284efcdc87d5c6ec4112eb41a810ef19bb05570c3d1880858cb843"
+      }
+    },
+    "storage-blobs": {
+      "version": "12.16.0",
+      "sourceNARHash": "sha256-cycBXSvc3G8TdLnI4Ht1lBd9ndPOjxWFQA54a24iUsY=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "src/blob_service_client.cpp": "b85ac28ee1e193b7dcedd72e309e0497dccce2a9e1a959e8f3988d8d20fab78a"
+      }
+    },
+    "storage-common": {
+      "version": "12.12.0",
+      "sourceNARHash": "sha256-cycBXSvc3G8TdLnI4Ht1lBd9ndPOjxWFQA54a24iUsY=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "src/xml_wrapper.cpp": "0c171ac68f5c05afc8dc6db157923ec59c4f7219fd81798cc2dbb8716f580b1e"
+      }
+    },
+    "storage-files-datalake": {
+      "version": "12.14.0",
+      "sourceNARHash": "sha256-cycBXSvc3G8TdLnI4Ht1lBd9ndPOjxWFQA54a24iUsY=",
+      "patchSHA256": [],
+      "selectedFiles": {
+        "src/datalake_service_client.cpp": "4ef5c2e2c64ccc9261d1774b12434c2fc025e3b5b91e794ba3c248ddf73664d9"
+      }
+    }
+  },
+  "sdkFeatures": {
+    "BUILD_SHARED_LIBS": false,
+    "CMAKE_POSITION_INDEPENDENT_CODE": true,
+    "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+    "BUILD_TRANSPORT_CURL": true,
+    "BUILD_TRANSPORT_WINHTTP": false,
+    "FETCH_SOURCE_DEPS": false,
+    "BUILD_TESTING": false,
+    "BUILD_SAMPLES": false
+  },
+  "coreDependencyPatchSHA256": "7e7b410062a255789f3a6ef0ef60f8800d9a60a0c5460e89d0771238ea05d4b2",
+  "libxml2Features": {
+    "static": true,
+    "shared": false,
+    "pic": true,
+    "modules": false,
+    "icu": false,
+    "zlib": false,
+    "python": false,
+    "http": false
+  },
+  "cacheRetentionPatches": {
+    "identity": "20f01ea25028f1a75f8f366941aac2a63eb7c11e485145404bdea3c0c5007a43",
+    "storage-common": "52fe1701aec553bb812dbe25c919b2d2abaeee78f1be71fbf6cc90f8a7f15d94"
+  }
+}

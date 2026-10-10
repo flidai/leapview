@@ -43,6 +43,14 @@ class NativeInventoryTests(unittest.TestCase):
         self.assertEqual(selected['kernel']['cargoLockSHA256'], hashlib.sha256((native.ROOT / 'nix/delta-Cargo.lock').read_bytes()).hexdigest())
         self.assertTrue(selected['patchedFiles'])
 
+    def test_rebuilt_azure_inventory_matches_selected_sdk_policy(self):
+        lock = native.ROOT / 'nix/azure-source-lock.json'
+        selected = json.loads(lock.read_text())
+        entry = next(e for e in json.loads(native.POLICY_PATH.read_text())['sourceBuiltReplacements'] if e['name'] == 'azure')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(set(selected['libraries']), {'core', 'identity', 'storage-common', 'storage-blobs', 'storage-files-datalake', 'libxml2'})
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

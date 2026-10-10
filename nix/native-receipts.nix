@@ -12,6 +12,7 @@ let
     "scripts/nix_native_excel_receipt.py"
     "scripts/nix_native_avro_receipt.py"
     "scripts/nix_native_delta_receipt.py"
+    "scripts/nix_native_azure_receipt.py"
   ];
   lance = [
     "nix/lance.nix"
@@ -70,6 +71,17 @@ let
     "nix/quick-xml/namespace-bounds-upstream.patch"
     "scripts/nix_native_delta_receipt.py"
   ];
+  azure = [
+    "nix/check-extension-version.py"
+    "nix/azure.nix"
+    "nix/azure-source-lock.json"
+    "nix/azure-static-dependencies.patch"
+    "nix/azure-core-selected-curl.patch"
+    "nix/azure-identity-retain-fetch-option.patch"
+    "nix/azure-storage-common-retain-fetch-option.patch"
+    "nix/check-azure-static-libraries.cpp"
+    "scripts/nix_native_azure_receipt.py"
+  ];
   duckdb = [
     "nix/duckdb.nix"
     "nix/sqlite.nix"
@@ -80,7 +92,8 @@ let
   ++ database
   ++ excel
   ++ avro
-  ++ delta;
+  ++ delta
+  ++ azure;
   croaring = [
     "nix/ducklake.nix"
     "nix/ducklake-source-lock.json"
@@ -92,6 +105,8 @@ let
         lance
       else if component == "delta" then
         delta
+      else if component == "azure" then
+        azure ++ http
       else if component == "avro" then
         avro ++ http
       else if component == "excel" then

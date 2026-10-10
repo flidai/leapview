@@ -279,6 +279,9 @@ jobs:
           "$tools/libexec/database-connectors.test" -test.v -test.timeout=2m \
             -test.run '^TestNativeDeltaSnapshotsAndFreshSession$' \
             > .tmp/native-application/delta-source.log 2>&1
+          "$tools/libexec/database-connectors.test" -test.v -test.timeout=2m \
+            -test.run '^TestNativeAzureStaticReadAndRecovery$' \
+            > .tmp/native-application/azure-source.log 2>&1
           "$tools/libexec/postgres-ducklake.test" -test.v -test.timeout=10m \
             -test.run '^TestPostgresDuckLakeRuntimeLifecycle$' \
             > .tmp/native-application/postgres-ducklake.log 2>&1
@@ -291,6 +294,7 @@ jobs:
           grep -Eq '^--- PASS: TestNativeExcelSourceReadAndFreshSession \(' .tmp/native-application/excel-source.log
           grep -Eq '^--- PASS: TestNativeAvroReadAndFreshSession \(' .tmp/native-application/avro-source.log
           grep -Eq '^--- PASS: TestNativeDeltaSnapshotsAndFreshSession \(' .tmp/native-application/delta-source.log
+          grep -Eq '^--- PASS: TestNativeAzureStaticReadAndRecovery \(' .tmp/native-application/azure-source.log
           # The packaged application has a separate runtime dependency rewrite.
           # Realize that cached output explicitly instead of guessing it from
           # the tools-only build's output selection.
@@ -326,7 +330,9 @@ jobs:
               'deltaSourceLogSHA256': hashlib.sha256((root / 'delta-source.log').read_bytes()).hexdigest(),
               'deltaSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
               'avroSourceLogSHA256': hashlib.sha256((root / 'avro-source.log').read_bytes()).hexdigest(),
+              'azureSourceLogSHA256': hashlib.sha256((root / 'azure-source.log').read_bytes()).hexdigest(),
               'avroSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
+              'azureSourceTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/database-connectors.test').read_bytes()).hexdigest(),
               'databaseConnectorLogSHA256': hashlib.sha256((root / 'database-connectors.log').read_bytes()).hexdigest(),
               'postgresDuckLakeTestSHA256': hashlib.sha256((pathlib.Path(os.environ['TOOLS']) / 'libexec/postgres-ducklake.test').read_bytes()).hexdigest(),
               'postgresDuckLakeLogSHA256': hashlib.sha256((root / 'postgres-ducklake.log').read_bytes()).hexdigest(),

@@ -1,0 +1,12 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -27,8 +27,5 @@
+
+ if(BUILD_TRANSPORT_CURL)
+-  find_package(CURL CONFIG QUIET)
+-  if(NOT CURL_FOUND)
+-    find_package(CURL REQUIRED)
+-  endif()
++  find_package(CURL REQUIRED MODULE)
+   message("Libcurl version ${CURL_VERSION_STRING}")
+ endif()

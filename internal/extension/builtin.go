@@ -34,6 +34,11 @@ func CompiledBuiltin(name, platform string) (BuiltinDescriptor, bool) {
 			SourceRevision: "45c40878601b54b4188b09e08732fe0d576ad222", CargoLockSHA256: "fa9ca48bf887c7982387c6f4d60b78e0981a36b41c59fa4f745fd0a9a057de36",
 			NativeDependencyLockSHA256: "6575f8fb88fcee4407b8ea5bf7ad9b9ce8de0480dbeb69a003b3f365ee2c55a3"}, true
 	}
+	if staticAzureEnabled && name == "azure" {
+		return BuiltinDescriptor{Name: "azure", DuckDBVersion: "v1.5.4", Platform: platform,
+			EngineRevision: "08e34c447bae34eaee3723cac61f2878b6bdf787",
+			SourceRevision: "563589b2f24290a4dcdd4247eaedf2b544f9dbcd", NativeDependencyLockSHA256: "c4c2f1e57c8d863efd45a3d50fdfcad18e0936f564f717c62fc8f5cf98ae9513"}, true
+	}
 	if staticAvroEnabled && name == "avro" {
 		return BuiltinDescriptor{Name: "avro", DuckDBVersion: "v1.5.4", Platform: platform,
 			EngineRevision: "08e34c447bae34eaee3723cac61f2878b6bdf787",
@@ -98,7 +103,7 @@ func (b BuiltinDescriptor) Digest() string {
 }
 
 func (b BuiltinDescriptor) Provenance() string {
-	if b.Name == "ducklake" || b.Name == "httpfs" || b.Name == "quack" || b.Name == "postgres" || b.Name == "mysql" || b.Name == "excel" || b.Name == "avro" || b.Name == "delta" {
+	if b.Name == "ducklake" || b.Name == "httpfs" || b.Name == "quack" || b.Name == "postgres" || b.Name == "mysql" || b.Name == "excel" || b.Name == "avro" || b.Name == "delta" || b.Name == "azure" {
 		return "compiled:" + b.EngineRevision + ":" + b.SourceRevision + ":" + b.NativeDependencyLockSHA256
 	}
 	if b.Name == "sqlite" {

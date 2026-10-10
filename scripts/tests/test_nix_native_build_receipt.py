@@ -14,6 +14,7 @@ from test_nix_native_database_receipt import database_fixture
 from test_nix_native_excel_receipt import excel_fixture
 from test_nix_native_avro_receipt import avro_fixture
 from test_nix_native_delta_receipt import delta_fixture
+from test_nix_native_azure_receipt import fixture as azure_fixture
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / 'nix_native_build_receipt.py'
 sys.path.insert(0, str(SCRIPT.parent))
@@ -299,6 +300,24 @@ class BuildReceipts(unittest.TestCase):
         receipt.create_component('delta', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
         return root, evidence
 
+    def azure(self, http):
+        root = self.root / 'azure'
+        (root / 'lib').mkdir(parents=True)
+        for name in receipt.azure.ARCHIVES:
+            (root / name).write_bytes(b'!<arch>\nazure')
+        evidence = self.root / 'azure-evidence'
+        evidence.mkdir()
+        files = azure_fixture(receipt.sources(REPO, 'azure'))
+        bindings = receipt.decode_json(files['native-link.json'])
+        for name, binding in bindings.items():
+            binding['sha256'] = receipt.digest((root if name == 'lib/libxml2.a' else http) / name)
+        files['native-link.json'] = json.dumps(bindings).encode()
+        for name, data in files.items():
+            (evidence / name).write_bytes(data)
+        (root / 'share/leapview').mkdir(parents=True)
+        receipt.create_component('azure', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
+        return root, evidence
+
     def application(self):
         croaring, _ = self.croaring()
         http, _ = self.http()
@@ -306,6 +325,7 @@ class BuildReceipts(unittest.TestCase):
         excel, _ = self.excel(http)
         avro, _ = self.avro(http)
         delta, _ = self.delta()
+        azure, _ = self.azure(http)
         lance = self.root / 'lance'
         (lance / 'lib').mkdir(parents=True)
         (lance / 'lib/liblance_duckdb_ffi.a').write_bytes(b'!<arch>\nlance')
@@ -313,7 +333,7 @@ class BuildReceipts(unittest.TestCase):
         receipt.create_component('lance', 'linux/amd64', REPO, self.evidence, lance, lance / 'share/leapview/native-build')
         duckdb = self.root / 'duckdb'
         (duckdb / 'lib').mkdir(parents=True)
-        for name in ('duckdb_static', 'lance_extension', 'sqlite_scanner_extension', 'ducklake_extension', 'httpfs_extension', 'quack_extension', 'postgres_scanner_extension', 'mysql_scanner_extension', 'excel_extension', 'avro_extension', 'delta_extension', 'dummy_static_extension_loader'):
+        for name in ('duckdb_static', 'lance_extension', 'sqlite_scanner_extension', 'ducklake_extension', 'httpfs_extension', 'quack_extension', 'postgres_scanner_extension', 'mysql_scanner_extension', 'excel_extension', 'avro_extension', 'delta_extension', 'azure_extension', 'dummy_static_extension_loader'):
             (duckdb / f'lib/lib{name}.a').write_bytes(b'!<arch>\n' + name.encode())
         evidence = self.root / 'cmake'
         evidence.mkdir()
@@ -331,6 +351,11 @@ class BuildReceipts(unittest.TestCase):
         for name, file in (('httpfs', 'src/httpfs.cpp'), ('quack', 'src/quack_client.cpp')):
             commands.append({'file': '/store/' + name + '/' + file, 'command': 'c++ -c ' + file})
             selection.write_text(selection.read_text() + 'duckdb_extension_load(' + name + ' SOURCE_DIR /store/' + name + ' EXTENSION_VERSION ' + receipt.sources(REPO, 'duckdb')['http'][name]['revision'] + ')\n')
+        receipt.write(evidence / 'azure-link.json', {name: {'archive': str(azure / name), 'sha256': receipt.digest(azure / name)} for name in receipt.azure.ARCHIVES})
+        cache.write_text(cache.read_text() + 'AZURE_LIBRARIES:STRING=' + ';'.join(str(azure / name) for name in sorted(receipt.azure.ARCHIVES)) + '\n')
+        cache.write_text(cache.read_text() + 'AZURE_HTTP_LIBRARIES:STRING=' + ';'.join(str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)) + '\n')
+        selection.write_text(selection.read_text() + 'duckdb_extension_load(azure SOURCE_DIR /store/azure EXTENSION_VERSION ' + receipt.sources(REPO, 'azure')['wrapper']['revision'] + ')\n')
+        commands += [{'file': '/store/azure/' + name, 'command': 'c++ -c source.cpp'} for name in ('src/azure_extension.cpp', 'src/azure_blob_filesystem.cpp', 'src/azure_dfs_filesystem.cpp', 'src/azure_secret.cpp')]
         receipt.write(evidence / 'avro-link.json', {name: {'archive': str(avro / name), 'sha256': receipt.digest(avro / name)} for name in receipt.avro.ARCHIVES})
         cache.write_text(cache.read_text() + ''.join(macro + ':FILEPATH=' + str(avro / name) + '\n' for name, macro in (('lib/libavro.a', 'AVRO_LIBRARY'), ('lib/libjansson.a', 'JANSSON_LIBRARY'), ('lib/libsnappy.a', 'SNAPPY_LIBRARY'), ('lib/liblzma.a', 'LZMA_LIBRARY'))))
         cache.write_text(cache.read_text() + 'ZLIB_LIBRARY:FILEPATH=' + str(http / 'lib/libz.a') + '\n')
@@ -360,20 +385,20 @@ class BuildReceipts(unittest.TestCase):
         receipt.write(evidence / 'sqlite-source.json', {name: sqlite[name + 'SHA256'].removeprefix('sha256:') for name in ('sqlite3.c', 'sqlite3.h')})
         (duckdb / 'share/leapview').mkdir(parents=True)
         receipt.create_component('duckdb', 'linux/amd64', REPO, evidence, duckdb, duckdb / 'share/leapview/native-build')
-        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)] + [str(delta / 'lib/libdelta_kernel_ffi.a')]
+        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)] + [str(delta / 'lib/libdelta_kernel_ffi.a')] + [str(azure / name) for name in sorted(receipt.azure.ARCHIVES)]
         inputs = self.root / 'link-inputs'
         inputs.write_text('\n'.join(selected) + '\n')
         app_evidence = self.root / 'app-evidence'
         app_evidence.mkdir()
         (app_evidence / 'link-flags.txt').write_text(' '.join(['-Wl,--start-group', *selected, '-Wl,--end-group', '-lstdc++', '-ldl', '-lm']))
         (app_evidence / 'go.txt').write_text('go version go1.26 linux/amd64\n')
-        (app_evidence / 'tags.txt').write_text('duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta\n')
+        (app_evidence / 'tags.txt').write_text('duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta,leapview_static_azure\n')
         binaries = self.root / 'bin'
         binaries.mkdir()
         for name in ('leapview', 'leapviewctl'):
             (binaries / name).write_bytes(b'\x7fELF\x02\x01' + b'\0' * 12 + bytes([62, 0]) + name.encode())
         destination = self.root / 'application'
-        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro, delta)
+        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro, delta, azure)
         return destination, binaries
 
     def test_delta_missing_receipt_archive_and_generated_header_rejected(self):
@@ -392,6 +417,22 @@ class BuildReceipts(unittest.TestCase):
         (root / 'lib/libdelta_kernel_ffi.a').write_bytes(b'!<arch>\nsubstituted')
         with self.assertRaisesRegex(ValueError, 'substitution'):
             receipt.verify_component(directory / 'delta', 'delta', 'linux/amd64', REPO, root)
+
+    def test_azure_missing_receipt_archive_and_shared_http_substitution_rejected(self):
+        directory, binaries = self.application()
+        path = directory / 'azure/receipt.json'
+        old = path.read_bytes(); path.unlink()
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            receipt.verify_application(directory, REPO, 'linux/amd64', 'a' * 40, binaries)
+        path.write_bytes(old)
+        root = self.root / 'azure'
+        (root / 'lib/libazure-core.a').write_bytes(b'!<arch>\nsubstituted')
+        with self.assertRaisesRegex(ValueError, 'substitution'):
+            receipt.verify_component(directory / 'azure', 'azure', 'linux/amd64', REPO, root)
+        cache = self.root / 'cmake/cmake-cache.txt'
+        cache.write_text(cache.read_text().replace('AZURE_HTTP_LIBRARIES:STRING=', 'AZURE_HTTP_LIBRARIES:STRING=/other;'))
+        with self.assertRaisesRegex(ValueError, 'Azure engine selected dependency'):
+            receipt.check_cmake(self.root / 'cmake', REPO, 'linux/amd64')
 
     def test_avro_receipt_missing_and_substituted_archive_rejected(self):
         directory, binaries = self.application()

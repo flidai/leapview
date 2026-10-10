@@ -521,6 +521,38 @@ fresh admitted sessions. The manual native lane requires a concrete non-skipped
 pass and retains both test-binary and log hashes. Wrapper version identity uses
 an out-of-line method verified across separate extension/loader translation
 units. Actual rebuilt engine, two-architecture runtime and publisher evidence
-remain qualification requirements. Azure, Iceberg, Spatial and Vortex still have
-unresolved signed source closures at this authoring point; engine vendored source
+remain qualification requirements. Iceberg, Spatial and Vortex still have
+unresolved signed source closures after the Azure milestone below; engine vendored source
 coverage and complete scanning remain separate blockers. Admission stays denied.
+
+## Controlled Azure candidate
+
+`azure-source-lock.json` selects duckdb-azure revision
+`563589b2f24290a4dcdd4247eaedf2b544f9dbcd`, Azure Core 1.16.3,
+Identity 1.13.3, Storage Common 12.12.0, Blobs 12.16.0, Data Lake 12.14.0,
+and libxml2 2.15.4. SDK archives are static/PIC and bind the existing selected
+HTTP profile's Curl, OpenSSL, nghttp2 and zlib archives. Dynamic XML modules,
+ICU, XML zlib, Python and HTTP support are disabled; the XML parser remains
+available. The static XML build must run its upstream checks and retain their
+success marker; skipped checks fail receipt verification. Identity and Storage Common retain their consumed source-fetch option in the
+CMake cache through hash-pinned patches; missing or enabled fetch settings fail
+verification. The SDK retains its upstream tests-off default. A required native
+consumer exercises signed Blob/Data Lake XML responses and client-secret token
+JSON with an in-memory transport and owned synthetic credentials.
+
+The wrapper's out-of-line `Version()` and generated loader are checked in two
+translation units. CMake receives explicit SDK/XML and HTTP archive lists;
+application receipts compare these bytes with each component and the final link
+group. Selected source/configuration/PIC compilation, actual archive hashes and
+consumer ELF dependencies are retained; unexpected selected shared libraries,
+source or dependency rebinding fail verification. This is selected build
+composition evidence, not exhaustive binary/header/archive-member closure.
+
+The manual native application lane requires the exact static Azure revision and
+runs the existing canonical source fixture: a scoped SharedKey signs the request,
+a CSV row is read, a missing object fails, and a subsequent valid read succeeds.
+The executable and passing log hashes are retained. Execution on the revised
+source-built engine and both-architecture native publisher qualification remain
+pending. Three other signed extension closures remain (Iceberg, Spatial
+and Vortex), alongside engine vendored identities and the complete native
+security assessment. No whole-application admission is granted by this milestone.

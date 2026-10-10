@@ -11,6 +11,7 @@ let
   excel = import ./excel.nix { inherit pkgs http; };
   avro = import ./avro.nix { inherit pkgs http; };
   delta = import ./delta.nix { inherit pkgs; };
+  azure = import ./azure.nix { inherit pkgs http; };
   ducklake = import ./ducklake.nix { inherit pkgs; };
   revision = "08e34c447bae34eaee3723cac61f2878b6bdf787";
   registry = builtins.readFile ../internal/extension/builtin.go;
@@ -28,6 +29,7 @@ let
     duckdb_extension_load(excel SOURCE_DIR ${excel.source} EXTENSION_VERSION ${excel.revision})
     duckdb_extension_load(delta SOURCE_DIR ${delta.source} EXTENSION_VERSION ${delta.revision})
     duckdb_extension_load(avro SOURCE_DIR ${avro.source} EXTENSION_VERSION ${avro.revision})
+    duckdb_extension_load(azure SOURCE_DIR ${azure.source} EXTENSION_VERSION ${azure.revision})
     duckdb_extension_load(icu)
     duckdb_extension_load(json)
     duckdb_extension_load(parquet)
@@ -92,6 +94,24 @@ pkgs.duckdb.overrideAttrs (old: {
     (pkgs.lib.cmakeFeature "ZLIB_LIBRARY" "${http.archives}/lib/libz.a")
     (pkgs.lib.cmakeFeature "ZLIB_LIBRARY_RELEASE" "${http.archives}/lib/libz.a")
     (pkgs.lib.cmakeFeature "ZLIB_INCLUDE_DIR" "${http.libraries.zlib.dev}/include")
+    (pkgs.lib.cmakeFeature "AZURE_LIBRARIES" (
+      pkgs.lib.concatStringsSep ";" (
+        map (name: "${azure.archives}/lib/${name}") [
+          "libazure-core.a"
+          "libazure-identity.a"
+          "libazure-storage-blobs.a"
+          "libazure-storage-common.a"
+          "libazure-storage-files-datalake.a"
+          "libxml2.a"
+        ]
+      )
+    ))
+    (pkgs.lib.cmakeFeature "AZURE_HTTP_LIBRARIES" "${http.archives}/lib/libcrypto.a;${http.archives}/lib/libcurl.a;${http.archives}/lib/libnghttp2.a;${http.archives}/lib/libssl.a;${http.archives}/lib/libz.a")
+    (pkgs.lib.cmakeFeature "AZURE_INCLUDE_DIRS" (
+      pkgs.lib.concatStringsSep ";" (
+        map (name: "${azure.libraries.${name}.dev}/include") (builtins.attrNames azure.libraries)
+      )
+    ))
     (pkgs.lib.cmakeFeature "roaring_DIR" "${ducklake.croaring}/lib/cmake/roaring")
   ];
   postBuild = (old.postBuild or "") + ''
@@ -121,6 +141,11 @@ pkgs.duckdb.overrideAttrs (old: {
     root = pathlib.Path(sys.argv[1])
     pathlib.Path(sys.argv[2]).write_text(json.dumps({str(p.relative_to(root)): {'archive': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted((root / 'lib').glob('*.a'))}, sort_keys=True) + '\n')
     PYAVRO
+    ${pkgs.python3}/bin/python3 - ${azure.archives} "$TMPDIR/native-evidence/azure-link.json" <<'PYAZURE'
+    import hashlib, json, pathlib, sys
+    root = pathlib.Path(sys.argv[1])
+    pathlib.Path(sys.argv[2]).write_text(json.dumps({str(p.relative_to(root)): {'archive': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted((root / 'lib').glob('*.a'))}, sort_keys=True) + '\n')
+    PYAZURE
     cp ${extensions} "$TMPDIR/native-evidence/extensions.cmake"
     ${pkgs.python3}/bin/python3 - ${sqlite.source} "$TMPDIR/native-evidence/sqlite-source.json" <<'PY'
     import hashlib, json, pathlib, sys
@@ -149,6 +174,7 @@ pkgs.duckdb.overrideAttrs (old: {
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'delta' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${delta.revision}';" | grep -q 1
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'avro' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${avro.revision}';" | grep -q 1
     "$out/bin/duckdb" -c "COPY (SELECT 42 AS retained_value) TO '$TMPDIR/native.avro' (FORMAT AVRO); SELECT retained_value FROM read_avro('$TMPDIR/native.avro');" | grep -q 42
+    "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'azure' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${azure.revision}';" | grep -q 1
     "$out/bin/duckdb" -c "SELECT version();" | grep -q v1.5.4
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'sqlite_scanner' AND installed AND install_mode = 'STATICALLY_LINKED' AND install_path = '(BUILT-IN)';" | grep -q 1
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'ducklake' AND installed AND install_mode = 'STATICALLY_LINKED' AND install_path = '(BUILT-IN)';" | grep -q 1
@@ -163,6 +189,7 @@ pkgs.duckdb.overrideAttrs (old: {
       excel
       avro
       delta
+      azure
       revision
       ;
   };

@@ -117,10 +117,11 @@ pkgs.stdenv.mkDerivation {
     databaseLibraries=$(find ${duckdb.database.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
     excelLibraries=$(find ${duckdb.excel.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
     avroLibraries=$(find ${duckdb.avro.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
-    export CGO_LDFLAGS="-Wl,--start-group $nativeLibraries ${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a ${duckdb.ducklake.croaring}/lib/libroaring.a $httpLibraries $databaseLibraries $excelLibraries $avroLibraries ${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a -Wl,--end-group -lstdc++ -ldl -lm"
-    tags=duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta
+    azureLibraries=$(find ${duckdb.azure.archives}/lib -maxdepth 1 -name '*.a' -type f | LC_ALL=C sort)
+    export CGO_LDFLAGS="-Wl,--start-group $nativeLibraries ${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a ${duckdb.ducklake.croaring}/lib/libroaring.a $httpLibraries $databaseLibraries $excelLibraries $avroLibraries $azureLibraries ${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a -Wl,--end-group -lstdc++ -ldl -lm"
+    tags=duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta,leapview_static_azure
     mkdir -p "$TMPDIR/native-application-evidence"
-    printf '%s\n' "$nativeLibraries" '${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a' '${duckdb.ducklake.croaring}/lib/libroaring.a' "$httpLibraries" "$databaseLibraries" "$excelLibraries" "$avroLibraries" '${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a' > "$TMPDIR/native-link-inputs"
+    printf '%s\n' "$nativeLibraries" '${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a' '${duckdb.ducklake.croaring}/lib/libroaring.a' "$httpLibraries" "$databaseLibraries" "$excelLibraries" "$avroLibraries" "$azureLibraries" '${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a' > "$TMPDIR/native-link-inputs"
     printf '%s\n' "$CGO_LDFLAGS" > "$TMPDIR/native-application-evidence/link-flags.txt"
     printf '%s\n' "$tags" > "$TMPDIR/native-application-evidence/tags.txt"
     go version > "$TMPDIR/native-application-evidence/go.txt"
@@ -142,7 +143,7 @@ pkgs.stdenv.mkDerivation {
   postFixup = ''
     ${receipts.command} compose --repo ${receipts.source} --platform ${receipts.platform} \
       --revision ${revision} --duckdb ${duckdb.lib} --lance ${duckdb.lance.rust} \
-      --croaring ${duckdb.ducklake.croaring} --http ${duckdb.http.archives} --database ${duckdb.database.archives} --excel ${duckdb.excel.archives} --avro ${duckdb.avro.archives} --delta ${duckdb.delta.rust} \
+      --croaring ${duckdb.ducklake.croaring} --http ${duckdb.http.archives} --database ${duckdb.database.archives} --excel ${duckdb.excel.archives} --avro ${duckdb.avro.archives} --azure ${duckdb.azure.archives} --delta ${duckdb.delta.rust} \
       --binaries "$out/bin" --link-inputs "$TMPDIR/native-link-inputs" \
       --evidence "$TMPDIR/native-application-evidence" --destination "$out/share/leapview/native-build" > /dev/null
     ${receipts.command} verify --repo ${receipts.source} --platform ${receipts.platform} \
