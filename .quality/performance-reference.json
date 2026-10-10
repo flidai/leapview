@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "commit": "b59d798a7e49ee91c87bc9dbdba59e31e2837c13",
+  "image": "ghcr.io/flidai/leapview@sha256:548b8b28381f574009ea041cbc5d9a1f2da9109c3d6557bfdac4ebdef59aa8d2",
+  "qualificationRun": "https://github.com/flidai/leapview/actions/runs/38040607080",
+  "runAttempt": 1,
+  "artifactId": 11666447826,
+  "artifactSHA256": "c317364dbd415924d26eff9eb091ff946faf64bb9da0f2835d65282e5f7fa283",
+  "reportSHA256": "00406e91ca945eedfb91e1f0170f338817843744586511c1c32f199e1761af2f"
+}
