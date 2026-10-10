@@ -89,6 +89,7 @@ test('Nix source-generation inputs select their consumer builds', () => {
   }
 })
 
+
 test('orchestration archive manifest checks run in the CI contract lane', () => {
   const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_orchestration_cache.py'], { encoding: 'utf8' })
   if (result.status !== 0) throw new Error(result.stdout + result.stderr)
