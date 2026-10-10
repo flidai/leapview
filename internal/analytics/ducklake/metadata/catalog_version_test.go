@@ -1,4 +1,4 @@
-package ducklake
+package metadata
 
 import "testing"
 

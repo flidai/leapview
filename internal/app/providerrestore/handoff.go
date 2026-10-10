@@ -55,13 +55,22 @@ type ReplacementHandoff struct {
 	Providers      []ProviderEndpoint            `json:"providers"`
 	Secrets        SecretBundleReference         `json:"secrets"`
 	AvailableAt    time.Time                     `json:"availableAt"`
+	ManagedLocal   *ManagedLocalHandoff          `json:"managedLocal,omitempty"`
 }
 
 type HandoffRequest struct {
+	OccurrenceID     string
 	Set              recoveryset.RecoverySet
 	ArtifactIdentity string
 	Databases        []DatabaseResult
 	Objects          []ObjectResult
+}
+
+func (handoff ReplacementHandoff) validateOccurrence(occurrenceID string) error {
+	if handoff.SchemaVersion == ManagedLocalHandoffSchemaVersion && (handoff.ManagedLocal == nil || occurrenceID == "" || handoff.ManagedLocal.OccurrenceID != occurrenceID) {
+		return fmt.Errorf("%w: managed-local handoff belongs to another recovery occurrence", ErrInconsistent)
+	}
+	return nil
 }
 
 type HandoffExpectations struct {
@@ -77,6 +86,12 @@ type HandoffProvider interface {
 }
 
 func (handoff ReplacementHandoff) Validate(expectedSet recoveryset.RecoverySet, artifactIdentity string) error {
+	if handoff.SchemaVersion == ManagedLocalHandoffSchemaVersion {
+		return validateManagedLocalHandoff(handoff, expectedSet, artifactIdentity)
+	}
+	if handoff.ManagedLocal != nil {
+		return fmt.Errorf("%w: managed-local handoff cannot use the remote profile", ErrInconsistent)
+	}
 	if handoff.SchemaVersion != HandoffSchemaVersion || handoff.Kind != HandoffKind || handoff.Status != HandoffAvailable || handoff.RecoverySetID != expectedSet.ID || handoff.FrontierDigest != expectedSet.FrontierDigest || handoff.TargetID != expectedSet.Delivery.TargetID || handoff.AvailableAt.IsZero() {
 		return fmt.Errorf("%w: replacement handoff identity is incomplete", ErrInconsistent)
 	}
@@ -185,6 +200,9 @@ func HandoffPresent(handoff ReplacementHandoff) bool {
 }
 
 func ValidateHandoffReport(report Report, expected HandoffExpectations) error {
+	if report.Handoff.SchemaVersion != HandoffSchemaVersion || report.Handoff.ManagedLocal != nil {
+		return fmt.Errorf("%w: remote consumer requires the remote handoff profile", ErrInconsistent)
+	}
 	if report.Status != StatusSucceeded || !HandoffPresent(report.Handoff) {
 		return fmt.Errorf("%w: successful provider restore has no replacement handoff", ErrInconsistent)
 	}
@@ -202,6 +220,9 @@ func ValidateHandoffReport(report Report, expected HandoffExpectations) error {
 }
 
 func validateHandoffResults(handoff ReplacementHandoff, databases []DatabaseResult, objects []ObjectResult) error {
+	if handoff.SchemaVersion == ManagedLocalHandoffSchemaVersion {
+		return validateManagedLocalResults(handoff, databases, objects)
+	}
 	databaseByRole := map[string]string{}
 	for _, database := range databases {
 		databaseByRole[string(database.DatabaseRole)] = database.DatabaseIdentity

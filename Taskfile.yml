@@ -593,6 +593,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
       - bun test scripts/nix_ci_contract.test.ts scripts/ci_dependency_acquisition_contract.test.ts
+      - bun test scripts/ci_docker_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_prepare_sqlc_modules.py
       - python3 -m unittest discover -s scripts/tests -p test_prepare_ci_fixture_images.py
       - bun test scripts/nix_desktop_candidate_contract.test.ts
@@ -602,6 +603,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_managed_admission_handoff.py
       - python3 -m unittest discover -s scripts/tests -p test_managed_application_inputs.py
       - python3 -m unittest discover -s scripts/tests -p test_managed_recovery_inventory.py
+      - python3 -m unittest discover -s scripts/tests -p test_ci_docker_credentials.py
       - python3 -m unittest discover -s deploy/managed/nixos/tests -p 'managed_application*_test.py'
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
       - python3 -m unittest discover -s scripts/tests -p 'test_performance_*.py'

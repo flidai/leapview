@@ -41,7 +41,7 @@ func TestNativeMySQLSourceReadDenialAndRecovery(t *testing.T) {
 	// same credential and database used by the native source attachment.
 	ready := wait.ForExec([]string{"env", "MYSQL_PWD=" + password, "mysql", "--protocol=TCP", "--host=127.0.0.1", "--user=fixture_reader", "fixtures", "--execute=SELECT 1;"}).WithStartupTimeout(90 * time.Second)
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{Started: true, ContainerRequest: testcontainers.ContainerRequest{
-		FromDockerfile: testcontainers.FromDockerfile{ContextArchive: bytes.NewReader(archive.Bytes()), Repo: "leapview-test/mysql", Tag: "8.4.11-v2", KeepImage: true},
+		FromDockerfile: testcontainers.FromDockerfile{ContextArchive: bytes.NewReader(archive.Bytes()), Repo: "leapview-test/mysql", Tag: "26.7-v1", KeepImage: true},
 		Env:            map[string]string{"MYSQL_ROOT_PASSWORD": "owned-native-mysql-root", "MYSQL_DATABASE": "fixtures", "MYSQL_USER": "fixture_reader", "MYSQL_PASSWORD": password},
 		ExposedPorts:   []string{"3306/tcp"}, WaitingFor: ready,
 	}})
