@@ -345,7 +345,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           ${lucideIcon(ChevronDown, { size: 16, strokeWidth: 2 })}
         </button>
         ${this.themeMenuOpen ? html`
-          <div id="personal-theme-listbox" class="theme-menu" popover="auto" role="listbox" aria-labelledby="personal-theme-label" @toggle=${this.handleThemeMenuToggle} @keydown=${this.handleThemeOptionKeydown}>
+          <div id="personal-theme-listbox" class="theme-menu" popover="auto" role="listbox" tabindex="0" aria-labelledby="personal-theme-label" @toggle=${this.handleThemeMenuToggle} @keydown=${this.handleThemeOptionKeydown}>
             ${themeGroups.map((group) => html`
               <div class="theme-group" role="group" aria-label=${group}>
                 <div class="theme-group-label" aria-hidden="true">${group}</div>
