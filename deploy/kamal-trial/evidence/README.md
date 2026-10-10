@@ -1,5 +1,11 @@
 # Trial results — 26 September 2026
 
+The experimental image package and publisher were retired on 10 October 2026.
+The [retirement archive](https://github.com/flidai/leapview/releases/tag/archive-kamal-trial-20261010)
+retains original OCI contents, package metadata and admission artifacts. See the
+[fixture README](../README.md#reproduce-historical-real-image-qualification) for
+archive-based reproduction. The September observations below remain historical.
+
 **Not yet qualified for production.** These are isolated Kamal/SSH/Docker tests
 with synthetic fixtures and a separately admitted real-site image. They establish
 deployment mechanics and compatibility, not the complete production integration.

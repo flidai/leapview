@@ -13,6 +13,14 @@ on:
       - 'bun.lock'
       - 'Taskfile.yml'
       - 'scripts/check_nix_development.mjs'
+      - 'scripts/prepare_sqlc_modules.sh'
+      - 'scripts/tests/test_prepare_sqlc_modules.py'
+      - 'scripts/prepare_ci_fixture_images.sh'
+      - 'scripts/tests/test_prepare_ci_fixture_images.py'
+      - 'scripts/postgres-conformance-tests.sh'
+      - 'scripts/postgres-app-shards.sh'
+      - 'internal/platform/postgres/postgrestest/**'
+      - 'internal/platform/testminio/**'
       - 'scripts/develop.sh'
       - 'desktop/**'
       - 'scripts/export_nix_ci_environment.py'
@@ -21,6 +29,7 @@ on:
       - '.github/workflows/orchestration-cache.yml'
       - 'scripts/nix_ci_contract.test.ts'
       - 'scripts/qualify_managed_replacement_ci.sh'
+      - 'scripts/ci_dependency_acquisition_contract.test.ts'
       - 'scripts/ci_docker_contract.test.ts'
       - 'scripts/configure_ci_docker_mirror.py'
       - 'scripts/mask_ci_docker_credentials.py'
@@ -510,7 +519,9 @@ jobs:
       - name: Exercise the pinned browser and sqlc toolchain
         run: nix develop --no-update-lock-file -c task nix:smoke
       - name: Prepare generated and embedded assets for the fresh checkout
-        run: nix develop --no-update-lock-file -c task ci:prepare
+        run: |
+          nix develop --no-update-lock-file -c bash scripts/prepare_sqlc_modules.sh
+          nix develop --no-update-lock-file -c task ci:prepare
       - name: Qualify restored managed application component
         run: nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_replacement_ci.sh
       - name: Set up Terraform for deployment validation

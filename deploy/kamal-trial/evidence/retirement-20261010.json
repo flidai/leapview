@@ -1,0 +1,45 @@
+{
+  "admissionArtifactCount": 32,
+  "archiveBytes": 6319682992,
+  "archiveReleaseURL": "https://github.com/flidai/leapview/releases/tag/archive-kamal-trial-20261010",
+  "archiveRunId": 38016920968,
+  "archiveSha256": "309a3076f48e054f38b5e05acf155b2944c6caf60e7b65f3648dc179107a91c8",
+  "blobCount": 169,
+  "deleteRunId": 38017646188,
+  "deletedAtUTC": "2026-10-10T02:39:29Z",
+  "fullReceiptAsset": "deletion-receipt.json",
+  "fullReceiptSha256": "bbe3d66c128a0206debb4f3bd3745ed6202c1073757558ee64a44ee050737399",
+  "manifestCount": 151,
+  "offlinePreparationVerified": [
+    {
+      "archiveSha256": "000008d765a2a97b1189a8876431a548972d91512ae089034344e9389a018f13",
+      "configDigest": "sha256:80da043f2296636d4996b7268ae62e7c99dbf2471d3b2353ae3bde8f3d3acc3f",
+      "image": "ghcr.io/flidai/leapview-site-kamal-trial@sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339",
+      "platformDigest": "sha256:82d1a56548c833e354d20dab916bb8ddf994caade8222cf5529b44809c606e72",
+      "runId": 36228605549
+    },
+    {
+      "archiveSha256": "6f2fe5c79c60d454052b46300be865d97446951e03035cc7983779f0eba450cd",
+      "configDigest": "sha256:b97e35017b5ade9bbe60d155c1a06cf2d163a2872bae9b63cd6239a462b1e8af",
+      "image": "ghcr.io/flidai/leapview-site-kamal-trial@sha256:b60e9a9c1054b4d8071d655f03852d8032df038be3fe0204a53130377563de0c",
+      "platformDigest": "sha256:dc8fec38a33edcf5b8527a9e8e11f9200554eacdf96fe2d3bfc3cc6c1699177e",
+      "runId": 36230525487
+    },
+    {
+      "archiveSha256": "7002fcb5a61cc43bc12ce63c2a6049d959619eaf6b6418f02c4046555411637e",
+      "configDigest": "sha256:3c8261042d1ccda591b3d0913487fad812fe647f03d27eef75b800f35ace7802",
+      "image": "ghcr.io/flidai/leapview-site-kamal-trial@sha256:c10c14ca8cb0f9122b1f67fa30715bea7eb2deccadbe0c45ae570d9219a29121",
+      "platformDigest": "sha256:0f0d7a722b418b010a8ca40bc55f2b4553d035e8dfe342c2cca3a202c6d8f16b",
+      "runId": 36543690675
+    }
+  ],
+  "package": "leapview-site-kamal-trial",
+  "packageGetAfterDelete": 404,
+  "productionPackagesPreserved": {
+    "leapview": 14099618,
+    "leapview-site": 14095845
+  },
+  "repository": "flidai/leapview",
+  "schemaVersion": 1,
+  "versionCount": 151
+}
