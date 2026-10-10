@@ -1,0 +1,26 @@
+name: Operations / Retire Kamal trial package once
+
+on:
+  push:
+    branches: [ganesh/archive-kamal-trial-package-20261010]
+
+permissions:
+  contents: write
+  packages: read
+  actions: read
+
+concurrency:
+  group: retire-kamal-trial-package-once
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/ganesh/archive-kamal-trial-package-20261010'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Archive all trial images and admission evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/retire_kamal_trial_once.py archive
