@@ -14,6 +14,8 @@ IMAGE = re.search(r'const PostgreSQL18Image = "([^"]+)"',
 
 MINIO_IMAGE = re.search(r'^FROM ([^ ]+)',
                        (ROOT / 'internal/platform/testminio/Dockerfile').read_text(), re.M)[1]
+REGISTRY_IMAGE = re.search(r'const qualificationRegistryImage = "([^"]+)"',
+                          (ROOT / 'internal/app/cli/composectl/qualification_image.go').read_text())[1]
 
 
 class PrepareFixtureImageTests(unittest.TestCase):
@@ -62,7 +64,7 @@ with open(os.environ['POSTGRES_IMAGE_TEST_LOG'], 'a') as output:
         calls = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
         for call in calls:
             if 'args' in call:
-                self.assertIn(IMAGE if fixture == 'postgres' else MINIO_IMAGE, call['args'],
+                self.assertIn({'postgres': IMAGE, 'minio': MINIO_IMAGE, 'registry': REGISTRY_IMAGE}[fixture], call['args'],
                               'all operations must use the canonical fixture digest')
         return result, calls
 
@@ -104,6 +106,18 @@ with open(os.environ['POSTGRES_IMAGE_TEST_LOG'], 'a') as output:
         result, calls = self.prepare('limited_once', 'minio')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sum(call.get('args', [''])[0] == 'pull' for call in calls), 2)
+
+    def test_registry_retries_observed_rate_limit_with_the_qualification_pin(self):
+        result, calls = self.prepare('limited_once', 'registry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(call.get('args', [''])[0] == 'pull' for call in calls), 2)
+        self.assertEqual([call['sleep'] for call in calls if 'sleep' in call], [['5']])
+
+    def test_registry_digest_failure_does_not_retry_or_change_reference(self):
+        result, calls = self.prepare('digest', 'registry')
+        self.assertEqual(result.returncode, 8, result.stderr)
+        self.assertEqual(sum(call.get('args', [''])[0] == 'pull' for call in calls), 1)
+        self.assertFalse(any('sleep' in call for call in calls))
 
 
 if __name__ == '__main__':
