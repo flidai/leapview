@@ -21,7 +21,7 @@ func TestNightlyEvidenceRefreshIsReadOnlyFailClosedAndReviewable(t *testing.T) {
 		"run: task security:dependencies\n",
 		"if: ${{ steps.evidence-refresh.outcome == 'success' }}",
 		"if: ${{ !cancelled() && steps.evidence-refresh.outcome == 'success' && steps.evidence-validation.outcome == 'success' }}",
-		"uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+		"uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
 		"path: .security/javascript-vulnerability-evidence.json",
 	} {
 		if !strings.Contains(refresh, want) {

@@ -140,7 +140,7 @@ jobs:
 
       - name: Retain the verified release handoff
         id: handoff
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-release-input-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-input/
@@ -173,7 +173,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download the exact authorized release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -244,7 +244,7 @@ jobs:
         if: always()
         run: docker logout ghcr.io >/dev/null 2>&1 || true
       - name: Retain immutable pre-execution admission and runtime evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-preflight-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: preflight/${{ matrix.arch }}/
@@ -253,7 +253,7 @@ jobs:
 
       - name: Retain image admission diagnostics on failure
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-preflight-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: |
@@ -301,12 +301,12 @@ jobs:
             sandbox = true
 
       - name: Download the exact Nix bundle and release handoff artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: candidate
       - name: Download the exact release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -357,7 +357,7 @@ jobs:
       - name: Retain successful native controller evidence
         if: success()
         id: evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-controller-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: controller-evidence/${{ matrix.arch }}/
@@ -366,7 +366,7 @@ jobs:
 
       - name: Retain controller evidence diagnostics on failure
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-controller-evidence-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: controller-evidence/${{ matrix.arch }}/
@@ -413,13 +413,13 @@ jobs:
             sandbox = true
 
       - name: Download the exact bundle artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: candidate
 
       - name: Download the exact release handoff and REST artifact bytes
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -462,7 +462,7 @@ jobs:
           PY
 
       - name: Download the exact native preflight artifact by REST ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.preflight.outputs.artifact_id }}
           path: preflight/${{ matrix.arch }}
@@ -505,7 +505,7 @@ jobs:
           PY
 
       - name: Download the exact native controller evidence by REST ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.controller-evidence.outputs.artifact_id }}
           path: controller-evidence/${{ matrix.arch }}
@@ -641,7 +641,7 @@ jobs:
       - name: Retain success-qualified exact archive and receipt
         if: success()
         id: qualified
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-qualified-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: qualified/${{ matrix.arch }}/
@@ -650,7 +650,7 @@ jobs:
 
       - name: Retain native qualification diagnostics even on failure
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: |
@@ -702,12 +702,12 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Download exact original bundle and release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: candidate
       - name: Download exact protected release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -737,7 +737,7 @@ jobs:
               output.write(f"artifact_id={matches[0]['id']}\n")
           VERIFY
       - name: Download original security evidence by immutable artifact ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.controller.outputs.artifact_id }}
           path: original-controller-evidence
@@ -841,7 +841,7 @@ jobs:
             --receipt host-evidence/guest/host-guest-receipt.json --evidence-dir host-evidence/guest/evidence
       - name: Retain exact fresh-host receipts and diagnostics without credentials
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-host-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}-${{ matrix.postgres-profile }}
           path: host-evidence/
@@ -874,7 +874,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the exact protected release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -979,7 +979,7 @@ jobs:
 
       - name: Retain the assembled bundles and original Nix build receipts
         id: bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-bundles-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate/
@@ -1052,42 +1052,42 @@ jobs:
                       output.write(f"{kind.replace('-', '_')}_{arch}_id={matches[0]['id']}\n")
           PY
       - name: Download exact amd64 native qualification
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.qualified_amd64_id }}
           path: qualified/amd64
       - name: Download exact arm64 native qualification
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.qualified_arm64_id }}
           path: qualified/arm64
       - name: Download exact amd64 pre-execution artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.preflight_amd64_id }}
           path: preflight/amd64
       - name: Download exact arm64 pre-execution artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.preflight_arm64_id }}
           path: preflight/arm64
       - name: Download exact amd64 controller evidence artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_amd64_id }}
           path: original-controller-evidence/amd64
       - name: Download exact arm64 controller evidence artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_arm64_id }}
           path: original-controller-evidence/arm64
       - name: Download exact original Nix bundle artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: original-build
       - name: Download exact release handoff and original REST ZIP
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -1179,7 +1179,7 @@ jobs:
           predicate-path: qualified/arm64/controller-evidence/sbom.spdx.json
       - name: Retain exact attested archives and evidence
         id: signed
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-signed-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -1219,7 +1219,7 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Download exact signed artifact by ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.sign.outputs.artifact_id }}
           path: signed
@@ -1348,7 +1348,7 @@ jobs:
           done
       - name: Retain independent read-only verification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-attestation-verification-${{ github.run_id }}-${{ github.run_attempt }}
           path: verification/
