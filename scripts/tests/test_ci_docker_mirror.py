@@ -136,8 +136,8 @@ class RyukPreloadTests(unittest.TestCase):
             ["docker", "image", "inspect", mirror.RYUK_STOCK_IMAGE, "--format", "{{.Id}}"],
         ])
         self.assertEqual(mirror.RYUK_SOURCE,
-                         "ghcr.io/testcontainers/ryuk:0.13.0@sha256:31b31269d06603366cbfd0284708dcd2e281e8a4188e53fce3d3304439d0df3d")
-        self.assertEqual(mirror.RYUK_STOCK_IMAGE, "testcontainers/ryuk:0.13.0")
+                         "ghcr.io/testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0")
+        self.assertEqual(mirror.RYUK_STOCK_IMAGE, "testcontainers/ryuk:0.14.0")
 
     def test_pull_failure_never_tags_or_inspects(self):
         with patch.object(mirror.subprocess, "run", side_effect=subprocess.CalledProcessError(
