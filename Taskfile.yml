@@ -593,8 +593,10 @@ tasks:
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
-      - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_ci_contract.test.ts scripts/ci_dependency_acquisition_contract.test.ts
       - bun test scripts/ci_docker_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_prepare_sqlc_modules.py
+      - python3 -m unittest discover -s scripts/tests -p test_prepare_ci_fixture_images.py
       - bun test scripts/nix_desktop_candidate_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
       - bun test scripts/managed_admission_contract.test.ts
@@ -2063,6 +2065,7 @@ tasks:
   test:go:external:
     desc: Run container-backed external-service integration tests serially
     cmds:
+      - bash scripts/prepare_ci_fixture_images.sh minio
       - go test -tags integration ./internal/platform/testminio -count=1
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
       - task: test:go:postgres-conformance
