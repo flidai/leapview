@@ -829,7 +829,21 @@ func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, err
 		if manager := h.options.Service.ConfigurationManager(); manager != nil {
 			if err := manager.Refresh(ctx); err != nil {
 				h.options.Service.ReportRuntimeConfigError()
-				return out, err
+				var unsupported *agent.UnsupportedConfigurationError
+				if !errors.As(err, &unsupported) {
+					return out, err
+				}
+				// Keep the saved settings and their exact revision available for
+				// explicit key re-entry. The unsupported credential remains unusable;
+				// neither the active runtime nor credential storage supplies metadata.
+				out.ConfigurationRevision, out.AdminManaged = unsupported.Revision, true
+				out.ConfigurationAvailable, out.Enabled = true, unsupported.Enabled
+				out.Model, out.BaseURL = unsupported.Model, unsupported.BaseURL
+				out.APIMode, out.ReasoningEffort = unsupported.APIMode, unsupported.ReasoningEffort
+				out.Status = string(agent.AgentRuntimeDegraded)
+				out.StatusDetail = "The saved provider credential is unavailable. Explicitly re-enter the API key, test the connection, and save to activate these settings. The previous revision is retained."
+				out.Tools = adminAgentToolDTOs(h.options.Service.ToolDefinitions(agent.Scope{PrincipalID: "admin", DevAuthBypass: true}), h.options.APIGenToolContracts)
+				return out, nil
 			}
 			c := h.options.Service.DeploymentConfig()
 			out.BaseURL, out.APIMode, out.ConfigurationRevision = c.NormalizedBaseURL(), c.APIMode, c.Revision

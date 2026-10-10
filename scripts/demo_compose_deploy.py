@@ -272,7 +272,7 @@ def main():
                     verify_public_revision(expected, env['DEMO_PERMISSION_PROFILE'], env)
                     if action == 'prepare' and not is_previous:
                         publish(publication_root, revision, env)
-                result = upgrade.rollout(ssh, helper, request_path, action, image, revision, client_env, request['operationDigest'], request['profile'], validate=validate_clone)
+                result = upgrade.rollout(ssh, helper, request_path, action, image, revision, client_env, request['operationDigest'], request['profile'], validate=validate_clone, agent_transition=request.get('agentCredentialTransition'))
                 if action == 'prepare':
                     verify_public_revision(previous['revision'], predecessor_profile)
                     print('Detached rehearsal passed; live predecessor remains unchanged.')

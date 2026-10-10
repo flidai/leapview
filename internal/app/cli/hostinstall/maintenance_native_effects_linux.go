@@ -61,7 +61,7 @@ func (e *NativeEffects) cleanupClone(ctx context.Context) error {
 	prefix := e.clonePrefix()
 	// These deterministic names belong only to this journal identity. No prune,
 	// volume removal, or unrelated container cleanup is permitted.
-	for _, suffix := range []string{"-transition", "-migrator", "-caddy", "-app", "-pg"} {
+	for _, suffix := range []string{"-provider", "-transition", "-migrator", "-caddy", "-app", "-pg"} {
 		name := prefix + suffix
 		found, err := e.docker(ctx, "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
 		if err != nil {
@@ -80,6 +80,11 @@ func (e *NativeEffects) cleanupClone(ctx context.Context) error {
 	if found != "" {
 		_, err = e.docker(ctx, "network", "rm", prefix)
 	}
+	for _, name := range []string{"agent-provider-relay.json", "agent-credential-checkpoint.json"} {
+		if removeErr := os.Remove(filepath.Join(e.operation, name)); removeErr != nil && !os.IsNotExist(removeErr) {
+			return errAgentTransition
+		}
+	}
 	return err
 }
 func (e *NativeEffects) clone(ctx context.Context, name, alias string, original dockerInspection, volumes map[string]string) error {
@@ -93,6 +98,15 @@ func (e *NativeEffects) clone(ctx context.Context, name, alias string, original 
 		return err
 	}
 	args := []string{"run", "-d", "--name", name, "--network", e.clonePrefix(), "--network-alias", alias, "--restart=no", "--env-file", envFile}
+	if e.agentCloneAppIP != "" && name == e.clonePrefix()+"-app" {
+		args = append(args, "--ip", e.agentCloneAppIP)
+	}
+	if e.agentCloneProxyIP != "" && name == e.clonePrefix()+"-caddy" {
+		args = append(args, "--ip", e.agentCloneProxyIP)
+	}
+	for _, extra := range original.HostConfig.ExtraHosts {
+		args = append(args, "--add-host", extra)
+	}
 	for _, mount := range original.Mounts {
 		switch mount.Type {
 		case "tmpfs":
@@ -264,16 +278,25 @@ func (e *NativeEffects) rehearseSnapshot(ctx context.Context, id Identity, diges
 		return "", err
 	}
 	candidate.Config.Env = strings.Split(strings.TrimSuffix(string(prepared), "\n"), "\n")
+	baseCandidate := candidate
+	candidate, err = e.prepareAgentClone(ctx, candidate)
+	if err != nil {
+		return "", err
+	}
 	if err = e.clone(ctx, prefix+"-app", e.request.Profile.AppService, candidate, volumes); err != nil {
 		return "", err
 	}
 	if err = e.waitPG(ctx, prefix+"-pg", e.request.Plan.CandidateSchema); err != nil {
 		return "", err
 	}
-	if err = e.waitApp(ctx, prefix+"-app", id.Candidate, e.request.CandidateRevision); err != nil {
-		return "", err
-	}
-	if err = e.waitTransitionActivation(ctx, prefix+"-pg", true); err != nil {
+	if e.request.AgentCredentialTransition == nil {
+		if err = e.waitApp(ctx, prefix+"-app", id.Candidate, e.request.CandidateRevision); err != nil {
+			return "", err
+		}
+		if err = e.waitTransitionActivation(ctx, prefix+"-pg", true); err != nil {
+			return "", err
+		}
+	} else if err = e.waitAgentHTTP(ctx, prefix+"-app"); err != nil {
 		return "", err
 	}
 	// Recreate the proxy so its upstream resolves the candidate clone's address.
@@ -300,6 +323,37 @@ func (e *NativeEffects) rehearseSnapshot(ctx context.Context, id Identity, diges
 		return "", err
 	}
 	defer closeCandidateRelay()
+	if e.request.AgentCredentialTransition != nil {
+		closeProvider, startErr := e.startAgentCloneProvider(ctx, candidate)
+		if startErr != nil {
+			return "", startErr
+		}
+		defer func() {
+			if closeErr := closeProvider(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		if err = e.agentCredentialCheckpoint(ctx, true, closeProvider); err != nil {
+			return "", err
+		}
+		// Restart removes the operation-only hostname mapping and proves that the
+		// committed customer version reconstructs runtime without test egress.
+		if _, err = e.docker(ctx, "rm", "-f", prefix+"-app"); err != nil {
+			return "", err
+		}
+		if err = e.clone(ctx, prefix+"-app", e.request.Profile.AppService, baseCandidate, volumes); err != nil {
+			return "", err
+		}
+		if err = e.waitApp(ctx, prefix+"-app", id.Candidate, e.request.CandidateRevision); err != nil {
+			return "", err
+		}
+		if err = e.waitTransitionActivation(ctx, prefix+"-pg", true); err != nil {
+			return "", err
+		}
+		if _, err = e.docker(ctx, "restart", prefix+"-caddy"); err != nil {
+			return "", err
+		}
+	}
 	if err = e.awaitBrowser(ctx, "AWAITING_REHEARSAL_BROWSER_VALIDATION"); err != nil {
 		return "", err
 	}
@@ -530,7 +584,12 @@ func (e *NativeEffects) StartCandidateIsolated(ctx context.Context, id Identity)
 	if err := e.link("releases/sha256-" + strings.TrimPrefix(id.Candidate, "ghcr.io/flidai/leapview@sha256:")); err != nil {
 		return err
 	}
-	if err := e.composePrivate(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
+	args := []string{"up", "-d", "--no-deps"}
+	if e.request.AgentCredentialTransition == nil {
+		args = append(args, "--wait", "--wait-timeout", "180")
+	}
+	args = append(args, e.request.Profile.AppService)
+	if err := e.composePrivate(ctx, args...); err != nil {
 		return err
 	}
 	if err := e.composePrivate(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
@@ -540,6 +599,14 @@ func (e *NativeEffects) StartCandidateIsolated(ctx context.Context, id Identity)
 	// crash window between creation and a later Docker update.
 	for _, name := range []string{e.app(), e.request.Profile.Postgres} {
 		if _, err := e.docker(ctx, "update", "--restart=no", name); err != nil {
+			return err
+		}
+	}
+	if e.request.AgentCredentialTransition != nil {
+		if err := e.waitAgentHTTP(ctx, e.app()); err != nil {
+			return err
+		}
+		if err := e.agentCredentialCheckpoint(ctx, false, nil); err != nil {
 			return err
 		}
 	}
