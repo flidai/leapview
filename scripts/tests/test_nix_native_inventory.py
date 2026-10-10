@@ -33,6 +33,16 @@ class NativeInventoryTests(unittest.TestCase):
         self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
         self.assertEqual(selected['libraries']['avro']['revision'], '8af400279c445a81b8552a7670d8c1ebd92ba34a')
 
+    def test_rebuilt_delta_inventory_binds_selected_kernel_and_xml_backport(self):
+        lock = native.ROOT / 'nix/delta-source-lock.json'
+        selected = json.loads(lock.read_text())
+        policy = json.loads(native.POLICY_PATH.read_text())
+        entry = next(e for e in policy['sourceBuiltReplacements'] if e['name'] == 'delta')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(selected['kernel']['cargoLockSHA256'], hashlib.sha256((native.ROOT / 'nix/delta-Cargo.lock').read_bytes()).hexdigest())
+        self.assertTrue(selected['patchedFiles'])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

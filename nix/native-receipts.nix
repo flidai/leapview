@@ -11,6 +11,7 @@ let
     "scripts/nix_native_database_receipt.py"
     "scripts/nix_native_excel_receipt.py"
     "scripts/nix_native_avro_receipt.py"
+    "scripts/nix_native_delta_receipt.py"
   ];
   lance = [
     "nix/lance.nix"
@@ -55,6 +56,20 @@ let
     "nix/check-avro-static-libraries.c"
     "scripts/nix_native_avro_receipt.py"
   ];
+  delta = [
+    "nix/delta.nix"
+    "nix/delta-source-lock.json"
+    "nix/delta-Cargo.lock"
+    "nix/delta-static-dependencies.patch"
+    "nix/check-extension-version.py"
+    "nix/apply-quick-xml-backports.py"
+    "nix/delta-quick-xml-backport-lock.json"
+    "nix/delta-quick-xml-smoke.rs"
+    "nix/quick-xml/0.39.2-backport.patch"
+    "nix/quick-xml/duplicate-attributes-upstream.patch"
+    "nix/quick-xml/namespace-bounds-upstream.patch"
+    "scripts/nix_native_delta_receipt.py"
+  ];
   duckdb = [
     "nix/duckdb.nix"
     "nix/sqlite.nix"
@@ -64,7 +79,8 @@ let
   ++ http
   ++ database
   ++ excel
-  ++ avro;
+  ++ avro
+  ++ delta;
   croaring = [
     "nix/ducklake.nix"
     "nix/ducklake-source-lock.json"
@@ -74,6 +90,8 @@ let
     ++ (
       if component == "lance" then
         lance
+      else if component == "delta" then
+        delta
       else if component == "avro" then
         avro ++ http
       else if component == "excel" then
@@ -88,6 +106,7 @@ let
         duckdb
       else
         lance
+        ++ delta
         ++ duckdb
         ++ [
           "nix/application.nix"

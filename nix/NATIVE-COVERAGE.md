@@ -487,3 +487,40 @@ remain required. Five other signed extension closures (Azure, Delta, Iceberg,
 Spatial and Vortex), engine vendored/header/member evidence, and complete native
 security assessment remain unresolved. This build composition does not authorize
 whole-application admission or describe the historical signed Avro binary.
+
+## Controlled Delta candidate
+
+The Delta candidate replaces the signed wrapper with the exact
+`duckdb/duckdb-delta` revision `45c40878601b54b4188b09e08732fe0d576ad222`
+and builds `delta-kernel-rs` revision
+`2cdf7333b8e10fb53c053677cd8b436752220188` (0.21.0) from its pinned Cargo lock.
+The wrapper's networked Cargo/acceptance ExternalProject is replaced with the
+selected offline FFI output. The production FFI profile retains upstream
+`default-engine-rustls,arrow,test-ffi,delta-kernel-unity-catalog,tracing` and its
+default features. The unrelated acceptance executable is not shipped or built.
+
+`delta-source-lock.json` binds the wrapper/header transform, kernel source,
+compiler and feature profile. `delta-quick-xml-backport-lock.json` retains the
+same two reviewed upstream XML fixes used for Lance, adapted to the selected
+0.39.2 source. The original crate checksum and exact original/patched file hashes
+are preserved. Lance's two-version backport policy remains separate.
+The Rust derivation tests its upstream FFI library and the actual selected
+patched XML parser's ordinary reads, namespace boundary and duplicate attributes.
+
+The component receipt retains actual Cargo compiler-artifact features and source
+checksums, generated C/C++ header bytes, reviewed source/patch identities and the
+produced static archive hash. The engine receipt binds both this archive and the
+actual generated header directory selected by CMake; application composition
+cross-checks those inputs. Compiler records establish the selected build graph,
+not exhaustive membership of the final executable or complete native-code
+vulnerability coverage (including Rust crates' bundled C/assembly).
+
+The tools-only runtime fixture reuses the existing canonical Delta log/Parquet
+fixture, adds a replacement transaction, and checks latest/explicit snapshots and
+fresh admitted sessions. The manual native lane requires a concrete non-skipped
+pass and retains both test-binary and log hashes. Wrapper version identity uses
+an out-of-line method verified across separate extension/loader translation
+units. Actual rebuilt engine, two-architecture runtime and publisher evidence
+remain qualification requirements. Azure, Iceberg, Spatial and Vortex still have
+unresolved signed source closures at this authoring point; engine vendored source
+coverage and complete scanning remain separate blockers. Admission stays denied.

@@ -1817,6 +1817,26 @@
       "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
       "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
       "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "delta",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-delta",
+        "revision": "45c40878601b54b4188b09e08732fe0d576ad222",
+        "sourceNARHash": "sha256-IXeDlb4yQ6koXTT1b7yUkN9xRsAMet9x4qFlBmLpwXw=",
+        "patchSHA256": "0532eb99785888fad7f491c1ec519630f45c193d18c1868191de474e65fa5d64",
+        "headerTransformFiles": {
+          "scripts/ffi/generate_delta_kernel_ffi_header": "a520fc8269a7d7cb6e8652f09c277248219109d18ddfcd1e47787b37b62a5739",
+          "scripts/ffi/prefix.inc": "52cc84ebe22822100c98a6e2edd0499762dd27de36830458da6f3a2e58932fe0",
+          "scripts/ffi/suffix.inc": "5d1717f8855cd0697eef6545ffeee143996497e60a2c9c6479f74084f778a77a"
+        }
+      },
+      "nativeDependencyLock": "nix/delta-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:6575f8fb88fcee4407b8ea5bf7ad9b9ce8de0480dbeb69a003b3f365ee2c55a3",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
     }
   ]
 }

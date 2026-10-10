@@ -33,7 +33,7 @@ test('selected Excel workload executes and retains non-skipped native evidence',
   expect(build.run).toContain("'excelSourceLogSHA256'")
   const application = readFileSync('nix/application.nix', 'utf8')
   expect(application).toContain('--excel ${duckdb.excel.archives}')
-  expect(application).toContain('$excelLibraries $avroLibraries -Wl,--end-group')
+  expect(application).toContain('$excelLibraries $avroLibraries ${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a -Wl,--end-group')
   const recipe = readFileSync('nix/duckdb.nix', 'utf8')
   expect(recipe).toContain('duckdb_extension_load(excel SOURCE_DIR ${excel.source} EXTENSION_VERSION ${excel.revision})')
   expect(recipe).toContain('"EXPAT_LIBRARY" "${excel.archives}/lib/libexpat.a"')
@@ -93,4 +93,20 @@ test('selected Avro fork executes and retains non-skipped native evidence', () =
   expect(recipe).toContain('duckdb_extension_load(avro SOURCE_DIR ${avro.source} EXTENSION_VERSION ${avro.revision})')
   expect(recipe).toContain('"AVRO_LIBRARY" "${avro.archives}/lib/libavro.a"')
   expect(recipe).toContain('"SNAPPY_LIBRARY" "${avro.archives}/lib/libsnappy.a"')
+})
+
+
+test('Delta qualification executes selected snapshots and binds the Rust headers', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8')) as any
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain("-test.run '^TestNativeDeltaSnapshotsAndFreshSession$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeDeltaSnapshotsAndFreshSession")
+  expect(build.run).toContain("'deltaSourceTestSHA256'")
+  expect(build.run).toContain("'deltaSourceLogSHA256'")
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('python3 -m unittest discover -s scripts/tests -p test_nix_native_delta_receipt.py')
+  expect(readFileSync('nix/application.nix', 'utf8')).toContain('--delta ${duckdb.delta.rust}')
+  const recipe = readFileSync('nix/duckdb.nix', 'utf8')
+  expect(recipe).toContain('duckdb_extension_load(delta SOURCE_DIR ${delta.source} EXTENSION_VERSION ${delta.revision})')
+  expect(recipe).toContain('"DELTA_KERNEL_LIBRARY" "${delta.rust}/lib/libdelta_kernel_ffi.a"')
+  expect(recipe).toContain('"DELTA_KERNEL_INCLUDE_DIR" "${delta.rust}/include"')
 })

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "wrapper": {
+    "revision": "45c40878601b54b4188b09e08732fe0d576ad222",
+    "sourceNARHash": "sha256-IXeDlb4yQ6koXTT1b7yUkN9xRsAMet9x4qFlBmLpwXw=",
+    "patchSHA256": "0532eb99785888fad7f491c1ec519630f45c193d18c1868191de474e65fa5d64",
+    "headerTransformFiles": {
+      "scripts/ffi/generate_delta_kernel_ffi_header": "a520fc8269a7d7cb6e8652f09c277248219109d18ddfcd1e47787b37b62a5739",
+      "scripts/ffi/prefix.inc": "52cc84ebe22822100c98a6e2edd0499762dd27de36830458da6f3a2e58932fe0",
+      "scripts/ffi/suffix.inc": "5d1717f8855cd0697eef6545ffeee143996497e60a2c9c6479f74084f778a77a"
+    }
+  },
+  "kernel": {
+    "version": "0.21.0",
+    "revision": "2cdf7333b8e10fb53c053677cd8b436752220188",
+    "sourceNARHash": "sha256-Xujf9Xvabm8zbrOFWkP4dMSbdaDK6lSPhUFUwWRbVb4=",
+    "cargoLockSHA256": "fa9ca48bf887c7982387c6f4d60b78e0981a36b41c59fa4f745fd0a9a057de36",
+    "selectedFiles": {
+      "Cargo.lock": "fa9ca48bf887c7982387c6f4d60b78e0981a36b41c59fa4f745fd0a9a057de36",
+      "Cargo.toml": "ea41ab02e515f970026c0b88995141eab3377d3920c090362ef38327d9116af6",
+      "ffi/Cargo.toml": "c080f24e5a88b25bc7c170324ee4b8ef5099b6a81603bb1ffb9358320c2f92e2",
+      "ffi/build.rs": "bbfd3031ccef61258d806e0ffb531f0e0f641c5aa20fd8183dd0ca552608459d",
+      "ffi/cbindgen.toml": "bfb1b26bf762818298c6bad1418a04899415987b96af7085f54281d11086f4eb",
+      "ffi/src/lib.rs": "eb88b59aebba55f302fe4d3270a649f06a5fc69373d73fc09a6025754444ea93",
+      "kernel/Cargo.toml": "b4744a89d7798bebb058fbfea571c6e79360edd69d0d427490673a86ed8b7d7b",
+      "kernel/src/lib.rs": "9dcf9fe1a50f776f546ca31f31c50443df274d6831577cd3e283a6b68e6235a5"
+    }
+  },
+  "features": [
+    "default-engine-rustls",
+    "arrow",
+    "test-ffi",
+    "delta-kernel-unity-catalog",
+    "tracing"
+  ],
+  "compilerVersion": "1.98.1",
+  "patches": [
+    {
+      "policy": "nix/delta-quick-xml-backport-lock.json",
+      "sha256": "67e7f08c1a7a0b918db3983d94a185cd3ad018b53ebd571da9de193175a572be"
+    }
+  ],
+  "scope": "selected source build; dependency security admission remains separately required",
+  "patchedFiles": {
+    "quick-xml-0.39.2/src/events/attributes.rs": "eacc850600fb63caef1dcb07a71e685c9434c46337dfa2bde577f719d0f2bb7a",
+    "quick-xml-0.39.2/src/name.rs": "3e8b538627d9366596609bb4fabb90b3a61f5bc5bb1dfcc5960ef44426f712b5",
+    "quick-xml-0.39.2/src/reader/ns_reader.rs": "8f92c8af3f15a6f7c4cf4646ae5ff1017cb1fea8c1f63d8b8137c2ce2b526a31"
+  }
+}

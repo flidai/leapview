@@ -33,7 +33,7 @@ func compiledFixture(t testing.TB, name, version, platform, root string) (extens
 	if err := duckdbsession.VerifyCompiledBuiltin(context.Background(), db, identity); err != nil {
 		t.Fatalf("verify compiled fixture %s: %v", name, err)
 	}
-	if name == "postgres" || name == "mysql" || name == "excel" || name == "avro" {
+	if name == "postgres" || name == "mysql" || name == "excel" || name == "avro" || name == "delta" {
 		var revision string
 		if err := db.QueryRow("SELECT extension_version FROM duckdb_extensions() WHERE extension_name = ?", extension.ArtifactFilenameStem(name)).Scan(&revision); err != nil || revision != builtin.SourceRevision {
 			t.Fatalf("compiled %s source revision %q differs: %v", name, revision, err)

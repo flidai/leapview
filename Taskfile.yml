@@ -624,6 +624,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_native_database_receipt.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_native_excel_receipt.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_native_avro_receipt.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_native_delta_receipt.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_extension_version.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py

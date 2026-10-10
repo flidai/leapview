@@ -12,10 +12,13 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def apply(vendor, patch_command):
+def apply(vendor, patch_command, policy_name="quick-xml-backport-lock.json"):
     policy_root = Path(__file__).resolve().parent
-    policy = json.loads((policy_root / 'quick-xml-backport-lock.json').read_text())
-    if policy.get('version') != 1 or [p['version'] for p in policy['backports']] != ['0.37.5', '0.38.4']:
+    if policy_name not in ('quick-xml-backport-lock.json', 'delta-quick-xml-backport-lock.json'):
+        raise ValueError('unexpected backport policy name')
+    policy = json.loads((policy_root / policy_name).read_text())
+    versions = ['0.39.2'] if policy_name.startswith('delta-') else ['0.37.5', '0.38.4']
+    if policy.get('version') != 1 or [p['version'] for p in policy['backports']] != versions:
         raise ValueError('unexpected backport policy')
     for upstream in policy['upstream']:
         path = policy_root / 'quick-xml' / upstream['path']
@@ -58,5 +61,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('vendor', type=Path)
     parser.add_argument('--patch-command', required=True)
+    parser.add_argument('--policy', default='quick-xml-backport-lock.json')
     args = parser.parse_args()
-    apply(args.vendor, args.patch_command)
+    apply(args.vendor, args.patch_command, args.policy)

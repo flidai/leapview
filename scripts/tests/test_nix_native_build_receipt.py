@@ -8,10 +8,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import tomllib
 from unittest import mock
 from test_nix_native_database_receipt import database_fixture
 from test_nix_native_excel_receipt import excel_fixture
 from test_nix_native_avro_receipt import avro_fixture
+from test_nix_native_delta_receipt import delta_fixture
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / 'nix_native_build_receipt.py'
 sys.path.insert(0, str(SCRIPT.parent))
@@ -282,12 +284,28 @@ class BuildReceipts(unittest.TestCase):
         receipt.create_component('avro', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
         return root, evidence
 
+    def delta(self):
+        root = self.root / 'delta'
+        (root / 'lib').mkdir(parents=True)
+        (root / 'include').mkdir()
+        (root / 'lib/libdelta_kernel_ffi.a').write_bytes(b'!<arch>\ndelta')
+        evidence = self.root / 'delta-evidence'
+        evidence.mkdir()
+        for name, data in delta_fixture(receipt.sources(REPO, 'delta'), tomllib.loads((REPO / 'nix/delta-Cargo.lock').read_text())).items():
+            (evidence / name).write_bytes(data)
+            if name in receipt.delta.HEADERS:
+                (root / 'include' / name).write_bytes(data)
+        (root / 'share/leapview').mkdir(parents=True)
+        receipt.create_component('delta', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
+        return root, evidence
+
     def application(self):
         croaring, _ = self.croaring()
         http, _ = self.http()
         database, _ = self.database()
         excel, _ = self.excel(http)
         avro, _ = self.avro(http)
+        delta, _ = self.delta()
         lance = self.root / 'lance'
         (lance / 'lib').mkdir(parents=True)
         (lance / 'lib/liblance_duckdb_ffi.a').write_bytes(b'!<arch>\nlance')
@@ -295,7 +313,7 @@ class BuildReceipts(unittest.TestCase):
         receipt.create_component('lance', 'linux/amd64', REPO, self.evidence, lance, lance / 'share/leapview/native-build')
         duckdb = self.root / 'duckdb'
         (duckdb / 'lib').mkdir(parents=True)
-        for name in ('duckdb_static', 'lance_extension', 'sqlite_scanner_extension', 'ducklake_extension', 'httpfs_extension', 'quack_extension', 'postgres_scanner_extension', 'mysql_scanner_extension', 'excel_extension', 'avro_extension', 'dummy_static_extension_loader'):
+        for name in ('duckdb_static', 'lance_extension', 'sqlite_scanner_extension', 'ducklake_extension', 'httpfs_extension', 'quack_extension', 'postgres_scanner_extension', 'mysql_scanner_extension', 'excel_extension', 'avro_extension', 'delta_extension', 'dummy_static_extension_loader'):
             (duckdb / f'lib/lib{name}.a').write_bytes(b'!<arch>\n' + name.encode())
         evidence = self.root / 'cmake'
         evidence.mkdir()
@@ -332,25 +350,48 @@ class BuildReceipts(unittest.TestCase):
             commands.append({'file': '/store/' + name + '/src/' + name + '_connection.cpp', 'command': 'c++ -c connector.cpp'})
             selection.write_text(selection.read_text() + 'duckdb_extension_load(' + name + '_scanner SOURCE_DIR /store/' + name + ' EXTENSION_VERSION ' + receipt.sources(REPO, 'database')['wrappers'][name]['revision'] + ')\n')
         receipt.write(evidence / 'compile-commands.json', commands)
+        receipt.write(evidence / 'delta-link.json', {'archive': str(delta / 'lib/libdelta_kernel_ffi.a'), 'sha256': receipt.digest(delta / 'lib/libdelta_kernel_ffi.a'), 'headers': receipt.delta.header_hashes(delta / 'include', receipt.read)})
+        cache.write_text(cache.read_text() + 'DELTA_KERNEL_LIBRARY:FILEPATH=' + str(delta / 'lib/libdelta_kernel_ffi.a') + '\nDELTA_KERNEL_INCLUDE_DIR:PATH=' + str(delta / 'include') + '\n')
+        selection.write_text(selection.read_text() + 'duckdb_extension_load(delta SOURCE_DIR /store/delta EXTENSION_VERSION ' + receipt.sources(REPO, 'delta')['wrapper']['revision'] + ')\n')
+        for name in ('src/delta_extension.cpp', 'src/functions/delta_scan/delta_scan.cpp'):
+            commands.append({'file': '/store/delta/' + name, 'command': 'c++ -I' + str(delta / 'include') + ' -c delta.cpp'})
+        receipt.write(evidence / 'compile-commands.json', commands)
         sqlite = receipt.sources(REPO, 'duckdb')['sqlite']['amalgamation']
         receipt.write(evidence / 'sqlite-source.json', {name: sqlite[name + 'SHA256'].removeprefix('sha256:') for name in ('sqlite3.c', 'sqlite3.h')})
         (duckdb / 'share/leapview').mkdir(parents=True)
         receipt.create_component('duckdb', 'linux/amd64', REPO, evidence, duckdb, duckdb / 'share/leapview/native-build')
-        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)]
+        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)] + [str(delta / 'lib/libdelta_kernel_ffi.a')]
         inputs = self.root / 'link-inputs'
         inputs.write_text('\n'.join(selected) + '\n')
         app_evidence = self.root / 'app-evidence'
         app_evidence.mkdir()
         (app_evidence / 'link-flags.txt').write_text(' '.join(['-Wl,--start-group', *selected, '-Wl,--end-group', '-lstdc++', '-ldl', '-lm']))
         (app_evidence / 'go.txt').write_text('go version go1.26 linux/amd64\n')
-        (app_evidence / 'tags.txt').write_text('duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro\n')
+        (app_evidence / 'tags.txt').write_text('duckdb_arrow,duckdb_use_static_lib,leapview_static_lance,leapview_static_sqlite,leapview_static_ducklake,leapview_static_http,leapview_static_database,leapview_static_excel,leapview_static_avro,leapview_static_delta\n')
         binaries = self.root / 'bin'
         binaries.mkdir()
         for name in ('leapview', 'leapviewctl'):
             (binaries / name).write_bytes(b'\x7fELF\x02\x01' + b'\0' * 12 + bytes([62, 0]) + name.encode())
         destination = self.root / 'application'
-        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro)
+        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro, delta)
         return destination, binaries
+
+    def test_delta_missing_receipt_archive_and_generated_header_rejected(self):
+        directory, binaries = self.application()
+        path = directory / 'delta/receipt.json'
+        old = path.read_bytes(); path.unlink()
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            receipt.verify_application(directory, REPO, 'linux/amd64', 'a' * 40, binaries)
+        path.write_bytes(old)
+        root = self.root / 'delta'
+        header = root / 'include/generated_delta_kernel_ffi.hpp'
+        original = header.read_bytes(); header.write_bytes(b'substituted ABI')
+        with self.assertRaisesRegex(ValueError, 'headers differ'):
+            receipt.verify_component(directory / 'delta', 'delta', 'linux/amd64', REPO, root)
+        header.write_bytes(original)
+        (root / 'lib/libdelta_kernel_ffi.a').write_bytes(b'!<arch>\nsubstituted')
+        with self.assertRaisesRegex(ValueError, 'substitution'):
+            receipt.verify_component(directory / 'delta', 'delta', 'linux/amd64', REPO, root)
 
     def test_avro_receipt_missing_and_substituted_archive_rejected(self):
         directory, binaries = self.application()
