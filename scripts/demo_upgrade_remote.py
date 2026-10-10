@@ -29,7 +29,7 @@ def pending_request(image, revision):
     return request
 
 
-def prepared_request(image, revision, predecessor):
+def prepared_request(image, revision, predecessor, expected_transition=None):
     matches = []
     for state_path in (PROVIDER/'upgrade-operations').glob('*/detached-rehearsal.json'):
         state = json.loads(state_path.read_text())
@@ -37,7 +37,7 @@ def prepared_request(image, revision, predecessor):
         if state.get('phase') != 'passed' or identity.get('candidate') != image or identity.get('predecessor') != predecessor:
             continue
         request = json.loads((state_path.parent/'request.json').read_text())
-        if request['candidateRevision'] != revision:
+        if request['candidateRevision'] != revision or request.get('agentCredentialTransition') != expected_transition:
             continue
         digest = identity.get('artifactAdmissionDigest', '')
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest) or state_path.parent.name != digest[7:]:
@@ -273,18 +273,25 @@ def main():
     if action == 'prepared':
         predecessor = sys.argv[4]
         if not re.fullmatch(IMAGE, predecessor): raise ValueError('Invalid predecessor')
-        prepared_request(image, revision, predecessor)
+        expected = _private_object(Path(sys.argv[5]), 'upgrade request').get('agentCredentialTransition') if len(sys.argv) > 5 else None
+        prepared_request(image, revision, predecessor, expected)
         return
     if action == 'pending':
         print(json.dumps(pending_request(image, revision)))
         return
-    if action not in ('plan', 'apply', 'recover', 'capture', 'verify-copy'): raise ValueError('Unsupported operation')
+    if action not in ('plan', 'apply', 'recover', 'capture', 'verify-copy', 'agent-intent', 'agent-export'): raise ValueError('Unsupported operation')
     request = Path(sys.argv[4])
     data = json.loads(request.read_text())
     if data['candidateImage'] != image or data['candidateRevision'] != revision:
         raise ValueError('Request identity mismatch')
     binary = controller(image)
-    os.execv(str(binary), [str(binary), 'host', 'upgrade', action, '--request', str(request)])
+    arguments = [str(binary), 'host', 'upgrade', action, '--request', str(request)]
+    if action == 'agent-intent':
+        reference = sys.argv[5]
+        if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}', reference):
+            raise ValueError('Invalid agent credential transition reference')
+        arguments += ['--reference', reference]
+    os.execv(str(binary), arguments)
 
 
 if __name__ == '__main__': main()

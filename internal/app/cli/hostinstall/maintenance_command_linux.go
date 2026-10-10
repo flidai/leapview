@@ -225,5 +225,6 @@ func checkMaintenancePlan(ctx context.Context, r NativeRequest) error {
 	if err := requireLocalDocker(ctx); err != nil {
 		return err
 	}
+
 	return validateImageSupplies(ctx, r)
 }

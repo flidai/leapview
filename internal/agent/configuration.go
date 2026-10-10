@@ -28,6 +28,30 @@ type ConfigurationRevision struct {
 	ActorID             string
 	CreatedAt           time.Time
 }
+
+// UnsupportedConfigurationError exposes only the settings of the exact stored
+// revision rejected before credential access. Administrators can explicitly
+// replace its key without making unsupported credentials usable at runtime.
+type UnsupportedConfigurationError struct {
+	Revision        int64
+	Enabled         bool
+	Model           string
+	BaseURL         string
+	APIMode         string
+	ReasoningEffort string
+	message         string
+}
+
+func (e *UnsupportedConfigurationError) Error() string { return e.message }
+
+func unsupportedConfiguration(r ConfigurationRevision, message string) error {
+	return &UnsupportedConfigurationError{
+		Revision: r.Revision, Enabled: r.Enabled, Model: r.Config.Model,
+		BaseURL: r.Config.NormalizedBaseURL(), APIMode: r.Config.APIMode,
+		ReasoningEffort: r.Config.NormalizedReasoningEffort(), message: message,
+	}
+}
+
 type ConfigurationStore interface {
 	CurrentConfiguration(context.Context) (ConfigurationRevision, error)
 	ConfigurationByRevision(context.Context, int64) (ConfigurationRevision, error)
@@ -77,10 +101,10 @@ func NewConfigurationManager(store ConfigurationStore, service *Service, credent
 
 func (m *ConfigurationManager) readConfiguration(ctx context.Context, r ConfigurationRevision) (Config, error) {
 	if len(r.Credential) != 0 {
-		return Config{}, fmt.Errorf("legacy agent credential format is unsupported; retain the old deployment for recovery and configure customer credential storage before explicitly re-entering the provider key")
+		return Config{}, unsupportedConfiguration(r, "legacy agent credential format is unsupported; retain the old deployment for recovery and configure customer credential storage before explicitly re-entering the provider key")
 	}
 	if r.CredentialVersionID == "" {
-		return Config{}, fmt.Errorf("agent configuration has no customer credential version; complete credential setup and explicitly re-enter the provider settings")
+		return Config{}, unsupportedConfiguration(r, "agent configuration has no customer credential version; complete credential setup and explicitly re-enter the provider settings")
 	}
 	var result Config
 	err := m.credentials.UseConfiguration(ctx, r, func(c Config) error { result = c; result.Revision = r.Revision; return nil })
