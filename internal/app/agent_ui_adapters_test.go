@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	agentui "github.com/flidai/leapview/internal/agent/ui"
 	appshell "github.com/flidai/leapview/internal/app/shell"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -107,5 +108,37 @@ func TestDashboardChatAdapterPreservesBrowserContract(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotJSON, sourceJSON) {
 		t.Fatalf("dashboard adapter changed browser contract:\nsource=%s\ngot=%s", sourceBytes, gotBytes)
+	}
+}
+
+func TestDataExplorerAgentAdapterPreservesExplicitStatusResetsAndCommandScope(t *testing.T) {
+	source := agentui.ChatViewState{Agent: agentui.ChatSignal{ActiveConversationID: "own-conversation", Status: agentui.ChatStatus{Enabled: true}, Composer: agentui.ComposerSignal{Placeholder: "Ask", Disabled: false}, Transcript: []agentui.ChatTranscriptItemSignal{{Kind: "assistant", Text: agentui.Optional("Own answer")}}}}
+	projected := dataExplorerAgentBootstrap(source)
+	raw, err := json.Marshal(projected.Agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state["activeConversationId"] != "own-conversation" || state["composer"].(map[string]any)["disabled"] != false {
+		t.Fatalf("agent context/availability lost: %s", raw)
+	}
+	status := state["status"].(map[string]any)
+	for _, key := range []string{"runId", "error", "canContinue"} {
+		if value, present := status[key]; !present || value != nil {
+			t.Fatalf("status reset %q missing: %s", key, raw)
+		}
+	}
+	if status["enabled"] != true || status["running"] != false {
+		t.Fatalf("agent status lost: %s", raw)
+	}
+	bindings := dataExplorerAgentCommands(&agentmodule.Module{})
+	if bindings.CreateConversation.OperationID() != "createAgentConversation" || bindings.CreateRun.OperationID() != "createAgentRun" || bindings.CancelRun.OperationID() != "cancelAgentRun" {
+		t.Fatalf("agent command contract mismatch: %#v", bindings)
+	}
+	if dataExplorerAgentCommands(nil).CreateRun.OperationID() != "" {
+		t.Fatal("missing agent must not configure run commands")
 	}
 }

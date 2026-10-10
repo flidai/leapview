@@ -33,7 +33,7 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
   }
   if (envelope.spec.kind === 'polar' && envelope.spec.mark === 'radar') {
     const radar = option ? responsiveRadar(option, width, height) : undefined
-    return `${compact ? 'compact' : 'roomy'}:radar-${radar ? JSON.stringify((Array.isArray(radar) ? radar : [radar]).map((entry) => [entry.radius, entry.indicator?.[0]?.nameTruncate?.maxWidth])) : `${width}x${height}`}`
+    return `${compact ? 'compact' : 'roomy'}:radar-${radar ? JSON.stringify((Array.isArray(radar) ? radar : [radar]).map((entry) => [entry.radius, entry.indicator?.[0]?.nameTruncate?.maxWidth, entry.indicator?.map((indicator: any) => indicator.showName)])) : `${width}x${height}`}`
   }
   if (envelope.spec.kind === 'polar' && envelope.spec.mark === 'gauge') {
     return `${compact ? 'compact' : 'roomy'}:gauge-${gaugeTickLabelsHidden(width, height) ? 'quiet' : 'labeled'}`
@@ -173,11 +173,15 @@ function responsiveRadar(option: Record<string, any>, width: number, height: num
       return format.getTextRect(String(name), font).width <= gutter
     })
     const budget = namesFit ? undefined : Math.max(0, Math.floor(Math.min(160, width * 0.2)))
+    const responsiveRadius = budget === undefined ? radius : Math.max(0, Math.min(radius, width / 2 - budget - gap - 8))
+    const visibleNames = source.__lv_axis_name_policy?.density === 'automatic'
+      ? radarVisibleNameIndexes(source, width, height, responsiveRadius + gap, budget, font) : undefined
     return { ...source,
-      radius: budget === undefined ? originalRadius : Math.max(0, Math.min(radius, width / 2 - budget - gap - 8)),
+      radius: budget === undefined ? originalRadius : responsiveRadius,
       // Radar names are rendered by AxisBuilder, which reads nameTruncate
       // from each indicator rather than axisName.width.
-      indicator: (source.indicator ?? []).map((indicator: Record<string, any>) => ({ ...indicator,
+      indicator: (source.indicator ?? []).map((indicator: Record<string, any>, index: number) => ({ ...indicator,
+        ...(visibleNames ? { showName: indicator.showName !== false && visibleNames.has(index) } : {}),
         nameTruncate: { ...indicator.nameTruncate,
           maxWidth: budget === undefined ? indicator.nameTruncate?.maxWidth ?? null : budget,
           ellipsis: indicator.nameTruncate?.ellipsis ?? '…',
@@ -186,6 +190,32 @@ function responsiveRadar(option: Record<string, any>, width: number, height: num
     }
   })
   return Array.isArray(option.radar) ? result : result[0]
+}
+
+function radarVisibleNameIndexes(source: Record<string, any>, width: number, height: number, radius: number, budget: number | undefined, font: string): Set<number> {
+  const indicators = source.indicator ?? []
+  const padding = (finiteNumber(source.__lv_axis_name_policy?.minimumSpacing) ?? 6) / 2
+  const rectangles = indicators.map((indicator: Record<string, any>, index: number) => {
+    const name = typeof source.axisName?.formatter === 'function' ? source.axisName.formatter(indicator.name, indicator) : indicator.name
+    const measured = format.getTextRect(String(name), font)
+    const textWidth = Math.min(measured.width, budget ?? Infinity)
+    const angle = ((finiteNumber(source.startAngle) ?? 90) * Math.PI / 180)
+      + (source.clockwise ? -1 : 1) * index * Math.PI * 2 / indicators.length
+    const cosine = Math.cos(angle), sine = Math.sin(angle)
+    const centered = Math.abs(cosine) < 0.0001
+    const x = width / 2 + radius * cosine - (centered ? textWidth / 2 : cosine < 0 ? textWidth : 0)
+    const y = height / 2 - radius * sine - (centered ? sine > 0 ? measured.height : 0 : measured.height / 2)
+    return { x: x - padding, y: y - padding, right: x + textWidth + padding, bottom: y + measured.height + padding }
+  })
+  for (let stride = 1; stride <= indicators.length; stride++) {
+    const visible = rectangles.map((_: unknown, index: number) => index).filter((index: number) => index % stride === 0)
+    const overlaps = visible.some((index: number, offset: number) => visible.slice(offset + 1).some((other: number) => {
+      const a = rectangles[index], b = rectangles[other]
+      return a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y
+    }))
+    if (!overlaps) return new Set(visible)
+  }
+  return new Set()
 }
 
 function responsiveBoxplotCategoryAxis(option: Record<string, any>, width: number, height: number): unknown {
@@ -472,6 +502,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
           String(formatter!(params) ?? ''),
           width,
           finiteNumber(labelOption?.fontSize) ?? 12,
+          typeof labelOption?.fontFamily === 'string' ? labelOption.fontFamily : 'sans-serif',
         )
         : formatter
       return {
@@ -616,11 +647,11 @@ function compactProportionalRadius(value: unknown, cap: number): string[] | unde
   return [`${Math.round(inner * scale * 100) / 100}%`, `${cap}%`]
 }
 
-function wrapFunnelOutsideLabel(value: string, width: number, fontSize: number): string {
+function wrapFunnelOutsideLabel(value: string, width: number, fontSize: number, fontFamily: string): string {
   const separator = value.lastIndexOf(': ')
   if (separator <= 0 || separator >= value.length - 2) return value
   const availableCharacters = funnelOutsideLabelCharacterBudget(width, fontSize)
-  if (value.length <= availableCharacters) return value
+  if (value.length <= availableCharacters && format.getTextRect(value, `${fontSize}px ${fontFamily}`).width <= funnelLabelWidth(width)) return value
   const category = truncateResponsiveLabel(value.slice(0, separator), availableCharacters - 1)
   const amount = truncateResponsiveLabel(value.slice(separator + 2), availableCharacters)
   return `${category}:\n${amount}`

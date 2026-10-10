@@ -95,3 +95,28 @@ func TestDataExplorerUpdatesURLPreservesBrowseFilters(t *testing.T) {
 func catalogFixture() catalog.Catalog {
 	return catalog.Catalog{Project: catalog.Project{ID: "sales", Title: "Sales"}}
 }
+
+func TestDataExplorerCombinedBootstrapPreservesAgentAndSavedState(t *testing.T) {
+	agent := DataExplorerAgentBootstrap{Agent: map[string]any{"status": map[string]any{"enabled": true}, "composer": map[string]any{"disabled": false}}, Visuals: map[string]any{"own-visual": true}}
+	saved := DataExplorerSavedExplorationBootstrap{Enabled: true, State: DefaultDataExplorerSavedExplorationState(true)}
+	signals := DataExplorerBootstrapSignalsWithAgentAndSavedExplorations(catalogFixture(), uisignals.DataExplorerPageSignal{}, uisignals.DataExplorerSignal{}, agent, saved)
+	raw, err := json.Marshal(signals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	state := wire["agent"].(map[string]any)
+	if state["status"].(map[string]any)["enabled"] != true || state["composer"].(map[string]any)["disabled"] != false || wire["agentVisuals"].(map[string]any)["own-visual"] != true {
+		t.Fatalf("agent bootstrap lost: %s", raw)
+	}
+	if wire["savedExplorations"].(map[string]any)["enabled"] != true || wire["agentContext"].(map[string]any)["surface"] != "data" {
+		t.Fatalf("saved/exploration context lost: %s", raw)
+	}
+	fallback := DataExplorerBootstrapSignalsWithAgentAndSavedExplorations(catalogFixture(), uisignals.DataExplorerPageSignal{}, uisignals.DataExplorerSignal{}, DataExplorerAgentBootstrap{}, saved)
+	if !fallback["agent"].(uisignals.ChatSignal).Composer.Disabled {
+		t.Fatalf("missing agent must remain unavailable: %#v", fallback["agent"])
+	}
+}

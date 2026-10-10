@@ -447,6 +447,56 @@ test('data explorer renders object browser and emits preview commands', async ()
   }
 })
 
+test('Explorer agent labels describe data while dashboard and builder labels remain unchanged', async () => {
+  const page = await browser.newPage({ viewport: { width: 768, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        agent: { conversations: [], activeConversationId: '', transcript: [],
+          status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: '' } },
+        agentContext: { surface: 'data', pageTitle: '', referenceLimit: 12, references: [],
+          exploration: { schemaVersion: 1, modelId: 'private-model-id', datasetId: 'private-dataset-id',
+            dimensions: [], metrics: [], filters: [], sort: [], limit: 10 } },
+      })
+      const element = document.createElement('lv-data-explorer') as any
+      document.body.append(element)
+      await element.updateComplete
+    })
+    const explorer = page.locator('lv-data-explorer')
+    await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).click()
+    const drawer = explorer.locator('lv-chat-drawer')
+    await drawer.evaluate((element: any) => element.updateComplete)
+    const labels = () => drawer.evaluate((element: any) => {
+      const root = element.shadowRoot as ShadowRoot
+      const composer = root.querySelector('lv-chat-composer') as any
+      return { dialog: root.querySelector('aside')?.getAttribute('aria-label'),
+        heading: root.querySelector('.title')?.textContent?.trim(),
+        context: root.querySelector('.context')?.getAttribute('aria-label'),
+        current: root.querySelector('.page-context')?.textContent?.trim(),
+        welcome: root.querySelector('.welcome')?.getAttribute('aria-label'),
+        placeholder: composer.placeholder, disabled: composer.disabled,
+        leaksRawIDs: /private-model-id|private-dataset-id/.test(root.textContent ?? '') }
+    })
+    expect(await labels()).toMatchObject({ dialog: 'Explorer agent', heading: 'Explorer agent',
+      context: 'Included data context', current: 'Current exploration', welcome: 'Start a data conversation',
+      placeholder: 'Ask about this data…', disabled: false, leaksRawIDs: false })
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ agentContext: { surface: 'dashboard', exploration: null } })
+    })
+    await drawer.evaluate(async (element: any) => { element.requestUpdate(); await element.updateComplete })
+    expect(await labels()).toMatchObject({ dialog: 'Dashboard agent', heading: 'Dashboard agent',
+      context: 'Included dashboard context', current: 'Current page', welcome: 'Start a dashboard conversation',
+      placeholder: 'Ask about this dashboard…' })
+    await drawer.evaluate(async (element: any) => { element.embedded = true; await element.updateComplete })
+    expect((await labels()).heading).toBe('Dashboard agent')
+    expect((await labels()).placeholder).toBe('Ask to change this dashboard…')
+  } finally { await page.close() }
+})
+
 for (const width of [375, 767, 768, 769, 1024, 1280, 1440]) {
   test(`Explorer agent preserves a usable route at ${width}px beside app navigation`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 844 } })

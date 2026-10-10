@@ -408,6 +408,7 @@ test('long funnel side legends remain bounded and separate from plot labels', ()
             expect(overlapWidth > 1 && overlapHeight > 1, `${label.text} overlaps ${other.text}`).toBe(false)
           }
         }
+        expect(chart.getZr().storage.getDisplayList().some((label: any) => label.type === 'tspan' && /\b100\b/.test(String(label.style?.text)))).toBe(true)
         expect(patch.legend.data).toBe(option.legend.data)
         expect(patch.legend.formatter).toBe(option.legend.formatter)
         expect(patch.legend.tooltip.formatter({ name: option.legend.data[0].name })).toContain('unusually long name')
@@ -566,4 +567,61 @@ test('boxplot label budgets update within compact widths and restore useful plot
     expect(responsiveEChartsLayoutKey(envelope, 300, 400, false, option))
       .not.toBe(responsiveEChartsLayoutKey(envelope, 400, 400, false, option))
   } finally { handle.dispose() }
+})
+
+
+test('automatic dense radar names avoid overlap and recover visible labels as the chart grows', () => {
+  for (const density of ['automatic', 'always', 'dense'] as const) {
+    const envelope = cartesianFixture('line') as any
+    envelope.spec = { ...envelope.spec, kind: 'polar', mark: 'radar', category: envelope.spec.x, value: envelope.spec.y[0],
+      presentation: { ...envelope.spec.presentation, legend: 'hidden', showPointer: false, area: true,
+        labelPolicy: { ...envelope.spec.presentation.labelPolicy, density } } }
+    envelope.dataState.datasets[0].rows = Array.from({ length: 80 }, (_, index) => [`Region ${index + 1}`, index + 1])
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    const names = option.radar.indicator.map((indicator: any) => indicator.name)
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 351, height: 384 })
+    const setOption = chart.setOption.bind(chart)
+    chart.setOption = ((value: any, settings: any) => setOption(value, { ...settings, lazyUpdate: false })) as typeof chart.setOption
+    const handle = new EChartsHandle({} as HTMLElement, {} as HTMLElement, chart, new CategoryColorRegistry())
+    let compactCount = 0
+    try {
+      handle.mount(envelope, defaultRendererContext)
+      for (const [width, height] of [[351, 384], [3000, 2000], [351, 384]]) {
+        handle.resize(width!, height!)
+        chart.renderToSVGString()
+        const labels = chart.getZr().storage.getDisplayList().filter((label: any) =>
+          label.type === 'tspan' && /^Region \d+$/.test(String(label.style?.text)))
+        if (density !== 'automatic') expect(labels.length).toBe(80)
+        else {
+          expect(labels.length).toBeGreaterThanOrEqual(4)
+          if (width === 351) {
+            expect(labels.length).toBeLessThan(80)
+            if (compactCount === 0) compactCount = labels.length
+            else expect(labels.length).toBe(compactCount)
+          } else expect(labels.length).toBeGreaterThan(compactCount)
+          const bounds = labels.map((label: any) => {
+            const bounds = label.getBoundingRect().clone()
+            const transform = label.getComputedTransform?.() ?? label.transform
+            if (transform) bounds.applyTransform(transform)
+            expect(bounds.x).toBeGreaterThanOrEqual(-0.001)
+            expect(bounds.x + bounds.width).toBeLessThanOrEqual(width! + 0.001)
+            expect(bounds.y).toBeGreaterThanOrEqual(-0.001)
+            expect(bounds.y + bounds.height).toBeLessThanOrEqual(height! + 0.001)
+            return bounds
+          })
+          for (let index = 0; index < bounds.length; index++) for (const other of bounds.slice(index + 1)) {
+            const label = bounds[index]!
+            const overlapWidth = Math.min(label.x + label.width, other.x + other.width) - Math.max(label.x, other.x)
+            const overlapHeight = Math.min(label.y + label.height, other.y + other.height) - Math.max(label.y, other.y)
+            expect(overlapWidth > 1 && overlapHeight > 1).toBe(false)
+          }
+        }
+        const current = chart.getOption() as any
+        expect(current.radar[0].indicator.map((indicator: any) => indicator.name)).toEqual(names)
+        expect(current.series[0].data[0].value).toHaveLength(80)
+        expect(option.series[0].tooltip.formatter({ value: current.series[0].data[0].value })).toContain('Region 80')
+      }
+      expect(option.radar.indicator.every((indicator: any) => indicator.showName === undefined)).toBe(true)
+    } finally { handle.dispose() }
+  }
 })

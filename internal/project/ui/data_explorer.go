@@ -88,6 +88,12 @@ func DataExplorerPageWithSavedExplorationsAndDashboard(_ catalog.Catalog, page u
 	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, dashboard, csrfToken, providers...)
 }
 
+// DataExplorerPageWithAgentAndSavedExplorationsAndDashboard composes the agent
+// projection with exploration authoring features without importing the agent domain.
+func DataExplorerPageWithAgentAndSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
+	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, saved, dashboard, csrfToken, providers...)
+}
+
 func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
 	saved.State = normalizeDataExplorerSavedExplorationState(saved.State, saved.Enabled)
 	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
@@ -251,6 +257,10 @@ func DataExplorerBootstrapSignalsWithAgent(_ catalog.Catalog, page uisignals.Dat
 
 func DataExplorerBootstrapSignalsWithSavedExplorations(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, providers ...webpage.Provider) map[string]any {
 	return dataExplorerBootstrapSignalsWithSaved(page, explorer, DataExplorerAgentBootstrap{}, saved, providers...)
+}
+
+func DataExplorerBootstrapSignalsWithAgentAndSavedExplorations(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, saved DataExplorerSavedExplorationBootstrap, providers ...webpage.Provider) map[string]any {
+	return dataExplorerBootstrapSignalsWithSaved(page, explorer, agent, saved, providers...)
 }
 
 func dataExplorerBootstrapSignalsWithSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, saved DataExplorerSavedExplorationBootstrap, providers ...webpage.Provider) map[string]any {

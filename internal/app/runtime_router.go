@@ -47,6 +47,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
+	projectui "github.com/flidai/leapview/internal/project/ui"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -856,6 +857,23 @@ func buildApplicationSurfaces(
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
+		AgentBootstrap: func(r *http.Request) projectui.DataExplorerAgentBootstrap {
+			if routes.agentModule == nil {
+				return projectui.DataExplorerAgentBootstrap{}
+			}
+			return dataExplorerAgentBootstrap(routes.agentModule.DashboardBootstrap(r))
+		},
+		AgentCommands: dataExplorerAgentCommands(routes.agentModule),
+		AgentSubscribe: func(r *http.Request, clientID string) (<-chan pagestream.SignalPatch, func(), error) {
+			if routes.agentModule == nil || runtime.broker == nil {
+				return nil, nil, nil
+			}
+			scope := routes.agentModule.HTTP().Scope(r)
+			if scope.PrincipalID == "" || !routes.agentModule.ChromeSignal(r).Status.Enabled {
+				return nil, nil, nil
+			}
+			return runtime.broker.Subscribe(agentmodule.ChatStreamID(scope, clientID))
+		},
 		ClientIDs: policy.clientIDs,
 		Graph:     capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		LegacySavedExplorations: capabilities.SavedExplorations,

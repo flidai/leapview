@@ -234,6 +234,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
 			this.suggestions,
 		)
 		const catalogSuggestions = searchResults.filter((reference) => !isOnPageReference(reference, context))
+    const dataContext = context?.surface === 'data'
+    const agentTitle = dataContext ? 'Explorer agent' : 'Dashboard agent'
     const agentEnabled = Boolean(agent.status?.enabled)
     const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
     const composer = html`<lv-chat-composer
@@ -257,19 +259,19 @@ class ChatDrawer extends DatastarLit(LitElement) {
       @lv-chat-edit-cancel=${this.cancelEdit}
     ></lv-chat-composer>`
     return html`
-		<aside class=${showWelcome ? 'drawer welcome-mode' : 'drawer'} role="dialog" aria-modal="false" aria-label="Dashboard agent" aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
+		<aside class=${showWelcome ? 'drawer welcome-mode' : 'drawer'} role="dialog" aria-modal="false" aria-label=${agentTitle} aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
         <header class="header">
           <div class="toolbar">
-            <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
+            <div class="title">${agentIcon()}<span>${agentTitle}</span></div>
             <div class="toolbar-actions">
               <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
               <button type="button" title=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-label=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-pressed=${this.expanded} @click=${this.toggleExpanded}>${lucideIcon(this.expanded ? Minimize2 : Maximize2)}</button>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
             </div>
           </div>
-          <section class="context" aria-label="Included dashboard context">
+          <section class="context" aria-label=${dataContext ? 'Included data context' : 'Included dashboard context'}>
             <div class="context-line">
-              <span class="page-context">${context?.pageTitle || 'Current page'}</span>
+              <span class="page-context">${context?.pageTitle || (dataContext ? 'Current exploration' : 'Current page')}</span>
               ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : null}
             </div>
             ${this.referenceLimitMessage ? html`
@@ -278,7 +280,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
           </section>
         </header>
         ${showWelcome ? html`
-          <section class="welcome" aria-label="Start a dashboard conversation">
+          <section class="welcome" aria-label=${dataContext ? 'Start a data conversation' : 'Start a dashboard conversation'}>
             <div class="welcome-heading"><span class="agent-mark" aria-hidden="true">${agentIcon()}</span><h2>${this.embedded ? 'What should I change?' : 'What would you like to understand?'}</h2></div>
             ${composer}
             <div class="prompts">
