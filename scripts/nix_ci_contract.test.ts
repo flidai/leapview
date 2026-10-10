@@ -1132,8 +1132,10 @@ test('hosted Linux CI configures the Docker Hub cache before container work', ()
   const development = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const helper = 'scripts/configure_ci_docker_mirror.py'
   const dockerAction = parse(readFileSync('.github/actions/setup-docker/action.yml', 'utf8'))
-  expect(dockerAction.runs.steps).toHaveLength(1)
-  const configure = dockerAction.runs.steps[0]
+  expect(dockerAction.runs.steps).toHaveLength(2)
+  const [mask, configure] = dockerAction.runs.steps
+  expect(mask).toMatchObject({ if: configure.if, shell: 'bash', run: 'python3 scripts/mask_ci_docker_credentials.py' })
+  expect(mask['continue-on-error']).toBeUndefined()
   expect(configure.if).toBe("runner.os == 'Linux' && runner.environment == 'github-hosted'")
   expect(configure.run).toBe(`sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 ${helper}`)
   expect(configure['continue-on-error']).toBeUndefined()
@@ -1151,10 +1153,10 @@ test('hosted Linux CI configures the Docker Hub cache before container work', ()
     const containerWork = setup.findIndex((step: any) => /Install.*Nix|ci:prepare|nix:smoke|#leapview-image/.test(step.name ?? step.run ?? ''))
     expect(index).toBeLessThan(containerWork)
   }
-  for (const file of [helper, 'scripts/tests/test_ci_docker_mirror.py', '.github/actions/setup-docker/action.yml', '.github/docker/buildkitd.toml']) {
+  for (const file of [helper, 'scripts/mask_ci_docker_credentials.py', 'scripts/tests/test_ci_docker_credentials.py', 'scripts/tests/test_ci_docker_mirror.py', '.github/actions/setup-docker/action.yml', '.github/docker/buildkitd.toml']) {
     expect(development.on.pull_request.paths.some((pattern: string) => new Bun.Glob(pattern).match(file))).toBe(true)
   }
-  const result = spawnSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_ci_docker_mirror.py'], { encoding: 'utf8' })
+  const result = spawnSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_ci_docker_*.py'], { encoding: 'utf8' })
   if (result.status !== 0) throw new Error(result.stdout + result.stderr)
   expect(result.status).toBe(0)
 })
