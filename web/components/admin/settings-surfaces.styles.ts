@@ -90,6 +90,14 @@ export const settingsSurfaceStyles = css`
   .role-permission-list code { color: var(--lv-fg-default); overflow-wrap: anywhere; }
   .role-permission-list span { color: var(--lv-fg-muted); overflow-wrap: anywhere; }
   .role-catalogue { display: grid; gap: var(--base-size-12); }
+  .role-catalogue-search { width: min(100%, 24rem); }
+  .role-catalogue-group, .role-specialists-body { display: grid; gap: var(--base-size-12); }
+  .role-catalogue-group h3 { margin: 0; font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
+  .role-specialists { border-top: var(--lv-border-muted); padding-top: var(--base-size-16); }
+  .role-specialists > summary { cursor: pointer; color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
+  .role-specialists > summary:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+  .role-specialists-body { margin-top: var(--base-size-12); }
+  .role-specialist-selection { margin-left: var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
   .catalog-drawer-title, .catalog-drawer-body { display: grid; gap: var(--base-size-12); min-width: 0; }
   .catalog-drawer-title h2 { margin: 0; overflow-wrap: anywhere; }
   .catalog-drawer-title > code { color: var(--lv-fg-muted); }

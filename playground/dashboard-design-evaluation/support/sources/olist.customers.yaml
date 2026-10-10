@@ -1,0 +1,19 @@
+apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:olist.customers
+  name: olist.customers
+  displayName: Customers
+spec:
+  connection: olist
+  location:
+    type: path
+    path: olist_customers_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+  fields:
+    - {name: customer_id, datatype: String, description: Customer identifier used by orders.}
+    - {name: customer_zip_code_prefix, datatype: String, description: Five-digit Brazilian ZIP-code prefix used for geographic joins.}
+    - {name: customer_city, datatype: String, description: Customer city supplied by Olist.}
+    - {name: customer_state, datatype: String, description: Brazilian state for the customer.}

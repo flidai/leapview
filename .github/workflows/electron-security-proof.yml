@@ -229,6 +229,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Configure hosted Docker pulls
+        uses: ./.github/actions/setup-docker
+
       - name: Build sandboxed proof image
         run: |
           docker build \

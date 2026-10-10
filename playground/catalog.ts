@@ -66,3 +66,9 @@ export const filterExamples = [
   { id: 'slicer', label: 'Dashboard slicer' },
   { id: 'dock', label: 'Filter dock' },
 ]
+
+export const recipeExamples = [
+  { id: 'linked-visuals', label: 'Linked dashboard' },
+  { id: 'overlay-form', label: 'Drawer form' },
+  { id: 'dashboard-contract', label: 'Dashboard YAML contract' },
+]

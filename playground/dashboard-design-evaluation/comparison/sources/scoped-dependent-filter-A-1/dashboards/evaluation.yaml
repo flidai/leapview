@@ -1,0 +1,119 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:evaluation
+  name: evaluation
+  displayName: Design qualification
+spec:
+  semanticModel: sales
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16
+  filters:
+  - id: state
+    label: State
+    dimension: state
+    control:
+      type: singleSelect
+      options:
+        type: distinct
+        dataset: sales_orders
+        limit: 20
+  - id: category
+    label: Category
+    dimension: category
+    control:
+      type: singleSelect
+      options:
+        type: distinct
+        dataset: sales_orders
+        limit: 20
+        dependsOn:
+        - state
+  visuals:
+  - id: revenue-by-month
+    title: Revenue by month
+    type: area
+    query:
+      type: aggregate
+      dimensions:
+      - dimension: purchase_date
+        grain: month
+        alias: purchase_month
+      metrics:
+      - revenue
+      sort:
+      - field: purchase_month
+        direction: asc
+      limit: 30
+    presentation:
+      type: cartesian
+  - id: total-revenue
+    title: Total revenue
+    type: kpi
+    query:
+      type: aggregate
+      dimensions: []
+      metrics:
+      - revenue
+    presentation:
+      type: kpi
+      displayUnits: auto
+  pages:
+  - id: overview
+    title: Overview
+    filterBindings:
+    - id: state-local
+      filter: state
+      targets:
+      - revenue-trend
+    - id: category-local
+      filter: category
+      targets:
+      - revenue-trend
+    components:
+    - id: revenue-trend
+      type: visual
+      visual: revenue-by-month
+      placement:
+        column: 1
+        row: 1
+        columnSpan: 12
+        rowSpan: 8
+    - id: revenue-kpi
+      type: visual
+      visual: total-revenue
+      placement:
+        column: 1
+        row: 10
+        columnSpan: 3
+        rowSpan: 3
+    - id: state-control
+      type: filter
+      filter: state
+      placement:
+        column: 1
+        row: 14
+        columnSpan: 3
+        rowSpan: 2
+    - id: category-control
+      type: filter
+      filter: category
+      placement:
+        column: 4
+        row: 14
+        columnSpan: 3
+        rowSpan: 2
+  - id: detail
+    title: Detail
+    components:
+    - id: detail-kpi
+      type: visual
+      visual: total-revenue
+      placement:
+        column: 1
+        row: 1
+        columnSpan: 3
+        rowSpan: 3

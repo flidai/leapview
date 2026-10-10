@@ -5,7 +5,7 @@ import { ChevronDown, Maximize2, Minimize2, Moon, PanelLeft, Star, Sun } from 'l
 import { lucideIcon } from '../web/components/shared/lucide-icons'
 import '../web/components/shared/brand-mark'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
-import { chartExamples, controlExamples, tokenExamples, graphExamples, contentExamples, tableExamples, surfaceExamples, filterExamples } from './catalog'
+import { chartExamples, controlExamples, tokenExamples, graphExamples, contentExamples, tableExamples, surfaceExamples, filterExamples, recipeExamples } from './catalog'
 import './reload-client'
 import { decodeSnapshot, snapshotKey, type ExampleSnapshot, type StatefulExample } from './example-state'
 import { copyText, snapshotURL } from './review-tools'
@@ -47,10 +47,7 @@ const groups = [
   { id: 'content', label: 'Editors & content', examples: contentExamples },
   { id: 'surfaces', label: 'Layout & identity', examples: surfaceExamples },
   { id: 'filters', label: 'Dashboard filters', examples: filterExamples },
-  { id: 'recipes', label: 'Combined examples', examples: [
-    { id: 'linked-visuals', label: 'Linked dashboard' },
-    { id: 'overlay-form', label: 'Drawer form' },
-  ] },
+  { id: 'recipes', label: 'Combined examples', examples: recipeExamples },
 ]
 const shortcutExamples = new Map(groups.flatMap(group => group.examples.map(example => [`${group.id}/${example.id}`, { label: example.label, groupLabel: group.label }] as const)))
 
@@ -65,6 +62,7 @@ const exampleModules = new Map<string, { tag: string; load: () => Promise<unknow
   ['filters', { tag: 'playground-filters', load: () => import('./filters') }],
   ['recipes/linked-visuals', { tag: 'playground-linked-visuals', load: () => import('./linked-visuals') }],
   ['recipes/overlay-form', { tag: 'playground-overlay-recipe', load: () => import('./overlay-recipe') }],
+  ['recipes/dashboard-contract', { tag: 'playground-dashboard-contract', load: () => import('./dashboard-contract') }],
 ])
 const moduleLoads = new Map<string, Promise<unknown>>()
 const moduleID = (route: string) => route.startsWith('recipes/') ? route : route.split('/')[0]
@@ -86,6 +84,7 @@ class PlaygroundApp extends LitElement {
   @state() private exampleReady = false
   private navigationRevision = 0
   private examplePreparation: Promise<void> = Promise.resolve()
+  private pendingExampleState = initialSnapshot?.example
   private readonly beforeReload = () => {
     if (embedded) return
     try { sessionStorage.setItem(snapshotKey, JSON.stringify({ href: location.href, state: JSON.stringify(this.snapshot()) })) } catch { /* Storage unavailable. */ }
@@ -125,12 +124,15 @@ class PlaygroundApp extends LitElement {
       darkTheme: document.documentElement.dataset.darkTheme || 'dark',
       colorScheme: this.dark ? 'dark' : 'light',
     },
-    preview: this.previewOnly, example: this.exampleElement()?.getExampleState?.() || {},
+    preview: this.previewOnly,
+    // A reload while importing/restoring must retain authored shared state.
+    example: !this.exampleReady && this.pendingExampleState ? this.pendingExampleState : this.exampleElement()?.getExampleState?.() || {},
   })
 
   private async prepareCurrentExample(snapshot?: ExampleSnapshot) {
     const revision = this.navigationRevision
     this.exampleReady = false
+    this.pendingExampleState = snapshot?.route === this.route ? snapshot.example : undefined
     await this.loadCurrentExample()
     if (revision !== this.navigationRevision || this.loadError) return
     await this.updateComplete
@@ -284,7 +286,7 @@ class PlaygroundApp extends LitElement {
     const example = group?.examples.find(item => item.id === exampleID)
     const exampleModule = exampleModules.get(moduleID(this.route))
     const preview = example && !customElements.get(exampleModule?.tag || '')
-      ? html`<p role="status">${this.loadError || 'Loading example…'}</p>`
+      ? html`<div class="example-loading"><p role="status">${this.loadError || 'Loading example…'}</p>${this.loadError ? html`<button type="button" class="settings-button" @click=${() => { this.beforeReload(); location.reload() }}>Reload example</button>` : nothing}</div>`
       : example ? keyed(this.route, groupID === 'charts'
       ? html`<playground-charts .example=${exampleID} ?preview-only=${this.previewOnly}></playground-charts>`
       : groupID === 'graphs' ? html`<playground-graphs .example=${exampleID} ?preview-only=${this.previewOnly}></playground-graphs>`
@@ -294,7 +296,9 @@ class PlaygroundApp extends LitElement {
       : groupID === 'filters' ? html`<playground-filters .example=${exampleID} ?preview-only=${this.previewOnly}></playground-filters>`
       : groupID === 'recipes' ? exampleID === 'linked-visuals'
         ? html`<playground-linked-visuals ?preview-only=${this.previewOnly}></playground-linked-visuals>`
-        : html`<playground-overlay-recipe ?preview-only=${this.previewOnly}></playground-overlay-recipe>`
+        : exampleID === 'dashboard-contract'
+          ? html`<playground-dashboard-contract ?preview-only=${this.previewOnly}></playground-dashboard-contract>`
+          : html`<playground-overlay-recipe ?preview-only=${this.previewOnly}></playground-overlay-recipe>`
       : groupID === 'controls'
         ? html`<playground-controls .example=${exampleID} ?preview-only=${this.previewOnly}></playground-controls>`
         : html`<playground-tokens .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tokens>`)
@@ -337,7 +341,7 @@ class PlaygroundApp extends LitElement {
           <span class="share-message" role="status" ?hidden=${this.previewOnly}>${this.shareMessage}</span>
           ${this.shareFallback && !this.previewOnly ? html`<input class="settings-input share-fallback" readonly aria-label="Example link" .value=${this.shareFallback} @focus=${(event: Event) => (event.target as HTMLInputElement).select()}>` : nothing}
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
-          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${this.exampleReady} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
+          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${this.exampleReady} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.()}></playground-review-tools>` : nothing}
         </main>
       </div>`
   }

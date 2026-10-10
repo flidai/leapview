@@ -15,7 +15,7 @@ connect to a database, or call application services. Dependency installation may
 need internet access on the first run. No dependency upgrades are required.
 
 Once contracts and dependencies are prepared, `bun run playground` starts the
-same server. Set `PLAYGROUND_PORT=4401` to choose another port. Stop with Ctrl-C. Source edits rebuild automatically and reload connected previews
+same server. Each preview and test server owns its build output and compiled CSS, so tests cannot overwrite a running preview. Set `PLAYGROUND_PORT=4401` to choose another port. Stop with Ctrl-C. Source edits rebuild automatically and reload connected previews
 on the same port. Builds are serialized; an in-page notice shows build failures
 and recovers after the next successful save. Fixture controls, theme, and size
 survive reload when browser session storage is available. Restart after changing
@@ -71,6 +71,18 @@ the normal generation or dependency-install command. Generated bundles stay unde
 - **Combined examples → Linked dashboard** connects a status filter, bar, region
   table and KPI. Select regions with a chart click or the table's keyboard controls;
   highlights preserve totals, while status filtering changes the underlying rows.
+- **Combined examples → Dashboard YAML contract** compares generated structural rules and real
+  recorded Go compiler outcomes at `/#recipes/dashboard-contract`. Document scenario and
+  Schema version are independent; switching rules preserves your edited YAML. Eleven
+  scenarios cover the original/corrected monthly query, scalar bounds, contextual layout
+  failures, references, identity, defaults, reordered definitions and confined fragments.
+  Compiler results match exact source bytes and fixed project inputs; editing clears
+  them until Reset restores the example. Query intent and provenance are inspectable.
+  The selected schema result is shown first; comparison, references and detailed evidence expand on demand.
+  Controls and bounded source survive shared links/reload; copied code is current YAML.
+  Regenerate evidence with `bun run generate:dashboard-contract-evidence` and verify it
+  with `bun run check:dashboard-contract-evidence` in the documented Go build environment.
+  See `DASHBOARD-CONTRACT-EVALUATION.md` for the exploratory authoring trial results.
 - **Combined examples → Drawer form** combines the production drawer, dropdown,
   date picker, and validation. **Dashboard filters → Filter dock** adds immediate
   or deferred Apply/Cancel and page/report scope resets with local acknowledgements.

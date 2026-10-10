@@ -1,0 +1,50 @@
+{
+  "version": "leapview.experiment/v2",
+  "layoutDefaults": {
+    "columns": 12,
+    "rowHeight": 48,
+    "gap": 8,
+    "padding": 16
+  },
+  "benchmark": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": "number"
+      },
+      "label": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "value"
+    ],
+    "additionalProperties": false
+  },
+  "topCategories": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "const": "topCategories"
+      },
+      "dimension": {
+        "$ref": "#/$defs/DashboardDimensionReference/properties/dimension"
+      },
+      "metric": {
+        "$ref": "#/$defs/DashboardMetricReference/properties/metric"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000
+      }
+    },
+    "required": [
+      "type",
+      "dimension",
+      "metric",
+      "limit"
+    ],
+    "additionalProperties": false
+  }
+}

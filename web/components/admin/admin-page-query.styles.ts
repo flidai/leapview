@@ -7,6 +7,11 @@ export const adminPageQueryStyles = css`
       gap: var(--base-size-12);
     }
 
+    .query-audit .table-panel {
+      /* The table owns horizontal scrolling; keep its column menu unclipped. */
+      overflow: visible;
+    }
+
     .query-filters {
       display: flex;
       flex-wrap: wrap;

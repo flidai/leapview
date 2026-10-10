@@ -4,10 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/testcontainers/testcontainers-go"
 	"gopkg.in/yaml.v3"
 )
 
@@ -213,5 +215,21 @@ func TestMainArtifactBundlesExactHistoricalTransitionReceiptAtRoot(t *testing.T)
 	}
 	if !checksBoth || !downloadsTransition || !bindsRunAttempt || !bundlesRootTransition {
 		t.Fatal("the exact image qualification artifact must contain a run-bound root-level transition.json beside qualification.json")
+	}
+}
+
+// The SDK owns the reaper tag. A dependency upgrade must requalify the exact
+// publisher image used by CI rather than silently restoring Docker Hub pulls.
+func TestCIReaperPreloadMatchesSDKDefault(t *testing.T) {
+	data, err := os.ReadFile("../../../scripts/configure_ci_docker_mirror.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := regexp.MustCompile(`(?m)^RYUK_STOCK_IMAGE = "([^"]+)"$`).FindSubmatch(data)
+	if len(assignment) != 2 {
+		t.Fatal("CI preload must declare its stock Ryuk image")
+	}
+	if actual := string(assignment[1]); actual != testcontainers.ReaperDefaultImage {
+		t.Fatalf("CI reaper preload %q differs from SDK default %q; requalify its publisher image", actual, testcontainers.ReaperDefaultImage)
 	}
 }

@@ -1,0 +1,3163 @@
+{
+  "kind": "merged-main-existing-submission-requalification",
+  "startedAt": "2026-10-09T19:49:08.312Z",
+  "head": "f1a28a9652116343520c1c379591346ab714f5ae",
+  "mainIntegration": "9ddbeb52b86e42f4f4456f51d7d752ced495124c",
+  "goVersion": "go version go1.27.2 linux/amd64",
+  "goFlags": "-tags=duckdb_arrow -buildvcs=false",
+  "binary": "/var/tmp/pr938-oct10-requalification/dashboardcontracttrials",
+  "binarySHA256": "8553430c1794376d8d8b77abeaf09d34cca056abc3f16f61bdc94631064272ec",
+  "binaryBuildInfo": "/var/tmp/pr938-oct10-requalification/dashboardcontracttrials: go1.27.2\n\tpath\tgithub.com/flidai/leapview/internal/app/tools/dashboardcontracttrials\n\tmod\tgithub.com/flidai/leapview\t(devel)\t\n\tdep\tcuelang.org/go\tv0.16.1\th1:iPN1lHZd2J0hjcr8hfq9PnIGk7VfPkKFfxH4de+m9sE=\n\tdep\tgithub.com/Yacobolo/toolbelt/apigen\tv0.7.3\n\t=>\t./pkg/apigen\t(devel)\t\n\t\n\tdep\tgithub.com/apache/arrow-go/v18\tv18.5.1\th1:yaQ6zxMGgf9YCYw4/oaeOU3AULySDlAYDOcnr4LdHdI=\n\tdep\tgithub.com/aws/aws-sdk-go-v2\tv1.42.1\th1:9eOTgu1z/dVtYpNZ3/8/XbbaX0x/BqE3HUzAzs6K0ek=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/aws/protocol/eventstream\tv1.7.14\th1:3IZY0XAJquT3aHzbkHfPzy4ACPcEjVG0x87KOwtpqGY=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/internal/configsources\tv1.4.30\th1:xM/Is9cKMHa8Jj8zkvWhvrFkZsXJV9E+BB4g0HW0duQ=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/internal/endpoints/v2\tv2.7.30\th1:jn46zC9LdsVR/ZpMIJqMqb8hHv31BlLx3ulVqNspUOk=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/internal/v4a\tv1.4.31\th1:3GUprIsfmGcC5SACIyB0e7E0BM1O1b3Erl5CePYIAeQ=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/service/internal/accept-encoding\tv1.13.13\th1:mbRIur/BiHK6SKPjoBIXSE/hJ6g6JGRLuxQy1jGjlN4=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/service/internal/checksum\tv1.9.23\th1:9Fjh6fi/U5JEStVZijmaMpUwE/gvBJj7x2B/PjbO9To=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/service/internal/presigned-url\tv1.13.30\th1:/Z5jmNrKsSD7EmDjzAPsm/3L9IuOkzaynklJZ1qX7S4=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/service/internal/s3shared\tv1.19.31\th1:uao4A3QZ5UmB326V6KF+qRpv9Tjz7IlnlnTbbANntlU=\n\tdep\tgithub.com/aws/aws-sdk-go-v2/service/s3\tv1.105.1\th1:LkBKxAOE5WXjlFuFZqPG1rREnl6I6QCMElcXFDEidos=\n\tdep\tgithub.com/aws/smithy-go\tv1.27.3\th1:F3Zb497UhhskkfpJmfkXswyo+t0sh9OTBnIHjogWbVY=\n\tdep\tgithub.com/cockroachdb/apd/v3\tv3.2.1\th1:U+8j7t0axsIgvQUqthuNm82HIrYXodOV2iWLWtEaIwg=\n\tdep\tgithub.com/duckdb/duckdb-go-bindings\tv0.10504.0\th1:XKOXNRetaJnMvMIDqi6etZOmh/nlEHM7saaC5UxU17I=\n\tdep\tgithub.com/duckdb/duckdb-go-bindings/lib/linux-amd64\tv0.10504.0\th1:2gABzYp2KnclSpE4qqinTZYhGpWSxmNHQKjs9WZ7zWk=\n\tdep\tgithub.com/duckdb/duckdb-go/v2\tv2.10504.0\th1:bnkcNQpz3EaJmMmfOhFRFJ3ELVDHW4u3PDhZ78ZTCMY=\n\tdep\tgithub.com/emicklei/proto\tv1.14.3\th1:zEhlzNkpP8kN6utonKMzlPfIvy82t5Kb9mufaJxSe1Q=\n\tdep\tgithub.com/go-chi/chi/v5\tv5.3.2\th1:5YQkICvTCSZ25hoRsyJazN0scjzKGiu4VAUc7H1o1nY=\n\tdep\tgithub.com/go-viper/mapstructure/v2\tv2.5.0\th1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro=\n\tdep\tgithub.com/goccy/go-json\tv0.10.5\th1:Fq85nIqj+gXn/S5ahsiTlK3TmC85qgirsdTP/+DeaC4=\n\tdep\tgithub.com/google/flatbuffers\tv25.12.19+incompatible\th1:haMV2JRRJCe1998HeW/p0X9UaMTK6SDo0ffLn2+DbLs=\n\tdep\tgithub.com/google/uuid\tv1.6.0\th1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=\n\tdep\tgithub.com/klauspost/compress\tv1.18.7\th1:aUyZsS4kH3QTKurYhAOwAHxllVPnOthb3vPfnF1Ehjw=\n\tdep\tgithub.com/klauspost/cpuid/v2\tv2.3.0\th1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=\n\tdep\tgithub.com/mitchellh/go-wordwrap\tv1.0.1\th1:TLuKupo69TCn6TQSyGxwI1EblZZEsQ0vMlAFQflz0v0=\n\tdep\tgithub.com/opencontainers/go-digest\tv1.0.0\th1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=\n\tdep\tgithub.com/pelletier/go-toml/v2\tv2.2.4\th1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=\n\tdep\tgithub.com/pierrec/lz4/v4\tv4.1.26\th1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY=\n\tdep\tgithub.com/protocolbuffers/txtpbfmt\tv0.0.0-20260217160748-a481f6a22f94\th1:2PC6Ql3jipz1KvBlqUHjjk6v4aMwE86mfDu1XMH0LR8=\n\tdep\tgithub.com/robfig/cron/v3\tv3.0.1\th1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=\n\tdep\tgithub.com/santhosh-tekuri/jsonschema/v6\tv6.0.3\th1:1EYB5IzjZawrrnELUi78f9fPu57HuXjmddZPjrls/28=\n\tdep\tgithub.com/zeebo/xxh3\tv1.1.0\th1:s7DLGDK45Dyfg7++yxI0khrfwq9661w9EN78eP/UZVs=\n\tdep\tgo.yaml.in/yaml/v3\tv3.0.5\th1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=\n\tdep\tgolang.org/x/exp\tv0.0.0-20260410095643-746e56fc9e2f\th1:W3F4c+6OLc6H2lb//N1q4WpJkhzJCK5J6kUi1NTVXfM=\n\tdep\tgolang.org/x/net\tv0.60.0\th1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=\n\tdep\tgolang.org/x/sys\tv0.48.0\th1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=\n\tdep\tgolang.org/x/text\tv0.42.0\th1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=\n\tdep\tgolang.org/x/xerrors\tv0.0.0-20240903120638-7835f813f4da\th1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY=\n\tdep\tgoogle.golang.org/protobuf\tv1.36.11\th1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=\n\tdep\tgopkg.in/yaml.v3\tv3.0.1\th1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-tags=duckdb_arrow\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1",
+  "agentTrials": 0,
+  "queryExecutionScored": false,
+  "scope": "Merged-main deterministic requalification of existing fixtures and the same 90 committed first-attempt authored outputs; no new author inference or process/scope regrading",
+  "finishedAt": "2026-10-09T19:53:03.324Z",
+  "inputSHA256": {
+    "/var/tmp/pr938-oct10-requalification/dashboardcontracttrials": "8553430c1794376d8d8b77abeaf09d34cca056abc3f16f61bdc94631064272ec",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/manifest.json": "bb1534d4914ab734a18d7ab6cbfe3bfd8fd89b61a5a9663c5bf6b52721f2ba96",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/inventory.json": "8d6b7093d0f24fca1fce39903c410d3f484fab01b43cbd2f7fa0be1e55d5d1dc",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/graded-results-final.json": "c5b93e09842a73d269ab97041fe20d17703928a86b4ed927d3bc461407271df2",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/controller.ts": "e51ffaf5a5241461c93e41d058c875a20e7f4ad61319c093ed6d3d243a72219e",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/prototypes.ts": "15177001f622550b308bd5ad3e09b1fe0370e33cb4b00dfdbd949f489f935120",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/prototypes-cli.ts": "4eed190a5c239f6cec383254345d6456d86bd1e1fa0244ccd9c4bbce3937ac1a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/qualification.ts": "20bd6cdaec4aeaade05dbb24a9528ae31f837218aa41f9572b7fe3ed9e6413a4",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/connections/olist.yaml": "bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/models/sales_customers.yaml": "1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/models/sales_orders.yaml": "3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/semantic-models/sales.yaml": "9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/sources/olist.customers.yaml": "0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/sources/olist.order_items.yaml": "0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/sources/olist.orders.yaml": "8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/sources/olist.payments.yaml": "eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/sources/olist.products.yaml": "3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/support/sources/olist.translations.yaml": "5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/combo-bindings/PROMPT.md": "43d6a8dbd474272a43a511e88a2f49d00480ba445e10f5c5e331852814265df1",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/combo-bindings/negatives/wrong-axis/dashboards/evaluation.yaml": "4fcb2e96828aa5200d81233028ec44fe3b3749a8a00b51676c34884946714ae3",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/combo-bindings/oracle/dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/combo-bindings/seed/dashboards/evaluation.yaml": "6d437a9ae6a4176f88a12b7fd6549c8af382faac1382415f90fe3283a9f4edf7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/grain-alias-sort/PROMPT.md": "92bcbf85cd65521390168b92d22774c28ae1fd21427e5078c99826ee2482ac7f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/grain-alias-sort/negatives/wrong-sort/dashboards/evaluation.yaml": "2171fa189aa8e5b586001fb21759601c2791407496307a2bf3e33334c19bf534",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/grain-alias-sort/oracle/dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/grain-alias-sort/seed/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/monthly-create/PROMPT.md": "fa6fd6b3a9cfeb094a1ccd3aff4d04f9d80d1c746f469406bc0e731b1249f668",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/monthly-create/negatives/wrong-metric/dashboards/evaluation.yaml": "f272d85d2a4104b3166b9afd6219015d808745befaeb573b37e32272b7d8c59d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/monthly-create/oracle/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/monthly-create/seed/dashboards/evaluation.yaml": "a19d412f48078de5b54608b3aabc87a356c685785d239698d1b6d4ce6d6c9321",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/move-resize/PROMPT.md": "0c2c2cd0936fe2fc81530e45f31c504a06fa24bea3432484ac51dd1219ac96ce",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/move-resize/negatives/wrong-placement/dashboards/evaluation.yaml": "608f8bc46cdf7499c3fbec5adf171dd186049f4ea4af23eee866bd80b29c3ae2",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/move-resize/oracle/dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/move-resize/seed/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/ranked-chart/PROMPT.md": "879ad35f298cb531949cdadd8a20677d5305d359d7479ede2c745020a5c11b96",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/ranked-chart/negatives/wrong-limit/dashboards/evaluation.yaml": "e1449acc26dd0b88a8f0211d8cd8629df5adca096df390b7775a1c884c83f000",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/ranked-chart/oracle/dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/ranked-chart/seed/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/records-query/PROMPT.md": "05fbbe0c2a415fc20f6e70295bc1c375e9b667983af2d6cbd25644f5cc2a94ab",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/records-query/negatives/wrong-record-field/dashboards/evaluation.yaml": "26ac04faa058e6ba182f8f63e0d5c3cec41700328fc9567957f9bddf10366792",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/records-query/oracle/dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/records-query/seed/dashboards/evaluation.yaml": "499237d2b952ee278d5d00c9e2ba811caa246fdfdbaf18487295608a8eb715de",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/reordered-definition-edit/PROMPT.md": "5ed411b6e55b8357be410638b769b8fe72ac70d645dd5da265262480a9359680",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/reordered-definition-edit/negatives/wrong-neighbor/dashboards/evaluation.yaml": "f8442f18f7814bcfd5997492efea583db45af506d9028eb8bacb57317991daca",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/reordered-definition-edit/oracle/dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/reordered-definition-edit/seed/dashboards/evaluation.yaml": "12017aaf1375bc0814880e0214d4ceaa9810f82c9790a75bfb4fb16ac9e663e3",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/repair-preserving-neighbors/PROMPT.md": "252a03c6f3e2d4665fe516417a183fd97c21304d302b5110a37368da0924445c",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/repair-preserving-neighbors/negatives/changed-neighbor/dashboards/evaluation.yaml": "961dd6e21a365615210a4ee948527e64fa38cc0f14b0e00f012645b919cb37c6",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/repair-preserving-neighbors/oracle/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/repair-preserving-neighbors/seed/dashboards/evaluation.yaml": "c72944a579e820c3de30c8956194ec9aff7711fee849443e7d20b26479855d19",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/scoped-dependent-filter/PROMPT.md": "49aebfe7a6c27552ea48f27a4353dae5b8312e7853d1f7f5aee4958004e07164",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/scoped-dependent-filter/negatives/missing-dependency/dashboards/evaluation.yaml": "2ec19595898e8ee0b7bafceff114f577c5cdfc160af42e75ef7c522f0f73daf3",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/scoped-dependent-filter/negatives/wrong-target-scope/dashboards/evaluation.yaml": "1b2c6128a813442467ec48693c405ac4e96aa2fd1b3d754dbb255b506d2fddd5",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/scoped-dependent-filter/oracle/dashboards/evaluation.yaml": "7778f693eda783265754992fb2d3adae0ae38ac9ce9da245f788568eba565077",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/scoped-dependent-filter/seed/dashboards/evaluation.yaml": "409fc7b95b5f7629ad7e7f09427c2c6956b1c2c50977611d993b5b30e734dbb0",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/PROMPT.md": "36fdfb72ac92993186a06fc6993a3bd88e494ab89121e2e479a071424d9cd8e4",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/negatives/wrong-reference/dashboards/evaluation.yaml": "1dc4fe98189710a17f2a121cda3b6fa1fa04a455aabb68ee98b5a2909421893b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/oracle/dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/oracle/dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/oracle/dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/seed/dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/seed/dashboards/pages.yaml": "1ebb90ff3eb568099fb49974d6703c5c8e2f21011605bbc0e216dccbcc83b73a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/tasks/second-page-reuse/seed/dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-A-1/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-A-2/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-A-3/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-B-1/dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-B-2/dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-B-3/dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-C-1/dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-C-2/dashboards/evaluation.yaml": "44237f126a70fc2313d817899db29583c9e8c42534954ebc9c17016ddfbe2219",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/monthly-create-C-3/dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-A-1/dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-A-2/dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-A-3/dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-B-1/dashboards/evaluation.yaml": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-B-2/dashboards/evaluation.yaml": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-B-3/dashboards/evaluation.yaml": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-C-1/dashboards/evaluation.yaml": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-C-2/dashboards/evaluation.yaml": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/ranked-chart-C-3/dashboards/evaluation.yaml": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-A-1/dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-A-2/dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-A-3/dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-B-1/dashboards/evaluation.yaml": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-B-2/dashboards/evaluation.yaml": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-B-3/dashboards/evaluation.yaml": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-C-1/dashboards/evaluation.yaml": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-C-2/dashboards/evaluation.yaml": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/grain-alias-sort-C-3/dashboards/evaluation.yaml": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-A-1/dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-A-2/dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-A-3/dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-B-1/dashboards/evaluation.yaml": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-B-2/dashboards/evaluation.yaml": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-B-3/dashboards/evaluation.yaml": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-C-1/dashboards/evaluation.yaml": "739410feab5117008ef2673db8b08f0e498d0440fb495ad82a106031da9fbbbd",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-C-2/dashboards/evaluation.yaml": "125a249eabc90b76232c2ce43e609267231049bdf87afa6f823786db4e9012d1",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/scoped-dependent-filter-C-3/dashboards/evaluation.yaml": "0f6d8756bd1702d74f9d0ecc8b5c054960bf97bfdc3ba74ba2ebe7a43bdd6b9b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-1/dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-1/dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-1/dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-2/dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-2/dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-2/dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-3/dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-3/dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-A-3/dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-1/dashboards/evaluation.yaml": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-1/dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-1/dashboards/visuals.yaml": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-2/dashboards/evaluation.yaml": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-2/dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-2/dashboards/visuals.yaml": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-3/dashboards/evaluation.yaml": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-3/dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-B-3/dashboards/visuals.yaml": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-1/dashboards/evaluation.yaml": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-1/dashboards/pages.yaml": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-1/dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-2/dashboards/evaluation.yaml": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-2/dashboards/pages.yaml": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-2/dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-3/dashboards/evaluation.yaml": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-3/dashboards/pages.yaml": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/second-page-reuse-C-3/dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-A-1/dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-A-2/dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-A-3/dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-B-1/dashboards/evaluation.yaml": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-B-2/dashboards/evaluation.yaml": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-B-3/dashboards/evaluation.yaml": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-C-1/dashboards/evaluation.yaml": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-C-2/dashboards/evaluation.yaml": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/move-resize-C-3/dashboards/evaluation.yaml": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-A-1/dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-A-2/dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-A-3/dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-B-1/dashboards/evaluation.yaml": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-B-2/dashboards/evaluation.yaml": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-B-3/dashboards/evaluation.yaml": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-C-1/dashboards/evaluation.yaml": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-C-2/dashboards/evaluation.yaml": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/reordered-definition-edit-C-3/dashboards/evaluation.yaml": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-A-1/dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-A-2/dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-A-3/dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-B-1/dashboards/evaluation.yaml": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-B-2/dashboards/evaluation.yaml": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-B-3/dashboards/evaluation.yaml": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-C-1/dashboards/evaluation.yaml": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-C-2/dashboards/evaluation.yaml": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/combo-bindings-C-3/dashboards/evaluation.yaml": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-A-1/dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-A-2/dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-A-3/dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-B-1/dashboards/evaluation.yaml": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-B-2/dashboards/evaluation.yaml": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-B-3/dashboards/evaluation.yaml": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-C-1/dashboards/evaluation.yaml": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-C-2/dashboards/evaluation.yaml": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/records-query-C-3/dashboards/evaluation.yaml": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-A-1/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-A-2/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-A-3/dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-B-1/dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-B-2/dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-B-3/dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-C-1/dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-C-2/dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+    "/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/comparison/sources/repair-preserving-neighbors-C-3/dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+  },
+  "corpusManifestSHA256": "bb1534d4914ab734a18d7ab6cbfe3bfd8fd89b61a5a9663c5bf6b52721f2ba96",
+  "frozenCorpusManifest": "/var/tmp/pr938-oct10-requalification/corpus/manifest.json",
+  "frozenCorpusFileCount": 55,
+  "qualification": {
+    "qualified": true,
+    "records": 93,
+    "expectedOutcomeIssues": [],
+    "reportSHA256": "4035eab635907ef65d15683a4add95d68af9bf462b2fd1b6364dbbbc68f8ae4e"
+  },
+  "denominator": 90,
+  "authoredFileCount": 108,
+  "summary": {
+    "A": {
+      "denominator": 30,
+      "parseAndSchema": 30,
+      "compiler": 30,
+      "intent": 30,
+      "pass": 30,
+      "successes": 30
+    },
+    "B": {
+      "denominator": 30,
+      "parseAndSchema": 30,
+      "compiler": 30,
+      "intent": 30,
+      "pass": 30,
+      "successes": 30
+    },
+    "C": {
+      "denominator": 30,
+      "parseAndSchema": 30,
+      "compiler": 30,
+      "intent": 30,
+      "pass": 30,
+      "successes": 30
+    }
+  },
+  "allOutcomesUnchanged": true,
+  "allCanonicalSourceHashesUnchanged": true,
+  "records": [
+    {
+      "id": "monthly-create-A-1",
+      "task": "monthly-create",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-A-2",
+      "task": "monthly-create",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-A-3",
+      "task": "monthly-create",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-B-1",
+      "task": "monthly-create",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fc2672493143600d1b350eb4c782604379624d0386b7626d296b8debc1c7bbaa"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-B-2",
+      "task": "monthly-create",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fc2672493143600d1b350eb4c782604379624d0386b7626d296b8debc1c7bbaa"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-B-3",
+      "task": "monthly-create",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fc2672493143600d1b350eb4c782604379624d0386b7626d296b8debc1c7bbaa"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-C-1",
+      "task": "monthly-create",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "23b7a9fdda9fe50472c9d02b35c5880dd14a18219ba31ceadcd59b92467acba0"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-C-2",
+      "task": "monthly-create",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "44237f126a70fc2313d817899db29583c9e8c42534954ebc9c17016ddfbe2219"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "23b7a9fdda9fe50472c9d02b35c5880dd14a18219ba31ceadcd59b92467acba0"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "monthly-create-C-3",
+      "task": "monthly-create",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "23b7a9fdda9fe50472c9d02b35c5880dd14a18219ba31ceadcd59b92467acba0"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/monthly-create-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-A-1",
+      "task": "ranked-chart",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1668,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "73748bc3c6267ccb976ccd8cf7f787832329e62ae1c527e3d1adbdbca73bb38e"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-A-2",
+      "task": "ranked-chart",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1668,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "73748bc3c6267ccb976ccd8cf7f787832329e62ae1c527e3d1adbdbca73bb38e"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-A-3",
+      "task": "ranked-chart",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1668,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "73748bc3c6267ccb976ccd8cf7f787832329e62ae1c527e3d1adbdbca73bb38e"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-B-1",
+      "task": "ranked-chart",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1619944eb9e97c165ced3b3d98d33eab473fc72e545b4170c391896acce27306"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "b3aacf7f1c9fc5e5cd573f66be61ea6e852ac7cd33e19ba19c5e004d95322b2a"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-B-2",
+      "task": "ranked-chart",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1619944eb9e97c165ced3b3d98d33eab473fc72e545b4170c391896acce27306"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "b3aacf7f1c9fc5e5cd573f66be61ea6e852ac7cd33e19ba19c5e004d95322b2a"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-B-3",
+      "task": "ranked-chart",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1619944eb9e97c165ced3b3d98d33eab473fc72e545b4170c391896acce27306"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "b3aacf7f1c9fc5e5cd573f66be61ea6e852ac7cd33e19ba19c5e004d95322b2a"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-C-1",
+      "task": "ranked-chart",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "e62c1d959f791414b0cc13e4fc0db8e8bbfc96e440f220bfa9c10e896f80d45d"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "41bc95273423414287620b80abb2579dce6a06ec7c861568e53e9e3e3b392414"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-C-2",
+      "task": "ranked-chart",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "e62c1d959f791414b0cc13e4fc0db8e8bbfc96e440f220bfa9c10e896f80d45d"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "41bc95273423414287620b80abb2579dce6a06ec7c861568e53e9e3e3b392414"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "ranked-chart-C-3",
+      "task": "ranked-chart",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "e62c1d959f791414b0cc13e4fc0db8e8bbfc96e440f220bfa9c10e896f80d45d"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/ranked-chart-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "41bc95273423414287620b80abb2579dce6a06ec7c861568e53e9e3e3b392414"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-A-1",
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1208,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8452d6b3c804a2a6181da75559df21b88b732d4c09a4337731739e53e6c9b055"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-A-2",
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1208,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8452d6b3c804a2a6181da75559df21b88b732d4c09a4337731739e53e6c9b055"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-A-3",
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1208,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8452d6b3c804a2a6181da75559df21b88b732d4c09a4337731739e53e6c9b055"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-B-1",
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "09889ad137f5c4d098e96fa035ce81b3663558c8fcab791b173221b83c604f6b"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "e781bb575206ec88a136d9ec2401c5941d00e4fd8d79b791f95f476b9c23aac7"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-B-2",
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "09889ad137f5c4d098e96fa035ce81b3663558c8fcab791b173221b83c604f6b"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "e781bb575206ec88a136d9ec2401c5941d00e4fd8d79b791f95f476b9c23aac7"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-B-3",
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "09889ad137f5c4d098e96fa035ce81b3663558c8fcab791b173221b83c604f6b"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "e781bb575206ec88a136d9ec2401c5941d00e4fd8d79b791f95f476b9c23aac7"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-C-1",
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1eab25b5c0ad3b8f5a02ccad955b0e28a152e0cae5d7688f132dfbda602c46b9"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "f5c5b2743915d255dfc9a32978a1bf1f73093a5f554e397a7a18ec6ec929c210"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-C-2",
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1eab25b5c0ad3b8f5a02ccad955b0e28a152e0cae5d7688f132dfbda602c46b9"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "f5c5b2743915d255dfc9a32978a1bf1f73093a5f554e397a7a18ec6ec929c210"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "grain-alias-sort-C-3",
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "1eab25b5c0ad3b8f5a02ccad955b0e28a152e0cae5d7688f132dfbda602c46b9"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/grain-alias-sort-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "f5c5b2743915d255dfc9a32978a1bf1f73093a5f554e397a7a18ec6ec929c210"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-A-1",
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2312,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "eac274726244b2a79b68a6c7526b7f95b5ec24022878117cc17ed56c5eaf8b80"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-A-2",
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2312,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "eac274726244b2a79b68a6c7526b7f95b5ec24022878117cc17ed56c5eaf8b80"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-A-3",
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2312,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "eac274726244b2a79b68a6c7526b7f95b5ec24022878117cc17ed56c5eaf8b80"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-B-1",
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "b8f520526d475e18ef74df392d0cac4764ae37f6ce797fda3e643bc1afcf2155"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8be0756f64834455e66dddfd2838e5a2a0c71aab6008b3176a3e54aa8e6227ea"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-B-2",
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "b8f520526d475e18ef74df392d0cac4764ae37f6ce797fda3e643bc1afcf2155"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8be0756f64834455e66dddfd2838e5a2a0c71aab6008b3176a3e54aa8e6227ea"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-B-3",
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "b8f520526d475e18ef74df392d0cac4764ae37f6ce797fda3e643bc1afcf2155"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8be0756f64834455e66dddfd2838e5a2a0c71aab6008b3176a3e54aa8e6227ea"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-C-1",
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "739410feab5117008ef2673db8b08f0e498d0440fb495ad82a106031da9fbbbd"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "170ef5c40556d8a44348b5462841bc31ad3eed32384f843c5bc9de61f869ae31"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "99a99cc922779cab3a5434e00f1a99cde9df82f70e99562339be1d2d45daeb72"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-C-2",
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "125a249eabc90b76232c2ce43e609267231049bdf87afa6f823786db4e9012d1"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "170ef5c40556d8a44348b5462841bc31ad3eed32384f843c5bc9de61f869ae31"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "99a99cc922779cab3a5434e00f1a99cde9df82f70e99562339be1d2d45daeb72"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "scoped-dependent-filter-C-3",
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "0f6d8756bd1702d74f9d0ecc8b5c054960bf97bfdc3ba74ba2ebe7a43bdd6b9b"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "170ef5c40556d8a44348b5462841bc31ad3eed32384f843c5bc9de61f869ae31"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/scoped-dependent-filter-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "99a99cc922779cab3a5434e00f1a99cde9df82f70e99562339be1d2d45daeb72"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-A-1",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+        "dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+        "dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+        "dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+        "dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1405,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "55c569ab0dc45674591cc22797c1a2b122896d0739903d8c30a45ab2d6b38630"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-A-2",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+        "dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+        "dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+        "dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+        "dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1405,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "55c569ab0dc45674591cc22797c1a2b122896d0739903d8c30a45ab2d6b38630"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-A-3",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+        "dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+        "dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+        "dashboards/pages.yaml": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+        "dashboards/evaluation.yaml": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1405,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "55c569ab0dc45674591cc22797c1a2b122896d0739903d8c30a45ab2d6b38630"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-B-1",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "d05d0496e1a7907445e8386a53813fc51d8592c8bd78d2a79f565d1016729a4d",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a39f4ffcd99eb609d6379528edd8b6c835e8b841a4fa304589e0d9a053d897e1"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "520d24cc0a0e5a5784c37da4b5a35f084b7ec40f17c170b8e67463a4617a63e6"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-B-2",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "d05d0496e1a7907445e8386a53813fc51d8592c8bd78d2a79f565d1016729a4d",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a39f4ffcd99eb609d6379528edd8b6c835e8b841a4fa304589e0d9a053d897e1"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "520d24cc0a0e5a5784c37da4b5a35f084b7ec40f17c170b8e67463a4617a63e6"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-B-3",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "d05d0496e1a7907445e8386a53813fc51d8592c8bd78d2a79f565d1016729a4d",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a39f4ffcd99eb609d6379528edd8b6c835e8b841a4fa304589e0d9a053d897e1"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "520d24cc0a0e5a5784c37da4b5a35f084b7ec40f17c170b8e67463a4617a63e6"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-C-1",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+        "dashboards/pages.yaml": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+        "dashboards/evaluation.yaml": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a39f4ffcd99eb609d6379528edd8b6c835e8b841a4fa304589e0d9a053d897e1"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "d14e574d7bb0d1efb03ec1460df4ca3678a532b7cd09bf1fd8ff2a260f155b65"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-C-2",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+        "dashboards/pages.yaml": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+        "dashboards/evaluation.yaml": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a39f4ffcd99eb609d6379528edd8b6c835e8b841a4fa304589e0d9a053d897e1"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "d14e574d7bb0d1efb03ec1460df4ca3678a532b7cd09bf1fd8ff2a260f155b65"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "second-page-reuse-C-3",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+        "dashboards/pages.yaml": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+        "dashboards/evaluation.yaml": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f"
+      },
+      "loweredSHA256": {
+        "dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+        "dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+        "dashboards/evaluation.yaml": "a39f4ffcd99eb609d6379528edd8b6c835e8b841a4fa304589e0d9a053d897e1"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/second-page-reuse-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "d14e574d7bb0d1efb03ec1460df4ca3678a532b7cd09bf1fd8ff2a260f155b65"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-A-1",
+      "task": "move-resize",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1209,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "207898f0f7e045ccac27c1eff1b2180515898d89c57551af836e915a630bc5e5"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-A-2",
+      "task": "move-resize",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1209,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "207898f0f7e045ccac27c1eff1b2180515898d89c57551af836e915a630bc5e5"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-A-3",
+      "task": "move-resize",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1209,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "207898f0f7e045ccac27c1eff1b2180515898d89c57551af836e915a630bc5e5"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-B-1",
+      "task": "move-resize",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "d75fe4f18d09ee596489668216297ce42faa857c7d0cea1cf59cf1db3bee4d6b"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8170e4a265179273546b4b704d2d3fbe189599d3a467b916dc12d0f531014d14"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-B-2",
+      "task": "move-resize",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "d75fe4f18d09ee596489668216297ce42faa857c7d0cea1cf59cf1db3bee4d6b"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8170e4a265179273546b4b704d2d3fbe189599d3a467b916dc12d0f531014d14"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-B-3",
+      "task": "move-resize",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "d75fe4f18d09ee596489668216297ce42faa857c7d0cea1cf59cf1db3bee4d6b"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8170e4a265179273546b4b704d2d3fbe189599d3a467b916dc12d0f531014d14"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-C-1",
+      "task": "move-resize",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "7b6ae876f91371c9b0832f34e4ccd3579843c4a227ffb32f0916ef8a025bc017"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "be3f2f9d1e6ecf404891261dc9fb0d6e0de7861195c82d1af13e5fe81eed547c"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-C-2",
+      "task": "move-resize",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "7b6ae876f91371c9b0832f34e4ccd3579843c4a227ffb32f0916ef8a025bc017"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "be3f2f9d1e6ecf404891261dc9fb0d6e0de7861195c82d1af13e5fe81eed547c"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "move-resize-C-3",
+      "task": "move-resize",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "7b6ae876f91371c9b0832f34e4ccd3579843c4a227ffb32f0916ef8a025bc017"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/move-resize-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "be3f2f9d1e6ecf404891261dc9fb0d6e0de7861195c82d1af13e5fe81eed547c"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-A-1",
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1959,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9110ee84094dd0f28141789f24e82a1dbe90aecf0443160e1fb652a6e65669d7"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-A-2",
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1959,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9110ee84094dd0f28141789f24e82a1dbe90aecf0443160e1fb652a6e65669d7"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-A-3",
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1959,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9110ee84094dd0f28141789f24e82a1dbe90aecf0443160e1fb652a6e65669d7"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-B-1",
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fa516754c3ed80f71de8bb61c51a8546404898a863142d51fb9bc7ae556eb56a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "24cd628e9a883046ef3009e92057cd8cae9bc041129ac429ac17c931f129bf89"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-B-2",
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fa516754c3ed80f71de8bb61c51a8546404898a863142d51fb9bc7ae556eb56a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "24cd628e9a883046ef3009e92057cd8cae9bc041129ac429ac17c931f129bf89"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-B-3",
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fa516754c3ed80f71de8bb61c51a8546404898a863142d51fb9bc7ae556eb56a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "24cd628e9a883046ef3009e92057cd8cae9bc041129ac429ac17c931f129bf89"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-C-1",
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "6e176cc42858ac353d08107836f80fff38c5e7427b75778e4c5d4620d0c42653"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "60c68713b598ed617d043e7efb06088aba65def2554b310cf231501be54fe698"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-C-2",
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "6e176cc42858ac353d08107836f80fff38c5e7427b75778e4c5d4620d0c42653"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "60c68713b598ed617d043e7efb06088aba65def2554b310cf231501be54fe698"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "reordered-definition-edit-C-3",
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "6e176cc42858ac353d08107836f80fff38c5e7427b75778e4c5d4620d0c42653"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/reordered-definition-edit-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "60c68713b598ed617d043e7efb06088aba65def2554b310cf231501be54fe698"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-A-1",
+      "task": "combo-bindings",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1380,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9ff360daa3ad84ad95476ba358f2cfbaa012b838404ba0c0e90333970f9e502d"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-A-2",
+      "task": "combo-bindings",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1380,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9ff360daa3ad84ad95476ba358f2cfbaa012b838404ba0c0e90333970f9e502d"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-A-3",
+      "task": "combo-bindings",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1380,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9ff360daa3ad84ad95476ba358f2cfbaa012b838404ba0c0e90333970f9e502d"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-B-1",
+      "task": "combo-bindings",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "42b901e4e5fa5b3e30b03015d215376e6dd9d9b323e5ad930a0decb56c6caf93"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "5d7dc14f282560a47c4807857d682a9f809cef6233b210f1400f0261ed722446"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-B-2",
+      "task": "combo-bindings",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "42b901e4e5fa5b3e30b03015d215376e6dd9d9b323e5ad930a0decb56c6caf93"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "5d7dc14f282560a47c4807857d682a9f809cef6233b210f1400f0261ed722446"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-B-3",
+      "task": "combo-bindings",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "42b901e4e5fa5b3e30b03015d215376e6dd9d9b323e5ad930a0decb56c6caf93"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "5d7dc14f282560a47c4807857d682a9f809cef6233b210f1400f0261ed722446"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-C-1",
+      "task": "combo-bindings",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "02a5f7e3140bc5ac3c11e93f3f857048da3018fe33fdd476786a68ec156bf172"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "163833a4cdea34bc87224da8fd292f9d1a579883fa716e9c6f032cf868392822"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-C-2",
+      "task": "combo-bindings",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "02a5f7e3140bc5ac3c11e93f3f857048da3018fe33fdd476786a68ec156bf172"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "163833a4cdea34bc87224da8fd292f9d1a579883fa716e9c6f032cf868392822"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "combo-bindings-C-3",
+      "task": "combo-bindings",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "02a5f7e3140bc5ac3c11e93f3f857048da3018fe33fdd476786a68ec156bf172"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/combo-bindings-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "163833a4cdea34bc87224da8fd292f9d1a579883fa716e9c6f032cf868392822"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-A-1",
+      "task": "records-query",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1755,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "4b0c26ad313cf5ef3a285fb4ca981dfb5e40c5d85ba8680e35d76f463e7c844d"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-A-2",
+      "task": "records-query",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1755,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "4b0c26ad313cf5ef3a285fb4ca981dfb5e40c5d85ba8680e35d76f463e7c844d"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-A-3",
+      "task": "records-query",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1755,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "4b0c26ad313cf5ef3a285fb4ca981dfb5e40c5d85ba8680e35d76f463e7c844d"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-B-1",
+      "task": "records-query",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "144d4a3ee2386d52d583588d133128be0eb6f61db44e73958c83b7254021a713"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "ba6a77146209d4870f5f350b49f2ddcb8f8ca6edd7b2d833aa213636c9b2850e"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-B-2",
+      "task": "records-query",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "144d4a3ee2386d52d583588d133128be0eb6f61db44e73958c83b7254021a713"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "ba6a77146209d4870f5f350b49f2ddcb8f8ca6edd7b2d833aa213636c9b2850e"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-B-3",
+      "task": "records-query",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "144d4a3ee2386d52d583588d133128be0eb6f61db44e73958c83b7254021a713"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "ba6a77146209d4870f5f350b49f2ddcb8f8ca6edd7b2d833aa213636c9b2850e"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-C-1",
+      "task": "records-query",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "14c0fff3a6b7700da2cfbdfc807885323869a595641c079e28caba6ca6850b01"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6cd79933c8ff4ebd2c10c17605045167091ac3ea8833a1d22ddec159c46e90fe"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-C-2",
+      "task": "records-query",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "14c0fff3a6b7700da2cfbdfc807885323869a595641c079e28caba6ca6850b01"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6cd79933c8ff4ebd2c10c17605045167091ac3ea8833a1d22ddec159c46e90fe"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "records-query-C-3",
+      "task": "records-query",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "14c0fff3a6b7700da2cfbdfc807885323869a595641c079e28caba6ca6850b01"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/records-query-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6cd79933c8ff4ebd2c10c17605045167091ac3ea8833a1d22ddec159c46e90fe"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-A-1",
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-A-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-A-2",
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-A-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-A-3",
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-A-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-B-1",
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fc2672493143600d1b350eb4c782604379624d0386b7626d296b8debc1c7bbaa"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-B-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-B-2",
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fc2672493143600d1b350eb4c782604379624d0386b7626d296b8debc1c7bbaa"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-B-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-B-3",
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "fc2672493143600d1b350eb4c782604379624d0386b7626d296b8debc1c7bbaa"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-B-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-C-1",
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "replicate": 1,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "23b7a9fdda9fe50472c9d02b35c5880dd14a18219ba31ceadcd59b92467acba0"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-C-1",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-C-2",
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "replicate": 2,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "23b7a9fdda9fe50472c9d02b35c5880dd14a18219ba31ceadcd59b92467acba0"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-C-2",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    },
+    {
+      "id": "repair-preserving-neighbors-C-3",
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "replicate": 3,
+      "authoredSHA256": {
+        "dashboards/evaluation.yaml": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+      },
+      "loweredSHA256": {
+        "dashboards/evaluation.yaml": "23b7a9fdda9fe50472c9d02b35c5880dd14a18219ba31ceadcd59b92467acba0"
+      },
+      "canonicalRoot": "/var/tmp/pr938-oct10-requalification/canonical/repair-preserving-neighbors-C-3",
+      "cliExitCode": 0,
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      },
+      "stderr": "",
+      "sameOutcomes": true,
+      "sameCanonicalSourceHash": true,
+      "success": true
+    }
+  ]
+}
