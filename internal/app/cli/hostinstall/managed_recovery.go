@@ -49,12 +49,15 @@ func addManagedRecoveryCommand(host *cobra.Command) {
 			}
 			defer pool.Close()
 			ledger, sets := refreshpostgres.NewRecoveryLedger(pool), recoverypostgres.New(pool)
-			coordinator, err := managedrecovery.NewManaged(ctx, configuration, managedrecovery.ManagedAuthorities{Ledger: ledger, Sets: sets, AuthoritySystemIdentifier: input.Authority.SystemIdentifier})
-			if err != nil {
-				return err
-			}
+			authorities := managedrecovery.ManagedAuthorities{Ledger: ledger, Sets: sets, AuthoritySystemIdentifier: input.Authority.SystemIdentifier}
 			report, err := managedrecovery.RunManagedOccurrence(ctx, ledger, input.OccurrenceID, input.Validator, func(ctx context.Context, fence recovery.Fence) (providerrestore.Report, error) {
+				coordinator, err := managedrecovery.NewManaged(ctx, configuration, authorities)
+				if err != nil {
+					return providerrestore.Report{}, err
+				}
 				return coordinator.Run(ctx, providerrestore.Request{OccurrenceID: input.OccurrenceID, Fence: fence, RecoverySetID: input.RecoverySetID, TargetID: configuration.Credentials.TargetID, ValidationAttemptID: input.ValidationAttemptID, Validator: input.Validator, Publisher: input.Publisher})
+			}, func(ctx context.Context) (providerrestore.Report, error) {
+				return managedrecovery.ReplayManagedRecovery(ctx, configuration, authorities)
 			})
 			if err != nil {
 				return err

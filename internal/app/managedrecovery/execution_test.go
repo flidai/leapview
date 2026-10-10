@@ -69,7 +69,7 @@ func TestManagedOccurrenceRenewsThroughoutProviderWork(t *testing.T) {
 		case <-ctx.Done():
 			return providerrestore.Report{}, ctx.Err()
 		}
-	})
+	}, nil)
 	if err != nil || report.OccurrenceID != "exact-occurrence" {
 		t.Fatalf("renewed provider work: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestManagedOccurrenceCancelsPhysicalWorkAfterLeaseLoss(t *testing.T) {
 		<-ctx.Done()
 		canceled = true
 		return providerrestore.Report{}, ctx.Err()
-	})
+	}, nil)
 	if err == nil || !canceled {
 		t.Fatal("lost lease permitted physical work to continue")
 	}
@@ -98,7 +98,7 @@ func TestManagedOccurrenceDoesNotRunWhenExactIntentUnavailable(t *testing.T) {
 	_, err := runManagedOccurrence(t.Context(), fixture, "exact-occurrence", "operator", time.Second, time.Millisecond, func(context.Context, recovery.Fence) (providerrestore.Report, error) {
 		t.Fatal("unclaimed work executed")
 		return providerrestore.Report{}, nil
-	})
+	}, nil)
 	if err == nil || fixture.started {
 		t.Fatal("unclaimable intent started")
 	}
@@ -112,8 +112,58 @@ func TestManagedOccurrenceAcceptsOnlyMatchingSuccessfulTerminalRenewalRace(t *te
 		case <-ctx.Done():
 			return providerrestore.Report{}, ctx.Err()
 		}
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("successful final heartbeat race rejected: %v", err)
+	}
+}
+
+func TestManagedOccurrenceReplaysCompletedRestoreWithoutClaimingOrStarting(t *testing.T) {
+	fixture := &managedExecutionFixture{status: recovery.StatusSucceeded}
+	replayed := false
+	report, err := runManagedOccurrence(t.Context(), fixture, "exact-occurrence", "operator", time.Minute, time.Second,
+		func(context.Context, recovery.Fence) (providerrestore.Report, error) {
+			t.Fatal("completed restore executed physical work")
+			return providerrestore.Report{}, nil
+		}, func(context.Context) (providerrestore.Report, error) {
+			replayed = true
+			return providerrestore.Report{OccurrenceID: "exact-occurrence", Status: providerrestore.StatusSucceeded}, nil
+		})
+	if err != nil || !replayed || report.Status != providerrestore.StatusSucceeded || fixture.started || fixture.heartbeats != 0 {
+		t.Fatalf("completed acknowledgement retry: report=%+v replayed=%v started=%v err=%v", report, replayed, fixture.started, err)
+	}
+}
+
+func TestManagedOccurrenceReplayPropagatesVerificationFailure(t *testing.T) {
+	fixture := &managedExecutionFixture{status: recovery.StatusSucceeded}
+	denied := errors.New("original writer is no longer fenced")
+	_, err := runManagedOccurrence(t.Context(), fixture, "exact-occurrence", "operator", time.Minute, time.Second,
+		func(context.Context, recovery.Fence) (providerrestore.Report, error) {
+			t.Fatal("completed physical work repeated")
+			return providerrestore.Report{}, nil
+		},
+		func(context.Context) (providerrestore.Report, error) { return providerrestore.Report{}, denied })
+	if !errors.Is(err, denied) || fixture.started {
+		t.Fatalf("replay bypassed fresh verification: %v", err)
+	}
+}
+
+func TestManagedOccurrenceNeverReplaysOtherUnclaimableStates(t *testing.T) {
+	for _, status := range []string{recovery.StatusPending, recovery.StatusClaimed, recovery.StatusRunning, recovery.StatusFailed, recovery.StatusCanceled} {
+		t.Run(status, func(t *testing.T) {
+			fixture := &managedExecutionFixture{status: status}
+			_, err := runManagedOccurrence(t.Context(), fixture, "exact-occurrence", "operator", time.Minute, time.Second,
+				func(context.Context, recovery.Fence) (providerrestore.Report, error) {
+					t.Fatal("unclaimed work ran")
+					return providerrestore.Report{}, nil
+				},
+				func(context.Context) (providerrestore.Report, error) {
+					t.Fatal("unsuccessful occurrence replayed")
+					return providerrestore.Report{}, nil
+				})
+			if err == nil || fixture.started {
+				t.Fatal("unclaimable occurrence accepted")
+			}
+		})
 	}
 }

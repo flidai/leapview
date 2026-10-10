@@ -23,11 +23,13 @@ type ManagedExecutionLedger interface {
 // RunManagedOccurrence starts the exact enrolled pending intent and renews its
 // execution lease throughout physical provider effects. Losing authority
 // cancels those effects; it never adopts another worker's live occurrence.
-func RunManagedOccurrence(ctx context.Context, ledger ManagedExecutionLedger, id, actor string, run func(context.Context, recovery.Fence) (providerrestore.Report, error)) (providerrestore.Report, error) {
-	return runManagedOccurrence(ctx, ledger, id, actor, 3*time.Minute, 30*time.Second, run)
+// A completed occurrence uses replay to reverify its retained recovery evidence
+// without acquiring a new lease or rerunning physical restore work.
+func RunManagedOccurrence(ctx context.Context, ledger ManagedExecutionLedger, id, actor string, run func(context.Context, recovery.Fence) (providerrestore.Report, error), replay func(context.Context) (providerrestore.Report, error)) (providerrestore.Report, error) {
+	return runManagedOccurrence(ctx, ledger, id, actor, 3*time.Minute, 30*time.Second, run, replay)
 }
 
-func runManagedOccurrence(ctx context.Context, ledger ManagedExecutionLedger, id, actor string, lease, interval time.Duration, run func(context.Context, recovery.Fence) (providerrestore.Report, error)) (providerrestore.Report, error) {
+func runManagedOccurrence(ctx context.Context, ledger ManagedExecutionLedger, id, actor string, lease, interval time.Duration, run func(context.Context, recovery.Fence) (providerrestore.Report, error), replay func(context.Context) (providerrestore.Report, error)) (providerrestore.Report, error) {
 	if typednil.IsNil(ledger) || run == nil || interval <= 0 || lease <= interval {
 		return providerrestore.Report{}, errors.New("exact managed execution capability and bounded lease required")
 	}
@@ -36,6 +38,13 @@ func runManagedOccurrence(ctx context.Context, ledger ManagedExecutionLedger, id
 		return providerrestore.Report{}, err
 	}
 	if !ok {
+		completed, readErr := ledger.Occurrence(ctx, id)
+		if readErr != nil {
+			return providerrestore.Report{}, readErr
+		}
+		if completed.ID == id && completed.Status == recovery.StatusSucceeded && replay != nil {
+			return replay(ctx)
+		}
 		return providerrestore.Report{}, errors.New("exact managed recovery occurrence is not claimable")
 	}
 	if err := ledger.Start(ctx, id, claimed.Fence, time.Now().UTC()); err != nil {
