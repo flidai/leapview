@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
@@ -153,5 +155,93 @@ func TestSavedExplorationBrowserListIncludesLegacyItemsOnlyInTheirOriginalScope(
 	state = h.savedExplorationStateForBrowser(request, "", false).State
 	if len(projectsignals.ValueOrZero(state.List.LegacyItems)) != 0 {
 		t.Fatalf("cross-owner legacy items = %#v", state.List.LegacyItems)
+	}
+}
+
+func TestCreateSavedExplorationPreservesCanonicalSpecThroughSaveAndLoad(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	h.CurrentUser = func(*http.Request) (Principal, bool) { return Principal{ID: "principal:alice", DevBypass: true}, true }
+	store := &savedExplorationTestStore{}
+	h.LegacySavedExplorations = store
+	var spec exploration.ExplorationSpec
+	if err := json.Unmarshal([]byte(`{"schemaVersion":1,"modelId":"semantic:sales","datasetId":"orders","dimensions":[{"field":"orders.status","alias":"order_status"}],"metrics":[{"field":"revenue","alias":"total_revenue"}],"filters":[{"field":"orders.status","datasetId":"orders","expression":{"kind":"set","operator":"in","values":[{"kind":"string","value":"paid"}]}}],"sort":[{"field":"revenue","direction":"desc"}],"limit":25,"table":{"density":"compact","striped":true,"showHeader":false,"rowHeight":28}}`), &spec); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explorerURL := "/explore?" + url.Values{"v": {"2"}, "mode": {"explore"}, "state": {string(encoded)}}.Encode()
+	body, err := json.Marshal(map[string]string{"title": "Canonical agent chart", "explorerUrl": explorerURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	h.CreateSavedExploration(recorder, httptest.NewRequest(http.MethodPost, "/explore/saved", strings.NewReader(string(body))))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("canonical save status = %d, want 201: %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Item savedExplorationResponse `json:"item"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	var stored projectsignals.DataExploreCommand
+	if err := json.Unmarshal([]byte(store.items[response.Item.ID].CommandJSON), &stored); err != nil {
+		t.Fatal(err)
+	}
+	assertSpec := func(name string, got exploration.ExplorationSpec) {
+		t.Helper()
+		actual, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(actual) != string(encoded) {
+			t.Fatalf("%s canonical spec = %s, want %s", name, actual, encoded)
+		}
+	}
+	assertSpec("stored", stored.Spec)
+	recorder = httptest.NewRecorder()
+	_, restored, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, response.Item.Href, nil), false)
+	if !ok {
+		t.Fatalf("canonical restore failed: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	assertSpec("restored", restored.Explore.Command.Spec)
+	if store.created != 1 || executor.calls != 0 {
+		t.Fatalf("canonical save/load = creates:%d queries:%d, want 1 scoped save and no row execution", store.created, executor.calls)
+	}
+}
+
+func TestSavedExplorationCanonicalURLValidation(t *testing.T) {
+	valid := url.Values{"v": {"2"}, "mode": {"explore"}, "state": {`{"schemaVersion":1,"modelId":"semantic:sales","datasetId":"orders","dimensions":[{"field":"orders.status"}],"metrics":[],"filters":[],"sort":[],"limit":25}`}}
+	for name, mutate := range map[string]func(url.Values){
+		"duplicate state":           func(v url.Values) { v.Add("state", v.Get("state")) },
+		"duplicate version":         func(v url.Values) { v.Add("v", "2") },
+		"duplicate mode":            func(v url.Values) { v.Add("mode", "explore") },
+		"legacy conflict":           func(v url.Values) { v.Set("dimension", "orders.status") },
+		"unknown parameter":         func(v url.Values) { v.Set("unexpected", "value") },
+		"unsupported state version": func(v url.Values) { v.Set("v", "1") },
+		"missing state version":     func(v url.Values) { v.Del("v") },
+		"unknown state field":       func(v url.Values) { v.Set("state", strings.TrimSuffix(v.Get("state"), "}")+`,"unexpected":true}`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := url.Values{}
+			for key, items := range valid {
+				values[key] = append([]string{}, items...)
+			}
+			mutate(values)
+			if _, err := savedExplorationCommandFromURL("/explore?" + values.Encode()); err == nil {
+				t.Fatalf("accepted invalid canonical URL: %s", values.Encode())
+			}
+		})
+	}
+	if _, err := savedExplorationCommandFromURL("/explore?" + valid.Encode()); err != nil {
+		t.Fatalf("rejected valid canonical URL: %v", err)
+	}
+	for _, prefix := range []string{"https://example.invalid", "//example.invalid"} {
+		if _, err := savedExplorationCommandFromURL(prefix + "/explore?" + valid.Encode()); err == nil {
+			t.Fatalf("accepted external canonical URL with prefix %q", prefix)
+		}
 	}
 }
