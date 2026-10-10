@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import type { Browser, Page } from '@playwright/test'
+import { expect as browserExpect, type Browser, type Page } from '@playwright/test'
 import { createDataExplorerDOMFixture } from './data-explorer.test-fixture'
 
 let fixture: Awaited<ReturnType<typeof createDataExplorerDOMFixture>>
@@ -548,7 +548,7 @@ async function styledFocus(page: Page) {
     for (let node: Node | null = hit; node; node = node.parentNode ?? (node.getRootNode() as ShadowRoot).host ?? null) {
       if (node === focused) reachable = true
     }
-    return { inside, reachable, label: focused?.getAttribute('aria-label'), visible: Boolean(rect && rect.width > 0 && rect.height > 0
+    return { inside, reachable, tag: focused?.localName, label: focused?.getAttribute('aria-label'), visible: Boolean(rect && rect.width > 0 && rect.height > 0
       && rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight) }
   })
 }
@@ -635,5 +635,63 @@ for (const width of [375, 1440]) test(`expanded Explorer URL and history keep pa
     expect(await explorer.getAttribute('data-agent-open')).toBe('')
     expect(await drawer.getByRole('dialog').getAttribute('aria-modal')).toBe('true')
     expect(await input.inputValue()).toBe('Retain this history draft')
+  } finally { await page.close() }
+})
+
+for (const width of [375, 768, 1440]) for (const action of ['Close', 'Escape']) {
+  test(`automatically restored Explorer chat returns focus to Ask after ${action} at ${width}px`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    try {
+      await page.addInitScript(() => localStorage.setItem('leapview-data-explorer-agent-state', JSON.stringify({ open: true, conversationId: 'existing-conversation' })))
+      const explorer = await openTransportAgent(page, false, true)
+      const drawer = explorer.locator('lv-chat-drawer')
+      expect(await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).getAttribute('aria-expanded')).toBe('true')
+      if (action === 'Close') await drawer.getByRole('button', { name: 'Close agent', exact: true }).click()
+      else await drawer.locator('lv-chat-composer textarea').press('Escape')
+      await drawer.evaluate((element: any) => element.updateComplete)
+      await browserExpect(explorer.getByRole('button', { name: 'Ask about this data', exact: true })).toBeFocused()
+      if (process.env.LEAPVIEW_EXPLORER_FEEDBACK_SCREENSHOT_DIR) await page.screenshot({
+        path: `${process.env.LEAPVIEW_EXPLORER_FEEDBACK_SCREENSHOT_DIR}/restored-${action.toLowerCase()}-${width}.png` })
+      expect(await styledFocus(page)).toMatchObject({ inside: false, label: 'Ask about this data', visible: true, reachable: true })
+    } finally { await page.close() }
+  }, 15_000)
+}
+
+for (const targetTag of ['button', 'h2']) test(`automatically restored Explorer chat preserves a valid ${targetTag} focus return target`, async () => {
+  const page = await browser.newPage({ viewport: { width: 375, height: 900 } })
+  try {
+    await page.addInitScript((targetTag) => {
+      localStorage.setItem('leapview-data-explorer-agent-state', JSON.stringify({ open: true }))
+      document.addEventListener('DOMContentLoaded', () => {
+        const target = document.createElement(targetTag)
+        if (targetTag === 'h2') target.tabIndex = -1
+        target.textContent = 'Original focus target'; target.id = 'original-focus-target'
+        document.body.append(target); target.focus()
+      })
+    }, targetTag)
+    const explorer = await openTransportAgent(page, false, true)
+    await explorer.locator('lv-chat-drawer').getByRole('button', { name: 'Close agent', exact: true }).click()
+    await explorer.locator('lv-chat-drawer').evaluate((element: any) => element.updateComplete)
+    expect(await page.locator('#original-focus-target').evaluate(element => document.activeElement === element)).toBe(true)
+  } finally { await page.close() }
+})
+
+for (const transition of ['reopen', 'disable']) test(`restored Explorer close focus does not override an immediate ${transition}`, async () => {
+  const page = await browser.newPage({ viewport: { width: 375, height: 900 } })
+  try {
+    await page.addInitScript(() => localStorage.setItem('leapview-data-explorer-agent-state', JSON.stringify({ open: true })))
+    const explorer = await openTransportAgent(page, false, true)
+    await explorer.evaluate(async (element: any, transition) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer')
+      drawer.dispatchEvent(new CustomEvent('lv-chat-drawer-close', { bubbles: true, composed: true }))
+      if (transition === 'reopen') element.shadowRoot.querySelector('.ask-button').click()
+      else {
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+        mergePatch({ agent: { status: { enabled: false } } })
+      }
+      await element.updateComplete; await drawer.updateComplete
+    }, transition)
+    if (transition === 'reopen') expect(await styledFocus(page)).toMatchObject({ inside: true, visible: true, reachable: true })
+    else expect(await explorer.getByRole('button', { name: 'Ask about this data', exact: true }).evaluate(element => element.getRootNode() instanceof ShadowRoot && (element.getRootNode() as ShadowRoot).activeElement === element)).toBe(false)
   } finally { await page.close() }
 })

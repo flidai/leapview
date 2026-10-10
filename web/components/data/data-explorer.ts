@@ -1266,6 +1266,17 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.agentDrawerOpen = open
     this.agentStateController.setOpen(open)
     this.persistAgentState()
+    if (!open) void this.updateComplete.then(async () => {
+      await this.renderRoot.querySelector<LitElement>('lv-chat-drawer')?.updateComplete
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      if (!this.isConnected || this.agentDrawerOpen || !this.signal<ChatSignal | null>('agent', null)?.status.enabled) return
+      let active = this.ownerDocument.activeElement
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+      if (active === this.ownerDocument.body || active === this.ownerDocument.documentElement
+        || active instanceof HTMLElement && active.getClientRects().length === 0) {
+        this.renderRoot.querySelector<HTMLButtonElement>('.ask-button')?.focus()
+      }
+    })
   }
 
   private beginBrowserResize = (event: PointerEvent): void => {
