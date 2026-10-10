@@ -144,6 +144,36 @@ class RecordTable extends LitElement {
   private columnVisibilityFingerprint = ''
   private fallbackRowIDs = new WeakMap<RecordRow, string>()
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('pointerdown', this.handleOutsidePointerDown)
+    document.addEventListener('keydown', this.handleDocumentKeyDown)
+  }
+
+  disconnectedCallback(): void {
+    document.removeEventListener('pointerdown', this.handleOutsidePointerDown)
+    document.removeEventListener('keydown', this.handleDocumentKeyDown)
+    super.disconnectedCallback()
+  }
+
+  private handleOutsidePointerDown = (event: PointerEvent): void => {
+    const details = this.querySelector<HTMLDetailsElement>('.record-table-column-selector')
+    if (details?.open && !event.composedPath().includes(details)) this.closeColumnSelector(details)
+  }
+
+  private handleDocumentKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return
+    const details = this.querySelector<HTMLDetailsElement>('.record-table-column-selector')
+    if (!details?.open) return
+    this.closeColumnSelector(details)
+    if (event.composedPath().includes(details)) details.querySelector('summary')?.focus()
+  }
+
+  private closeColumnSelector(details: HTMLDetailsElement): void {
+    this.columnSelectorOpen = false
+    details.open = false
+  }
+
   createRenderRoot(): HTMLElement {
     return this
   }

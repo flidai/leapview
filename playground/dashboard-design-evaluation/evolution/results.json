@@ -1,0 +1,62 @@
+{
+  "formatVersion": 1,
+  "recordedAt": "2026-10-09T04:58:46.629687+00:00",
+  "baseCommit": "179de9f18b94ce6ac80510ad29d3a098f425ed05",
+  "evaluationOnly": true,
+  "productionSchemaChanged": false,
+  "command": "GOFLAGS='-tags=duckdb_arrow -buildvcs=false' go test -count=1 ./internal/dashboard/authoring/compileradapter -v",
+  "passed": true,
+  "package": "internal/dashboard/authoring/compileradapter",
+  "topLevelTestsPassed": [
+    "TestCompileUsesOneLeaseAndReturnsServingIdentity",
+    "TestCompileRejectsSemanticMismatchBeforeLeaseAndReleasesAllPostAcquirePaths",
+    "TestCompileStrictErrorReleasesAndDoesNotMutateCanonicalInputOrModel",
+    "TestCompileSuccessfulResultIsDetached",
+    "TestRetainedV1RevisionExportEditAndRestorePreserveCompiledMeaning",
+    "TestRetainedV1OmittedAndExplicitDefaultsPreserveDistinctAuthoredIdentity",
+    "TestEvolutionOptionalPresentationCapability",
+    "TestEvolutionGovernedQueryKind",
+    "TestEvolutionChangedOmittedDefaultAndExplicitMigration"
+  ],
+  "evolutionSubtestsPassed": 34,
+  "redGreen": {
+    "redReader": "future reader delegates unchanged to generated v1 reader; migration is identity",
+    "redFailedTests": [
+      "TestEvolutionOptionalPresentationCapability",
+      "TestEvolutionGovernedQueryKind",
+      "TestEvolutionChangedOmittedDefaultAndExplicitMigration"
+    ],
+    "redFailure": "future apiVersion and query/capability remain rejected until explicit validation, lowering, and migration exist",
+    "green": "all 3 evolution tests and 6 existing compileradapter/retained-v1 tests pass"
+  },
+  "inputSHA256": {
+    "internal/dashboard/authoring/compileradapter/evolution_experiments_test.go": "f2b18db29db5548c96ffff02119d65c00a906c8af2912aa7ecc97cecd6f3b927",
+    "playground/dashboard-design-evaluation/evolution/reader-contract.json": "0cd1c754a9d7ea0fe8e6a50c438e1d5f7a8e98c634e17182a0f3d708019accf7",
+    "schemas/json/dashboard-document.schema.json": "19c49ba464c1bf8cc49537e772914f4dfdde0b9f6a93da1b7402b33cac2fa48c",
+    "internal/dashboard/authoring/compileradapter/testdata/retained-v1-revision.json": "a193eae0a81d0afc533e06d659d9f8c497bce7a3ba740ee12c28f5fc1971db0e"
+  },
+  "observedGeometry": {
+    "v1OmittedGap": 16,
+    "v1OverviewHeight": 272,
+    "futureOmittedGap": 8,
+    "futureOverviewHeight": 248,
+    "futureExplicitZeroGapOverviewHeight": 224,
+    "migratedV1OverviewHeight": 272,
+    "explicitZeroOverrideDetailHeight": 384
+  },
+  "readerCompatibility": {
+    "currentRejectsFutureVersion": true,
+    "currentRejectsFuturePropertyAndQueryAtV1": true,
+    "newPreservesV1AuthoredHash": true,
+    "canonicalLoweredExportsCompileIdentically": true,
+    "oldDefaultsMaterializedOnExplicitMigration": true
+  },
+  "limits": [
+    "Current checkout reader, not a historical released reader",
+    "In-memory schema extension and explicit lowering, not generated production v2 DTOs",
+    "Existing query and renderer capabilities reused by the new authored property/tag",
+    "Actual compiler with fixture semantic model/runtime lease; no queries executed",
+    "Canonical revision serialization and export tested; no future database schema or deployment exercised",
+    "No agent trials added"
+  ]
+}

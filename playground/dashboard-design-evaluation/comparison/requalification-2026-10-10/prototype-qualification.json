@@ -1,0 +1,1763 @@
+{
+  "kind": "deterministic-prototype-qualification",
+  "agentTrials": 0,
+  "corpusSHA256": "bb1534d4914ab734a18d7ab6cbfe3bfd8fd89b61a5a9663c5bf6b52721f2ba96",
+  "binarySHA256": "8553430c1794376d8d8b77abeaf09d34cca056abc3f16f61bdc94631064272ec",
+  "implementationSHA256": {
+    "controller.ts": "e51ffaf5a5241461c93e41d058c875a20e7f4ad61319c093ed6d3d243a72219e",
+    "prototypes.ts": "15177001f622550b308bd5ad3e09b1fe0370e33cb4b00dfdbd949f489f935120",
+    "prototypes-cli.ts": "4eed190a5c239f6cec383254345d6456d86bd1e1fa0244ccd9c4bbce3937ac1a"
+  },
+  "records": [
+    {
+      "task": "monthly-create",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 330,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6500371f7c562c69632cadf77a2941624326bb9a2d84824c7f0b8a386fefdc29",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 336,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "02f87f37d0fb79946102b653fbfd28e753f8a6c6a4fb90dc4d96ea5486769018",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 336,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "02f87f37d0fb79946102b653fbfd28e753f8a6c6a4fb90dc4d96ea5486769018",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1211,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "A",
+      "fixture": "negative:wrong-metric",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1215,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "39bae36182337c151e495542461d33a0bd4e4dca2a6ffb6182cca3116c91c215",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "B",
+      "fixture": "negative:wrong-metric",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1355,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "37c7e4da3c4ab6c0cc8cab59ee5a65190c0e675604dc2bf11bbb7bc207881e18",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "monthly-create",
+      "candidate": "C",
+      "fixture": "negative:wrong-metric",
+      "prototypeAccepted": true,
+      "id": "monthly-create",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1355,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "55b560084ff8e400e19c5b88b3355b80d9b988a59ee9d33e169fda773120efb3",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1211,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1668,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "73748bc3c6267ccb976ccd8cf7f787832329e62ae1c527e3d1adbdbca73bb38e"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1878,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "b3aacf7f1c9fc5e5cd573f66be61ea6e852ac7cd33e19ba19c5e004d95322b2a"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1878,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "41bc95273423414287620b80abb2579dce6a06ec7c861568e53e9e3e3b392414"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "A",
+      "fixture": "negative:wrong-limit",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1669,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "39708ee7f42844d69c1edce57740cf03a690e29ebd4c74440df211883974f7ea",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "B",
+      "fixture": "negative:wrong-limit",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1879,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "f41d29a10c7f87bc2dd42e2b738d3a4810dde0db1921d7eff4ef52f620d85d5d",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "ranked-chart",
+      "candidate": "C",
+      "fixture": "negative:wrong-limit",
+      "prototypeAccepted": true,
+      "id": "ranked-chart",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1879,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6051327b144ad1af65fe3e8d2a11ff92d26b059b9b86e19c5e5fe310240ab53c",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1211,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1208,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "8452d6b3c804a2a6181da75559df21b88b732d4c09a4337731739e53e6c9b055"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1348,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "e781bb575206ec88a136d9ec2401c5941d00e4fd8d79b791f95f476b9c23aac7"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1348,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "f5c5b2743915d255dfc9a32978a1bf1f73093a5f554e397a7a18ec6ec929c210"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "fixture": "negative:wrong-sort",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1209,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "e0e46426ad165c076786afd95e5df011dabab2a62b99712ed3f5a447721bd5c5",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "fixture": "negative:wrong-sort",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1349,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "d22952dfb581f72d0d8c7c0b79746223bbc49a726b52fa5757c385a420051b95",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "fixture": "negative:wrong-sort",
+      "prototypeAccepted": true,
+      "id": "grain-alias-sort",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1349,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6c742e1ba44812b2a260a7a4576c720e7eafa158a8649223698fb9a8d5104d61",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1419,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "b77fc2bd5fb0786d56fdc6ce8e404392588565874f26863ccab6e6a31420cdb5",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1597,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "64b761285b97d174ead763a842e90ae2b3b7671cd34118a04ae4e8cb62a6261d",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1597,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "2888f0055363bb123b6406fcb932e71cb0331126200a6de728d2cf807977ea2c",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 2312,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "ce29d1571ab5b50aabca33391285cbb5e70e97fb38f5fa9ffc9d55b4d90fb162"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 2634,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "eaa150492515b68719c7643c417ad9b7b81a147ce92afe59c68e9d7ea41774a7"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 2634,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "db67854f8cddf7477b8c2027e49b9026225e16ab6dc5569121d9d52922ace799"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "fixture": "negative:wrong-target-scope",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2352,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "1a594b94a6572f249a1de7b693a9c3ee256b28b9a94fcb0dd70c94153075cdad",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "fixture": "negative:wrong-target-scope",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2686,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "a559f049b1dd58814a4f373ea6c3cc1fa206464212f7a2d6179575861d611e94",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "fixture": "negative:wrong-target-scope",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2686,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "78ba40e1f556c57d03c746259e7b38254c725d4d773b9b221660e838249ce1c6",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "fixture": "negative:missing-dependency",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2277,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "95c726dd7bb81f7e613ce7a2cca707ae7698361a92b2f2a4bada2a5d6fe93416",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "fixture": "negative:missing-dependency",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2593,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "7c731b87950ff1580718bee86f0447f4cad5ba261771bd0068a142276bb9d357",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "fixture": "negative:missing-dependency",
+      "prototypeAccepted": true,
+      "id": "scoped-dependent-filter",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2593,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "5051a9d7cd927d73838c12fc3c1f8a5fb8a2db3614c41796641d37496d76b177",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1211,
+      "files": [
+        "dashboards/evaluation.yaml",
+        "dashboards/pages.yaml",
+        "dashboards/visuals.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "199ccfe82ba47c4b9b3ae9e8adfce1d4b2339099f6b08b761c23ac59cfde8a51",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1355,
+      "files": [
+        "dashboards/evaluation.yaml",
+        "dashboards/pages.yaml",
+        "dashboards/visuals.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "436dfc33cca2222527063341813159f8b0f55ca305510c077fa53a593d1c06cf",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1355,
+      "files": [
+        "dashboards/evaluation.yaml",
+        "dashboards/pages.yaml",
+        "dashboards/visuals.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "7b41a691a261ec69da87f385bf494d15acf546837d73b29123135f26da519db8",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1405,
+      "files": [
+        "dashboards/evaluation.yaml",
+        "dashboards/pages.yaml",
+        "dashboards/visuals.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "55c569ab0dc45674591cc22797c1a2b122896d0739903d8c30a45ab2d6b38630"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1587,
+      "files": [
+        "dashboards/evaluation.yaml",
+        "dashboards/pages.yaml",
+        "dashboards/visuals.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "520d24cc0a0e5a5784c37da4b5a35f084b7ec40f17c170b8e67463a4617a63e6"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1587,
+      "files": [
+        "dashboards/evaluation.yaml",
+        "dashboards/pages.yaml",
+        "dashboards/visuals.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "d14e574d7bb0d1efb03ec1460df4ca3678a532b7cd09bf1fd8ff2a260f155b65"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "fixture": "negative:wrong-reference",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1424,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "0d1806e87487c87af726dc0b8e5c8428c6b3de06f387f3918d220d0e24322d0d",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "fixture": "negative:wrong-reference",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1602,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "91ff539081ab0d47d080e627b16f6ae764843b41c71db5951e9e6950122cefc3",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "fixture": "negative:wrong-reference",
+      "prototypeAccepted": true,
+      "id": "second-page-reuse",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1602,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "8c98859601c06dfb4b8c23657e5c429d4748b7c17a0afede82766f4f1a5b609d",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1211,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1209,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "207898f0f7e045ccac27c1eff1b2180515898d89c57551af836e915a630bc5e5"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1349,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "8170e4a265179273546b4b704d2d3fbe189599d3a467b916dc12d0f531014d14"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1349,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "be3f2f9d1e6ecf404891261dc9fb0d6e0de7861195c82d1af13e5fe81eed547c"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "A",
+      "fixture": "negative:wrong-placement",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1209,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "ff3ca70974af78d3293d56d4d11d5fa50f3f362f6fa55bef5dc75616b99a9bb0",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "B",
+      "fixture": "negative:wrong-placement",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1349,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "7cddf8fc1bcfcdab09d2a9a2e24f2aa35f4bd30dd705ba2e7474bfaba40cd98b",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "move-resize",
+      "candidate": "C",
+      "fixture": "negative:wrong-placement",
+      "prototypeAccepted": true,
+      "id": "move-resize",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1349,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "4245eef4c64dbcbd2b341ced115b2db184c19800b468a480c1f34c4f12cf875c",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1954,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "1ff5fe51b56f32f56b7bdf440798dc3d60b7ffe67dced5fc05fbec51cdfc28da",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2210,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "0173a4438a1e67bf86736cc4c443705e45d64239684abaf7bd9da91ee8044bcc",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2210,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "07fb7f1c5495d9b07321a38bf1927267e1d39ca970d3a16e87eeb724d29dcee1",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1959,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "9110ee84094dd0f28141789f24e82a1dbe90aecf0443160e1fb652a6e65669d7"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 2215,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "24cd628e9a883046ef3009e92057cd8cae9bc041129ac429ac17c931f129bf89"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 2215,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "60c68713b598ed617d043e7efb06088aba65def2554b310cf231501be54fe698"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "fixture": "negative:wrong-neighbor",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1964,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "372c4570826be934100c35c5a1035bb7375e8412f683ecb27cd126cb8745bb4c",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "fixture": "negative:wrong-neighbor",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2220,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "8d2c1ebdc5cd38929624eeecdaee03ce0799820e0d529985cc4839c01da68a5f",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "fixture": "negative:wrong-neighbor",
+      "prototypeAccepted": true,
+      "id": "reordered-definition-edit",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 2220,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "3ad0e5c1101086fb7f172d14123d64941cb057e01e94787d90ca09eaedfd7829",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1380,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "705f196812746292a36503bb1e85ac801856591e39ffaee966fc188c11616512",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1550,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "5790b9e8731027d6246552bb7ba740bc6db4cfdc73523e9d16fbd61c4456ced8",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1550,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "07f0fe75674ca5afaa796da5ce53892e344ef537db1a14c476693a83e2c249a6",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1380,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "9ff360daa3ad84ad95476ba358f2cfbaa012b838404ba0c0e90333970f9e502d"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1550,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "5d7dc14f282560a47c4807857d682a9f809cef6233b210f1400f0261ed722446"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1550,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "163833a4cdea34bc87224da8fd292f9d1a579883fa716e9c6f032cf868392822"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "A",
+      "fixture": "negative:wrong-axis",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1380,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "32284575c558953a664e7e8ea583e23572fd32294b984436d179b74edf4618f6",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "B",
+      "fixture": "negative:wrong-axis",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1550,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "4a0365df3834a05317c9886e005e5a74a3897fcd7377f3b8f2864849a3a3c230",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "combo-bindings",
+      "candidate": "C",
+      "fixture": "negative:wrong-axis",
+      "prototypeAccepted": true,
+      "id": "combo-bindings",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1550,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "346deaf5cb0aa0dd1e4fc78d1810a38d358bba70a54552818c98c3ceed7a6f5b",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "records-query",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1738,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "90136f62a3f1ac37edf464e7f8ad1252516b3daecbd00597d908c17089799878",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "records-query",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1958,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "62a6fe617f78ab6b9cdbf707654255d0650f36fcc86e29122d5617cbf37fac92",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "records-query",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1958,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "726aabd7291e4d53e9b543b6ce86070c95d8c4d898387e4d746e1fcaaae0ad3c",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "records-query",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1755,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "4b0c26ad313cf5ef3a285fb4ca981dfb5e40c5d85ba8680e35d76f463e7c844d"
+    },
+    {
+      "task": "records-query",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1979,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "ba6a77146209d4870f5f350b49f2ddcb8f8ca6edd7b2d833aa213636c9b2850e"
+    },
+    {
+      "task": "records-query",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1979,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6cd79933c8ff4ebd2c10c17605045167091ac3ea8833a1d22ddec159c46e90fe"
+    },
+    {
+      "task": "records-query",
+      "candidate": "A",
+      "fixture": "negative:wrong-record-field",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1753,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "989e6ffa0f7520432498f81effceb7c7769936e818c153be8880ca5310e348db",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "records-query",
+      "candidate": "B",
+      "fixture": "negative:wrong-record-field",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1977,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "79545a5316b385f80f24dcab18ce8b940ed12141180bba794922259232abd0ca",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "records-query",
+      "candidate": "C",
+      "fixture": "negative:wrong-record-field",
+      "prototypeAccepted": true,
+      "id": "records-query",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1977,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "3c60d8bfb3d5050fee17d12deded05b3ce3045cc31fe100aa3e119b2c27f98d4",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": false,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1216,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "1d5ae829a3764e4b66c402179a5471a14c3b3067e1467f51a3b357804ff58b24",
+      "diagnostic": "loading dashboard \"evaluation\": visual \"revenue-by-month\" query: aggregate dimensions: unknown semantic dimension \"nonexistent_period\""
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": false,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1356,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "2d9f62bcf4ebf643a728435755c4a369a60ab41a3edf83be9b23ac89d2160675",
+      "diagnostic": "loading dashboard \"evaluation\": visual \"revenue-by-month\" query: aggregate dimensions: unknown semantic dimension \"nonexistent_period\""
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "fixture": "seed",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": false,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1356,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "fc5c1f96b31ac8691aa1635e53a2608468fbbd53c040ebd290e79d60501d814d",
+      "diagnostic": "loading dashboard \"evaluation\": visual \"revenue-by-month\" query: aggregate dimensions: unknown semantic dimension \"nonexistent_period\""
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1211,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "fixture": "oracle",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "representation": false,
+      "pass": true,
+      "sourceBytes": 1351,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "fixture": "negative:changed-neighbor",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1215,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "4e347a18c9d7751ee61ad931710c87e32fdbfb86f42571bee53a35455affa4ee",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "fixture": "negative:changed-neighbor",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1355,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "ac6e7792936586d0a5c044a31c20ae5cd77393a8d615006f0bd77f21f6b99753",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "fixture": "negative:changed-neighbor",
+      "prototypeAccepted": true,
+      "id": "repair-preserving-neighbors",
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": false,
+      "representation": false,
+      "pass": false,
+      "sourceBytes": 1355,
+      "files": [
+        "dashboards/evaluation.yaml"
+      ],
+      "changedFiles": null,
+      "sourceHash": "17909bd265baeab935022fe8770e29499e8bad7164c39046741ff73c9e6a0184",
+      "diagnostic": "Compiled document differs from the frozen authored-behavior oracle"
+    }
+  ],
+  "qualified": true
+}

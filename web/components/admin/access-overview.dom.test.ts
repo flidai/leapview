@@ -157,3 +157,87 @@ test('permission catalogue is a static searchable list of exact actions', async 
     await page.close()
   }
 })
+
+const catalogueRoles = [
+  ['viewer', 'Viewer'], ['explorer', 'Explorer'], ['editor', 'Editor'], ['project_admin', 'Project admin'],
+  ['publisher', 'Publisher'], ['release_approver', 'Release approver'], ['release_operator', 'Release operator'], ['auditor', 'Auditor'],
+]
+
+async function seedRoleCatalogue(page: import('@playwright/test').Page, includeFutureRole = false) {
+  await page.goto(fixture.baseURL)
+  await page.waitForFunction(() => customElements.get('lv-access-overview'))
+  await page.evaluate(async (roles) => {
+    const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+    mergePatch({
+      page: { kind: 'admin', title: 'Roles & permissions', active: 'access', headerTitle: 'Roles & permissions' },
+      adminAccess: {
+        principals: [], groups: [], sessions: [], activity: [], loading: false, projectId: 'project-demo', policyRevision: 7, roleAssignments: [],
+        rolePresets: roles.map(([role, name]) => ({ role, name, profile: 'leapview.permissions/v1', description: `${name} responsibilities.`, permissions: [`${role}.read`] })),
+      },
+    })
+  }, includeFutureRole ? [...catalogueRoles, ['future_role', 'Future role']] : catalogueRoles)
+  await page.getByRole('heading', { name: 'Built-in project roles', exact: true }).waitFor()
+}
+
+test('common roles stay visible while specialists remain searchable and every role remains inspectable', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await seedRoleCatalogue(page, true)
+    const overview = page.locator('lv-access-overview')
+    const visibleRoles = () => overview.locator('.entity-list-table-row:visible th').allTextContents()
+    expect((await visibleRoles()).map((text) => text.trim())).toEqual(['Viewer', 'Explorer', 'Editor', 'Project admin', 'Future role'])
+    expect(await overview.getByRole('searchbox').count()).toBe(1)
+    const search = overview.getByRole('searchbox', { name: 'Search roles' })
+    await search.fill('release operator')
+    expect((await visibleRoles()).map((text) => text.trim())).toEqual(['Release operator'])
+    await overview.locator('.entity-list-table-row:visible').click()
+    expect(await overview.locator('lv-drawer').textContent()).toContain('release_operator.read')
+    await search.fill('nothing-matches')
+    expect(await overview.getByText('No roles match your search.', { exact: true }).isVisible()).toBe(true)
+    await search.fill('')
+    const disclosure = overview.locator('details.role-specialists > summary')
+    await disclosure.focus()
+    await page.keyboard.press('Enter')
+    expect((await visibleRoles()).map((text) => text.trim())).toEqual(catalogueRoles.slice(0, 4).map(([, name]) => name).concat('Future role', catalogueRoles.slice(4).map(([, name]) => name)))
+    for (const [role, name] of catalogueRoles) {
+      await overview.locator('.entity-list-table-row').filter({ has: page.getByRole('rowheader', { name, exact: true }) }).click()
+      expect(await overview.locator('lv-drawer').textContent()).toContain(`${role}.read`)
+    }
+  } finally { await page.close() }
+})
+
+test('all eight roles can still be granted with exact commands and a selected specialist is disclosed', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await seedRoleCatalogue(page)
+    for (const [role] of catalogueRoles) {
+      await page.evaluate((initialRole) => {
+        document.querySelector('lv-role-grant-dialog')?.remove()
+        const dialog = document.createElement('lv-role-grant-dialog') as any
+        Object.assign(dialog, { open: true, subjectType: 'principal', subjectId: 'person-1', subjectName: 'Alex', initialRole })
+        dialog.addEventListener('lv-access-admin-command', (event: CustomEvent) => { (window as any).__roleCommand = event.detail })
+        document.body.append(dialog)
+      }, role)
+      const dialog = page.locator('body > lv-role-grant-dialog')
+      const radio = dialog.locator(`input[value="${role}"]`)
+      await radio.waitFor({ state: 'visible' })
+      expect(await radio.isChecked()).toBe(true)
+      await dialog.getByRole('button', { name: 'Grant access', exact: true }).click()
+      expect(await page.evaluate(() => (window as any).__roleCommand)).toEqual({ action: 'grant_role', subjectType: 'principal', subjectId: 'person-1', role, expectedRevision: 7 })
+    }
+    await page.evaluate(() => {
+      const dialog = document.querySelector('body > lv-role-grant-dialog') as any
+      dialog.remove()
+      const next = document.createElement('lv-role-grant-dialog') as any
+      Object.assign(next, { open: true, subjectType: 'principal', subjectId: 'person-1', subjectName: 'Alex' })
+      document.body.append(next)
+    })
+    const dialog = page.locator('body > lv-role-grant-dialog')
+    expect(await dialog.locator('input[type="radio"]:visible').count()).toBe(4)
+    await dialog.locator('details.role-specialists > summary').click()
+    await dialog.locator('input[value="release_approver"]').check()
+    expect(await dialog.locator('input[value="release_approver"]').isChecked()).toBe(true)
+    await dialog.locator('.role-option-card').filter({ has: page.locator('input[value="release_approver"]') }).locator('summary').click()
+    expect(await dialog.getByText('release_approver.read', { exact: true }).isVisible()).toBe(true)
+  } finally { await page.close() }
+})

@@ -1,0 +1,46 @@
+visuals:
+  - id: unrelated-trend
+    title: Revenue by month
+    type: area
+    query:
+      type: aggregate
+      dimensions:
+        - dimension: purchase_date
+          grain: month
+          alias: purchase_month
+      metrics:
+        - order_count
+      sort:
+        - field: purchase_month
+          direction: asc
+      limit: 30
+    presentation:
+      type: cartesian
+  - id: total-revenue
+    title: Total revenue
+    type: kpi
+    query:
+      type: aggregate
+      dimensions: []
+      metrics:
+        - revenue
+    presentation:
+      type: kpi
+      displayUnits: auto
+  - id: revenue-by-month
+    title: Revenue across months
+    type: area
+    query:
+      type: aggregate
+      dimensions:
+        - dimension: purchase_date
+          grain: month
+          alias: purchase_month
+      metrics:
+        - revenue
+      sort:
+        - field: purchase_month
+          direction: asc
+      limit: 12
+    presentation:
+      type: cartesian
