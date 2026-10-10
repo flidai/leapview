@@ -13,7 +13,8 @@ const exactFields = (value, fields) => object(value) && Object.keys(value).sort(
 const bounded = (value, maximum) => typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maximum && value.trim() === value && !/[\x00\r\n\t]/.test(value);
 
 export function validatePrivateInput(input) {
-  require(exactFields(input, ['intent', 'operationDigest', 'loginEmail', 'adminPassword', 'apiKey']));
+  require(exactFields(input, ['intent', 'operationDigest', 'candidateRevision', 'loginEmail', 'adminPassword', 'apiKey']));
+  require(typeof input.candidateRevision === 'string' && /^[0-9a-f]{40}$/.test(input.candidateRevision));
   const intent = input.intent;
   require(exactFields(intent, ['reference', 'transitionVersion', 'fileDigest', 'installationId', 'instanceId', 'customerOwnerId', 'expectedRevision', 'actorId', 'provider', 'providerAddress']));
   require(digest.test(input.operationDigest) && digest.test(intent.fileDigest));
@@ -44,9 +45,11 @@ function settingsMatch(details, settings) {
 async function identity(client, input) {
   const me = await client.get('/api/v1/me');
   const instance = await client.get('/api/v1/instance/system');
-  require(me.status === 200 && me.body?.id === input.intent.actorId && me.body?.kind === 'user' &&
+  require(me.status === 200 && me.body?.id === input.intent.actorId && me.body?.sidebarPrincipalId === input.intent.actorId &&
+    me.body?.identitySource === 'local' && me.body?.hasLocalPassword === true &&
     me.body?.email?.toLowerCase() === input.loginEmail.toLowerCase());
-  require(instance.status === 200 && instance.body?.instanceId === input.intent.instanceId && instance.body?.canonicalOrigin === origin);
+  require(instance.status === 200 && instance.body?.instanceId === input.intent.instanceId && instance.body?.canonicalOrigin === origin &&
+    instance.body?.build?.revision === input.candidateRevision && instance.body?.build?.dirty === false);
 }
 
 async function current(client, input, allowCommitted = false) {
@@ -115,31 +118,109 @@ function requestID() {
 }
 
 export function browserClient(page) {
+  const sections = { '/api/v1/me': 'profile', '/api/v1/instance/system': 'system', '/api/v1/agent/config': 'agent' };
   async function request(method, path, data, etag) {
-    const result = await page.evaluate(async ({ method, path, data, etag, requestID }) => {
+    require(method === 'GET' ? Object.hasOwn(sections, path) : path === '/api/v1/agent/config');
+    const section = method === 'GET' ? sections[path] : undefined;
+    const result = await page.evaluate(async ({ method, section, data, etag, requestID }) => {
+      const reject = () => { throw new Error('Private response rejected.'); };
+      const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+      const text = value => typeof value === 'string' && value.length > 0;
       const token = document.querySelector('meta[name="csrf-token"]')?.content?.trim();
       if (method !== 'GET' && !token) throw new Error('Private request rejected.');
-      const response = await fetch(path, { method, credentials: 'same-origin', redirect: 'error', cache: 'no-store',
-        headers: { Accept: 'application/json', ...(method === 'GET' ? {} : { 'Content-Type': 'application/json',
-          'X-CSRF-Token': token, 'If-Match': etag, 'X-LeapView-Operation-ID': 'updateAgentConfig', 'X-Request-ID': requestID }), },
-        ...(data ? { body: JSON.stringify(data) } : {}), signal: AbortSignal.timeout(120000) });
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('Private response rejected.');
-      let size = 0;
-      const decoder = new TextDecoder();
-      let raw = '';
+      const controller = new AbortController();
+      let expire;
+      const expired = new Promise(resolve => { expire = resolve; });
+      const timer = setTimeout(() => { controller.abort(); expire(); }, method === 'GET' ? 15000 : 120000);
+      let reader;
       try {
+        const response = await fetch(method === 'GET' ? `/updates?route=admin&section=${section}` : '/admin/agent/config',
+          { method, credentials: 'same-origin', redirect: 'error', cache: 'no-store',
+            headers: { Accept: method === 'GET' ? 'text/event-stream' : 'application/json',
+              ...(method === 'GET' ? {} : { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-transform', 'X-CSRF-Token': token,
+                'If-Match': etag, 'X-LeapView-Operation-ID': 'updateAgentConfig', 'X-Request-ID': requestID }) },
+            ...(method === 'GET' ? {} : { body: JSON.stringify({ adminAgentCommand: data }) }), signal: controller.signal });
+        reader = response.body?.getReader();
+        if (!reader) reject();
+        if (method === 'GET' && response.status !== 200) return { status: response.status, body: {} };
+        if (method === 'GET' && response.headers.get('Content-Type')?.split(';')[0].trim() !== 'text/event-stream') reject();
+        let size = 0;
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        let raw = '';
+        function project(event) {
+          const lines = event.split('\n');
+          const events = lines.filter(line => line.startsWith('event:')).map(line => line.slice(6).trim());
+          if (events.length === 0) return;
+          if (events.length !== 1) reject();
+          if (events[0] !== 'datastar-patch-signals') return;
+          const signals = lines.filter(line => line.startsWith('data: signals '));
+          if (signals.length !== 1) reject();
+          const patch = JSON.parse(signals[0].slice(14));
+          if (!object(patch) || patch.page?.kind !== 'admin' || patch.page?.active !== section || patch.runtime?.kind !== 'admin') reject();
+          if (section === 'profile') {
+            const profile = patch.personalSettings?.profile;
+            const sidebarPrincipalId = patch.chrome?.sidebar?.principalId;
+            if (patch.personalSettings?.active !== 'profile' || !object(profile) || !text(profile.id) || !text(profile.email) ||
+                !text(sidebarPrincipalId) || !text(profile.identitySource) || typeof profile.hasLocalPassword !== 'boolean') reject();
+            return { status: 200, body: { id: profile.id, email: profile.email, sidebarPrincipalId,
+              identitySource: profile.identitySource, hasLocalPassword: profile.hasLocalPassword } };
+          }
+          if (section === 'system') {
+            const system = patch.productSettings?.system;
+            if (patch.productSettings?.active !== 'system' || !object(system) || !text(system.instanceId) || !text(system.canonicalOrigin) ||
+                !object(system.build) || !text(system.build.revision) || typeof system.build.dirty !== 'boolean' || typeof system.build.development !== 'boolean') reject();
+            return { status: 200, body: { instanceId: system.instanceId, canonicalOrigin: system.canonicalOrigin,
+              build: { revision: system.build.revision, dirty: system.build.dirty, development: system.build.development } } };
+          }
+          const agent = patch.page.agent;
+          if (!object(agent) || !text(agent.revision) || agent.revision.length > 1024 ||
+              !Number.isSafeInteger(agent.configurationRevision) || typeof agent.configurationAvailable !== 'boolean' ||
+              typeof agent.adminManaged !== 'boolean' || typeof agent.configured !== 'boolean' ||
+              typeof agent.credentialConfigured !== 'boolean' || typeof agent.enabled !== 'boolean' || !text(agent.status)) reject();
+          return { status: 200, etag: agent.revision, body: {
+            enabled: agent.enabled, model: agent.model, baseUrl: agent.baseUrl, apiMode: agent.apiMode,
+            reasoningEffort: agent.reasoningEffort, revision: agent.revision, configurationRevision: agent.configurationRevision,
+            adminManaged: agent.adminManaged, configurationAvailable: agent.configurationAvailable,
+            configured: agent.configured, credentialConfigured: agent.credentialConfigured,
+            status: agent.status, credentialVersionId: agent.credentialVersionId,
+          } };
+        }
         while (true) {
           const chunk = await reader.read();
-          if (chunk.done) break;
+          if (chunk.done) {
+            if (method === 'GET') reject();
+            break;
+          }
           size += chunk.value.byteLength;
-          if (size > 1048576) throw new Error('Private response rejected.');
+          if (size > 1048576) reject();
           raw += decoder.decode(chunk.value, { stream: true });
+          if (method === 'GET') {
+            // Normalize complete CRLF pairs only; a split trailing CR stays
+            // buffered until the next chunk arrives.
+            raw = raw.replace(/\r\n/g, '\n');
+            let boundary;
+            while ((boundary = raw.indexOf('\n\n')) >= 0) {
+              const event = raw.slice(0, boundary); raw = raw.slice(boundary + 2);
+              const result = project(event);
+              if (result) return result;
+            }
+          }
         }
         raw += decoder.decode();
         return { status: response.status, etag: response.headers.get('ETag'), body: JSON.parse(raw) };
-      } finally { await reader.cancel(); }
-    }, { method, path, data, etag, requestID: requestID() });
+      } finally {
+        controller.abort();
+        try {
+          if (reader) {
+            const cancelled = reader.cancel().then(() => true, error => {
+              if (error?.name !== 'AbortError') reject();
+              return true;
+            });
+            if (!await Promise.race([cancelled, expired.then(() => false)])) reject();
+          }
+        } finally { reader?.releaseLock(); clearTimeout(timer); }
+      }
+    }, { method, section, data, etag, requestID: requestID() });
     return result;
   }
   return { get: path => request('GET', path), patch: (path, body, etag) => request('PATCH', path, body, etag) };
@@ -160,6 +241,7 @@ function canonicalURL(value) {
 export async function createPrivateBrowserContext(browser) {
   const context = await browser.newContext({ serviceWorkers: 'block' });
   await context.route('**/*', route => canonicalURL(route.request().url()) ? route.continue() : route.abort());
+  await context.routeWebSocket('**/*', socket => socket.close());
   return context;
 }
 

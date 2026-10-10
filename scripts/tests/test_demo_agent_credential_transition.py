@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import demo_upgrade_remote as remote
@@ -69,6 +70,23 @@ class FakeProcess:
 
 
 class CredentialDriverCleanupTests(unittest.TestCase):
+    def test_private_export_keeps_immutable_candidate_revision_and_direct_child_pipe(self):
+        driver = object.__new__(transport.AgentCredentialDriver)
+        driver.ssh = ['ssh', 'fixture-host']
+        driver.helper = '/private/helper'
+        driver.image = IMAGE
+        driver.revision = REVISION
+        driver.request_path = '/private/request'
+        driver.process = FakeProcess([])
+        receipts = []
+        driver.receipt = receipts.append
+        with patch.object(transport.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as export:
+            driver.test()
+        export.assert_called_once_with(['ssh', 'fixture-host', 'python3', '/private/helper',
+                                      'agent-export', IMAGE, REVISION, '/private/request'],
+                                     stdout=driver.process.stdin, stderr=transport.subprocess.DEVNULL, timeout=30)
+        self.assertEqual(receipts, ['TEST_PASSED'])
+
     def test_broken_stdin_does_not_skip_process_and_tunnel_shutdown(self):
         events = []
         class BrokenInput:

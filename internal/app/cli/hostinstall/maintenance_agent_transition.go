@@ -141,8 +141,11 @@ func readAgentTransition(root, reference string) (AgentTransitionFile, AgentCred
 	return file, intent, nil
 }
 
-func agentTransitionOutput(file AgentTransitionFile, intent AgentCredentialTransition, operation string, stdout io.Writer) error {
+func agentTransitionOutput(file AgentTransitionFile, intent AgentCredentialTransition, operation, candidateRevision string, stdout io.Writer) error {
 	// Dedicated private IPC only: this command is wired directly to the browser
 	// child's stdin and must never be run with a terminal or artifact writer.
-	return json.NewEncoder(stdout).Encode(map[string]any{"intent": intent, "operationDigest": operation, "loginEmail": file.LoginEmail, "adminPassword": file.AdminPassword, "apiKey": file.APIKey})
+	if !sourceRevisionPattern.MatchString(candidateRevision) {
+		return errAgentTransition
+	}
+	return json.NewEncoder(stdout).Encode(map[string]any{"intent": intent, "operationDigest": operation, "candidateRevision": candidateRevision, "loginEmail": file.LoginEmail, "adminPassword": file.AdminPassword, "apiKey": file.APIKey})
 }

@@ -1,12 +1,42 @@
 package hostinstall
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestAgentTransitionExportBindsCandidateSourceWithoutChangingCustody(t *testing.T) {
+	root, intent := agentTransitionFixture(t)
+	file, err := readBoundAgentTransition(root, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := strings.Repeat("d", 40)
+	var output bytes.Buffer
+	if err := agentTransitionOutput(file, intent, "sha256:"+strings.Repeat("a", 64), revision, &output); err != nil {
+		t.Fatal(err)
+	}
+	var exported struct {
+		CandidateRevision string                    `json:"candidateRevision"`
+		Intent            AgentCredentialTransition `json:"intent"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &exported); err != nil || exported.CandidateRevision != revision || exported.Intent != intent {
+		t.Fatal("private export did not bind the candidate source and original intent")
+	}
+	if _, err := readBoundAgentTransition(root, intent); err != nil {
+		t.Fatal("export changed the custodian-owned file")
+	}
+	for _, invalid := range []string{"", "main", strings.Repeat("D", 40)} {
+		output.Reset()
+		if err := agentTransitionOutput(file, intent, "sha256:"+strings.Repeat("a", 64), invalid, &output); err == nil || output.Len() != 0 {
+			t.Fatal("invalid candidate source entered private export")
+		}
+	}
+}
 
 func agentTransitionFixture(t *testing.T) (string, AgentCredentialTransition) {
 	t.Helper()

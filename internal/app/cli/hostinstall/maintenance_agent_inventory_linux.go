@@ -124,5 +124,5 @@ func runAgentTransitionCommand(ctx context.Context, action string, r NativeReque
 	if err != nil {
 		return err
 	}
-	return agentTransitionOutput(file, *r.AgentCredentialTransition, id.ArtifactAdmissionDigest, stdout)
+	return agentTransitionOutput(file, *r.AgentCredentialTransition, id.ArtifactAdmissionDigest, r.CandidateRevision, stdout)
 }
