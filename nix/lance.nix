@@ -17,26 +17,32 @@ let
     hash = "sha256-aMZt44sNjyUPeD5QRzVbldHighwfK3AZ0XYcWtZSRoA=";
   };
   lockedCargoDeps = rustPlatform.importCargoLock { lockFile = ./lance-Cargo.lock; };
-  patchedCargoDeps = pkgs.runCommand "leapview-lance-patched-cargo-vendor" {
-    nativeBuildInputs = [ pkgs.python3 pkgs.patch ];
-  } ''
-    cp -R ${lockedCargoDeps} "$out"
-    chmod u+w "$out"
-    # cargoSetupHook copies this renamed vendor output into its build tree.
-    # Let that hook bind the actual copy path instead of the old output name.
-    chmod u+w "$out/.cargo" "$out/.cargo/config.toml"
-    substituteInPlace "$out/.cargo/config.toml" \
-      --replace-fail 'directory = "cargo-vendor-dir"' 'directory = "@vendor@"'
-    # Cargo's locked vendor directory contains immutable crate symlinks. Copy
-    # only the two patched crates, retaining every other exact locked input.
-    for version in 0.37.5 0.38.4; do
-      crate="quick-xml-$version"
-      rm "$out/$crate"
-      cp -RL "${lockedCargoDeps}/$crate" "$out/$crate"
-      chmod -R u+w "$out/$crate"
-    done
-    python3 ${./.}/apply-quick-xml-backports.py "$out" --patch-command ${pkgs.patch}/bin/patch
-  '';
+  patchedCargoDeps =
+    pkgs.runCommand "leapview-lance-patched-cargo-vendor"
+      {
+        nativeBuildInputs = [
+          pkgs.python3
+          pkgs.patch
+        ];
+      }
+      ''
+        cp -R ${lockedCargoDeps} "$out"
+        chmod u+w "$out"
+        # cargoSetupHook copies this renamed vendor output into its build tree.
+        # Let that hook bind the actual copy path instead of the old output name.
+        chmod u+w "$out/.cargo" "$out/.cargo/config.toml"
+        substituteInPlace "$out/.cargo/config.toml" \
+          --replace-fail 'directory = "cargo-vendor-dir"' 'directory = "@vendor@"'
+        # Cargo's locked vendor directory contains immutable crate symlinks. Copy
+        # only the two patched crates, retaining every other exact locked input.
+        for version in 0.37.5 0.38.4; do
+          crate="quick-xml-$version"
+          rm "$out/$crate"
+          cp -RL "${lockedCargoDeps}/$crate" "$out/$crate"
+          chmod -R u+w "$out/$crate"
+        done
+        python3 ${./.}/apply-quick-xml-backports.py "$out" --patch-command ${pkgs.patch}/bin/patch
+      '';
   rust =
     assert rustPlatform.rust.rustc.version == "1.98.1";
     assert rustPlatform.rust.cargo.version == "1.98.1";
@@ -48,7 +54,11 @@ let
       postPatch = ''
         cp ${./lance-Cargo.lock} Cargo.lock
       '';
-      nativeBuildInputs = [ pkgs.protobuf pkgs.cmake pkgs.perl ];
+      nativeBuildInputs = [
+        pkgs.protobuf
+        pkgs.cmake
+        pkgs.perl
+      ];
       PROTOC = "${pkgs.protobuf}/bin/protoc";
       # Run upstream session/cache and dataset-write FFI tests; the consuming
       # DuckDB derivation also verifies the actual static extension registration.
@@ -101,10 +111,10 @@ assert pkgs.lib.hasInfix ''SourcePatchSHA256: "${patchSHA256}"'' registry;
     source = path.read_text()
     start = source.index("# Build and link Rust staticlib")
     end = source.index("target_link_libraries(", start)
-    source = source[:start] + '''set(RUST_DEBUG_LIB "${rust}/lib/liblance_duckdb_ffi.a")
+    source = source[:start] + """set(RUST_DEBUG_LIB "${rust}/lib/liblance_duckdb_ffi.a")
     set(RUST_RELEASE_LIB "${rust}/lib/liblance_duckdb_ffi.a")
     add_custom_target(lance_duckdb_ffi_build)
-    ''' + source[end:]
+    """ + source[end:]
     path.write_text(source)
     PY
   '';
