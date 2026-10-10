@@ -27,11 +27,12 @@ incorrect run/source/image identity and unsuccessful reports. It cannot write
 the accepted `.quality/performance-reference.json` and does not invent approval.
 
 Acceptance is an explicit PR adding or changing that reference, with the
-calibration and qualification evidence attached. The required PR CI gate runs
-the review helper from trusted main, not from the candidate. An independent
-human repository collaborator must approve the current PR head. Ordinary
-checking does not promote or overwrite references. Candidate enforcement edits,
-renames, build inputs and policy changes also require that review.
+calibration and qualification evidence attached. GitHub's normal branch-protection
+rules govern PR approval and merging. The required CI gate validates immutable
+reference evidence using helpers from trusted main; it does not query reviews or
+require a new approval after each commit. Ordinary checking does not promote or
+overwrite references. Candidate enforcement edits, renames, build inputs and
+policy changes follow the same normal PR approval rules.
 
 To admit an accepted reference for a future candidate:
 
