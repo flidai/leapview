@@ -21,20 +21,21 @@ import (
 // and occurrence are read from their durable authorities, never accepted as
 // operator-provided substitutes. Normal publication authority is unchanged.
 type ManagedConfig struct {
-	Enrollment    ManagedEnrollmentReceipt
-	RecoverySetID string
-	OccurrenceID  string
-	InstanceHome  string
-	Artifact      compatibility.ReleaseIdentity
-	Credentials   ManagedCredentials
-	Roles         RuntimeRoles
-	Postgres      PGBackRestConfig
-	Readback      PGNativeReadbackConfig
-	Roots         []ResticConfig
-	Closure       metadata.NativeSnapshotClosureEvidence
-	PrimaryFence  providerrestore.PrimaryFenceSSHConfig
-	EvidenceRoot  string
-	SecretRoot    string
+	PostgresProvider string
+	Enrollment       ManagedEnrollmentReceipt
+	RecoverySetID    string
+	OccurrenceID     string
+	InstanceHome     string
+	Artifact         compatibility.ReleaseIdentity
+	Credentials      ManagedCredentials
+	Roles            RuntimeRoles
+	Postgres         PGBackRestConfig
+	Readback         PGNativeReadbackConfig
+	Roots            []ResticConfig
+	Closure          metadata.NativeSnapshotClosureEvidence
+	PrimaryFence     providerrestore.PrimaryFenceSSHConfig
+	EvidenceRoot     string
+	SecretRoot       string
 }
 
 type ManagedAuthorities struct {
@@ -105,15 +106,7 @@ func prepareManagedComposition(ctx context.Context, config ManagedConfig, author
 	if len(config.Postgres.Points) == 0 {
 		config.Postgres.Points = set.CanonicalPoints()
 	}
-	callback, err := NewPGNativeReadback(config.Readback)
-	if err != nil {
-		return nil, err
-	}
-	if config.Postgres.TargetID != set.Delivery.TargetID || config.Postgres.RecoverySetID != set.ID || !samePGPoints(config.Postgres.Points, set.ClusterPoints) || config.Postgres.Frontier != config.Readback.Frontier || config.Postgres.PGBackRest != config.Readback.PGBackRest || config.Postgres.ConfigFile != config.Readback.ProviderConfigFile || config.Postgres.ConfigDigest != config.Readback.ProviderConfigDigest {
-		return nil, errors.New("managed PostgreSQL adapters must share the exact retained frontier/configuration")
-	}
-	config.Postgres.Readback = callback
-	postgres, err := NewPGBackRest(config.Postgres)
+	postgres, err := managedPostgresProvider(config, set)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +181,7 @@ func managedPostgresEndpoints(credentials ManagedCredentials, set recoveryset.Re
 type managedComponents struct {
 	set          recoveryset.RecoverySet
 	occurrenceID string
-	postgres     *PGBackRest
+	postgres     providerrestore.DatabaseProvider
 	roots        []*Restic
 	handoff      providerrestore.ReplacementHandoff
 	secretStore  ManagedSecretStore
@@ -257,4 +250,25 @@ func (component *managedComponents) CreateHandoff(ctx context.Context, request p
 	handoff := component.handoff
 	handoff.AvailableAt = time.Now().UTC()
 	return handoff, nil
+}
+
+// The installed module owns its provider configuration and PostgreSQL service;
+// the default adapter preserves the existing confined caller-owned staging path.
+func managedPostgresProvider(config ManagedConfig, set recoveryset.RecoverySet) (providerrestore.DatabaseProvider, error) {
+	switch config.PostgresProvider {
+	case "module-owned":
+		return newModulePostgres(config, set)
+	case "":
+		callback, err := NewPGNativeReadback(config.Readback)
+		if err != nil {
+			return nil, err
+		}
+		if config.Postgres.TargetID != set.Delivery.TargetID || config.Postgres.RecoverySetID != set.ID || !samePGPoints(config.Postgres.Points, set.ClusterPoints) || config.Postgres.Frontier != config.Readback.Frontier || config.Postgres.PGBackRest != config.Readback.PGBackRest || config.Postgres.ConfigFile != config.Readback.ProviderConfigFile || config.Postgres.ConfigDigest != config.Readback.ProviderConfigDigest {
+			return nil, errors.New("managed PostgreSQL adapters must share the exact retained frontier/configuration")
+		}
+		config.Postgres.Readback = callback
+		return NewPGBackRest(config.Postgres)
+	default:
+		return nil, errors.New("unsupported managed PostgreSQL provider")
+	}
 }

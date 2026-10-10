@@ -15,6 +15,11 @@ func managedFileOwned(info os.FileInfo) bool {
 	return ok && (stat.Uid == 0 || int(stat.Uid) == os.Geteuid())
 }
 
+func managedRootOwned(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == 0 && (info.IsDir() || stat.Nlink == 1)
+}
+
 func configureRestoreProcess(command *exec.Cmd) error {
 	// Start the tool in a new session directly, without a forked setsid waiter.
 	// Its SFTP terminal handling cannot change the controller's foreground group.

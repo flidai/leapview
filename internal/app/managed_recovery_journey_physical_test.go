@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -29,7 +30,13 @@ import (
 // Copy the actual publication's physical cluster, then archive and restore it
 // with the managed provider. The source uses the pinned conformance container;
 // every recovery operation uses the explicitly supplied locked native tools.
-func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney, native managedrecovery.NativePostgresReadback) {
+type managedJourneyRestoredCluster struct {
+	directory, pgbin, pgbackrest, providerFile, caFile, certFile, keyFile string
+	frontier                                                              managedrecovery.PGFrontier
+	native                                                                managedrecovery.NativePostgresReadback
+}
+
+func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney, native managedrecovery.NativePostgresReadback) managedJourneyRestoredCluster {
 	pgbin, pgbackrest, bwrap := os.Getenv("LEAPVIEW_TEST_MANAGED_POSTGRES_BIN"), os.Getenv("LEAPVIEW_TEST_MANAGED_PGBACKREST"), os.Getenv("LEAPVIEW_TEST_MANAGED_BWRAP")
 	if pgbin == "" || pgbackrest == "" || bwrap == "" {
 		t.Skip("explicit locked PostgreSQL, pgBackRest and confinement tools required")
@@ -92,8 +99,14 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 		require.Equal(t, "postgres-system-id:"+frontier.SystemID, native.Set.ClusterPoints[index].ClusterIdentity, "physical backup must preserve the original system identity")
 		native.Set.ClusterPoints[index].RecoveryIdentity = identity
 	}
-	ca, cert, key := managedJourneyCertificates(t)
+	endpoint, err := url.Parse(f.config.PostgresControlURL)
+	require.NoError(t, err)
+	privateIP := net.ParseIP(endpoint.Hostname())
+	require.NotNil(t, privateIP, "production fixture must retain its admitted private endpoint")
+	ca, cert, key := managedJourneyCertificates(t, privateIP)
 	certFile, keyFile := filepath.Join(base, "server.crt"), filepath.Join(base, "server.key")
+	caFile := filepath.Join(base, "ca.crt")
+	require.NoError(t, os.WriteFile(caFile, ca, 0600))
 	require.NoError(t, os.WriteFile(certFile, cert, 0600))
 	require.NoError(t, os.WriteFile(keyFile, key, 0600))
 	for _, target := range []*string{&native.ControlURL, &native.DuckLakeURL} {
@@ -116,6 +129,7 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 			require.NotEmpty(t, result.StateDigest)
 		}
 	}
+	return managedJourneyRestoredCluster{filepath.Join(base, "replacement"), pgbin, pgbackrest, providerFile, caFile, certFile, keyFile, frontier, native}
 }
 
 func managedJourneyDigest(value []byte) string {
@@ -123,7 +137,7 @@ func managedJourneyDigest(value []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func managedJourneyCertificates(t *testing.T) (ca, cert, key []byte) {
+func managedJourneyCertificates(t *testing.T, privateIPs ...net.IP) (ca, cert, key []byte) {
 	t.Helper()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -132,7 +146,7 @@ func managedJourneyCertificates(t *testing.T) (ca, cert, key []byte) {
 	require.NoError(t, err)
 	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	server := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"postgres.leapview.test"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	server := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"postgres.leapview.test"}, IPAddresses: privateIPs, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, server, caTemplate, &serverKey.PublicKey, caKey)
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)

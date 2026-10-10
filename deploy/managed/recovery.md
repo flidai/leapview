@@ -190,7 +190,205 @@ bounded to 64 KiB; the restore input is bounded to 16 MiB. Unknown fields,
 duplicate JSON keys and trailing documents are rejected. Keep private inputs
 and encrypted repository keys out of public evidence, PR descriptions and logs.
 
+## Bounded replacement-host qualification
+
+On the actual replacement, `leapviewctl host qualify-managed-recovery` uses the
+same strict private restore input, independent authority and concrete coordinator
+as `restore-managed`. Run it under the provisioned unprivileged recovery owner
+after initialization, exact source enrollment and explicit original fencing:
+
+```sh
+leapviewctl host qualify-managed-recovery \
+  --input /private/managed-recovery-restore.json \
+  --output /private/managed-recovery-preactivation.json
+```
+
+This is a fresh exercise: the authoritative set must remain prepared and its
+occurrence pending, unexpired and unattempted. PostgreSQL and every enrolled
+object destination must be absent, nonoverlapping canonical paths with existing
+private parents. The output must be a new private path outside restored provider
+state. The runner reads `/etc/machine-id` on the replacement, refuses the enrolled
+original machine identity, authenticates the independently enrolled PostgreSQL
+authority, and holds the actual instance-home lock throughout execution.
+
+The command measures a fresh coordinator restore, a completed retry which must
+return the identical retained report without another restore, and a separate
+fresh stopped-provider admission. Admission must bind the exact restored report,
+frontier, artifact, published validation and original-writer fence. Only success
+retains a bounded receipt with those public identities, a digest of replacement
+machine identity and stage durations; it includes no raw machine ID, credentials,
+provider paths or provider output. Both `activationQualified` and
+`fullManagedProfileQualified` remain false. These timings cover this command's
+restore/replay/admission interval; they do not measure end-to-end outage or RTO.
+
+Failure does not erase provider state, release the original fence, reset an
+attempted occurrence or authorize traffic. Inspect private retained state and use
+the existing `restore-managed` completed retry or `admit-managed-recovery` for
+recovery; do not remove destinations or recreate authority to obtain a passing
+receipt. Another fresh timed exercise requires a separately prepared and enrolled
+frontier with an unattempted occurrence and empty replacement destinations.
+
+This entrypoint supplies an executable preactivation milestone, not a completed
+protected two-host deployment qualification. A protected run still needs the
+actual enrolled original and replacement hosts, independent authority, pinned
+release/controller inputs, off-host encrypted backup access, exact provider
+frontier/manifests, explicit SSH/TLS trust and retained runtime credentials.
+The full D13 gate additionally requires installed deployment and activation,
+fresh-pool reconciliation of files/jobs/acknowledgments, replacement writes,
+fresh-pool rebuild and major maintenance with measured bounds. Unit fixtures and
+the component VM journey below do not establish those results.
+
+## Promoted local adoption with ingress closed
+
+After completed managed restore and preactivation qualification,
+`leapviewctl host adopt-managed-recovery` promotes the replacement PostgreSQL
+service and atomically imports the independent authority's exact published set,
+passed validation attempt and canonical evidence into restored control storage.
+It does not start the application, reconcile jobs/uploads or admit traffic.
+
+Provision the explicit unprivileged recovery owner and configure
+`leapview.database.recoveryOwner` on the replacement database host. The module
+grants only the fixed promotion helper and a dedicated receipt-read group, never
+`postgres` membership. Set `services.postgresql.dataDir` to the exact restored
+destination, already owned by the configured PostgreSQL service user with mode
+`0700` or the pinned module’s `0750`, owned by both the fixed `postgres` user
+and `postgres` group; writable group access and world access are rejected. The
+recovery owner remains outside that group. Restore ownership and cross-host file placement remain explicit site
+inputs. The helper rejects an unrelated destination, a live first-use cluster,
+another original/replacement machine, another system ID, linked or nondefault
+tablespaces, another frontier or another module generation. It neither moves nor
+chowns trees, rewrites rollback generations nor removes the original fence.
+
+Only the module's reviewed immutable configuration and pinned PostgreSQL and
+pgBackRest tools are used. Restored `postgresql.auto.conf` is replaced with
+bounded exact-target settings; preload settings and logical workers are disabled.
+PostgreSQL stays **loopback-only** throughout. The module's loopback HBA still
+requires SCRAM over TLS for control/DuckLake databases. The controller preserves
+the retained URLs' verified TLS names while dialing that same loopback service.
+Both retained runtime credentials and an explicit maintenance credential must
+authenticate. No endpoint/password or raw machine identity appears in receipts.
+
+Write a mode `0600` replacement input in an existing private directory:
+
+```json
+{
+  "schemaVersion": 1,
+  "maintenance": {
+    "urlFile": "/private/recovery/replacement-control-url",
+    "rootCaFile": "/private/recovery/retained-postgres-ca.pem",
+    "role": "explicit_control_maintenance_role",
+    "systemIdentifier": "exact_retained_source_system_identifier"
+  }
+}
+```
+
+The URL file contains a password-bearing `postgres://` URL with
+`sslmode=verify-full`, the same retained control database/server name/port and
+explicit maintenance role. CA bytes must equal the retained credential bundle.
+The role needs the existing control-repository mutation and PostgreSQL
+identity/settings read privileges; this command grants none.
+
+```sh
+leapviewctl host adopt-managed-recovery \
+  --input /private/recovery/managed-input.json \
+  --replacement /private/recovery/replacement-input.json \
+  --output /private/recovery/adoption-evidence.json
+```
+
+The controller holds the actual instance-home lock and freshly observes the
+original fence before/after promotion and inside the adoption transaction before
+commit. It revalidates completed restore evidence, the exact passed attempt and
+fence, native publication/catalog/keyring and every retained file manifest.
+Drift rolls back the imported metadata and leaves activation closed. Exact
+retries resume matching partial validation state or the same local publication.
+
+Before irreversible promotion, a private root-owned intent binds the request,
+module generation, data directory and actual paused replay LSN. PostgreSQL can
+pause at a record end beyond its configured target and forget its replay LSN
+after primary restart. The helper authenticates the configured target/pause,
+persists that observed replay position and verifies the new timeline history's
+exact fork point. A crash after promotion but before receipt publication resumes
+only from this authenticated intent and actual service ancestry. A changed
+generation, missing history or conflicting state requires operator investigation;
+an arbitrary already-promoted endpoint cannot qualify.
+
+Receipts always record `activationQualified: false` and
+`fullManagedProfileQualified: false`. Native atomic-storage, replay/promotion,
+crash/restart, actual module HBA/TLS and isolated UID/GID regression tests cover
+this source transition. They do not qualify installed two-host deployment. D13
+still requires protected host/provider inputs, application readiness,
+jobs/uploads/files reconciliation, fresh pool/catalog rebuild, replacement writes
+and the complete two-host maintenance journeys with retained measured evidence.
+
+## Module-owned PostgreSQL restore seam
+
+The unprivileged confined restore writes a recovery-owner-owned tree. Its
+validation envelope authenticates the selected catalog/publication and object
+manifests, not every PGDATA byte. Moving or chowning that tree into the
+PostgreSQL service would therefore widen the trust boundary, including any
+writer descriptors retained by the recovery owner.
+
+The replacement database module offers an explicit alternative:
+`leapview.database.recoveryRestore = true`, together with the provisioned
+`recoveryOwner`. It installs `leapview-postgres-restore` with only `fresh`,
+`restore`, `check`, `start-readback` and `stop-readback` actions. `fresh` checks the
+exact absent destination and stopped service without creating PGDATA or intent. The helper accepts a
+bounded strict request on stdin identifying the exact target, RecoverySet,
+frontier, occurrence, operation, backup set, source/replacement machines,
+PostgreSQL system ID, timeline, LSN and module data-directory digest. Paths,
+tools, provider configuration and credential files come exclusively from the
+reviewed module. The controller remains responsible for independently verifying
+the request's authoritative enrollment/frontier and fresh original fence.
+
+In this opt-in mode automatic PostgreSQL boot startup and backup jobs are
+disabled. A root materialization condition prevents upstream initdb from
+creating an unrelated cluster. The fixed helper restores directly as PostgreSQL
+into a new private staging directory, using the module's pgBackRest installation
+and root-owned retained credentials. It never imports a caller-owned tree or
+changes ownership of existing data. Root intent binds the staging inode, exact
+request, module generation and provider configuration before work begins;
+the provider supervisor retains the shared promotion lock across controller
+death. Existing unrelated PGDATA or service, changed credentials/generation,
+foreign retry and unpaused or changed replay fail closed. The helper replaces
+restored auto configuration with module-owned loopback-only recovery settings,
+checks native identity and replay, and stops the service before publishing its
+bounded root receipt. Temporary readback requires that exact completed receipt.
+
+`test:qualification:managed-replacement` runs the native pgBackRest/PITR and
+interruption regressions in the existing `managed-recovery` Nix shell. Module
+contracts cover opt-in owner permissions, boot suppression and the original
+fence. To select this installed path, set the private managed input’s
+`postgres.provider` to `module-owned`, retain its exact `frontier`, `destination`
+and `metadataSchema`, and omit caller tool/configuration and server TLS key
+fields. The default input continues to use the confined provider. Module-owned
+restore, completed retry, qualification and admission share the existing
+coordinator and independent authority. The recovery owner delegates PGDATA
+freshness to the fixed helper; object destinations remain private and disjoint.
+
+The adapter authenticates the root receipt against the current replacement,
+module generation, occurrence and backup/WAL frontier, starts only the private
+module service for retained TLS runtime readback, then stops and rechecks it.
+Published-set admission uses only `check`, so missing state cannot trigger a
+new physical restore. Cancellation and failed readback use bounded cleanup;
+changed receipts or incomplete cleanup cannot return successful evidence. The
+resulting stopped PostgreSQL is reachable by the existing promotion/adoption
+command without transferring recovery-owner data to the service owner.
+
+An actual installed separate-owner coordinator journey, independently retained
+fence/enrollment/credentials, application/job/upload reconciliation and measured
+full two-host recovery remain qualification inputs. These component tests and
+receipts establish neither application activation nor the full D13 profile.
+
 ## Qualification boundaries
+
+`task managed:hosts:postgres-promotion-test` runs the installed database module's
+fixed sudo promotion helper, actual systemd service, TLS/HBA, private receipt
+permissions and exact reboot retry in disposable guests. It restores an exact
+physical pgBackRest backup/WAL target and checks acknowledged rows before and
+after promotion. The managed scaffold's existing host job runs this component
+test. Its source is explicitly stopped, and its synthetic frontier and POSIX
+repository do not replace retained original fencing, the canonical coordinator,
+application reconciliation or the protected managed-profile gate.
 
 The existing NixOS boot fixture now includes an off-host component recovery
 journey after installed-host update and rollback. It retains an encrypted
@@ -222,6 +420,22 @@ subtests skip when these tools are absent;
 an ordinary test run alone is not native restore qualification. This journey
 proves the concrete provider/readback and enrollment components; the full
 coordinator's original-host fence remains a separate qualified boundary.
+
+`nix develop .#managed-recovery -c task test:qualification:managed-replacement`
+uses the locked pgBackRest, PostgreSQL, Restic and confinement tools to restore
+the real production publication into a separate local database process. It
+adopts the component test authority's exact published frontier through
+`AdoptPublishedTx`, moves restored files to their unchanged private fixture
+paths, and starts a fresh production application with maintenance admission
+closed. The bounded local HTTP exercise checks retained query results and
+serving identity across another application/pool restart, and compares the
+nonempty original publication and completed-job identities and rows. Missing
+adoption or the serving artifact prevents admission. Missing DuckLake data
+files fail retained manifest verification and the governed query; readiness
+checks sealed metadata and does not scan every data-file byte. The Nix development lane
+runs this component test with required providers; it does not simulate the
+installed promotion receipt or establish independent-host fencing, public
+traffic admission, or broad asynchronous job/upload reconciliation.
 
 The VM journey uses disposable test data and a copied encrypted POSIX repository;
 it does not establish production S3 retention, real application credential/key

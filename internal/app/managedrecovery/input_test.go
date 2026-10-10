@@ -63,3 +63,41 @@ func TestManagedInputRejectsRemoteUnknownAndUntrustedFiles(t *testing.T) {
 		t.Fatal("linked private input accepted")
 	}
 }
+
+func TestManagedInputModuleProviderRejectsCallerTools(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	_, closure, _ := managedClosureFixture(t)
+	input := ManagedInput{InstanceHome: root, SchemaVersion: 1, Profile: providerrestore.ManagedLocalProfile, RecoverySetID: "set", OccurrenceID: "occurrence", ValidationAttemptID: "validation", Validator: "operator", Publisher: "publisher", Closure: closure}
+	raw, _ := json.Marshal(input)
+	var document map[string]any
+	json.Unmarshal(raw, &document)
+	postgres := document["postgres"].(map[string]any)
+	postgres["provider"] = "module-owned"
+	path := filepath.Join(root, "input.json")
+	write := func() {
+		raw, _ := json.Marshal(document)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	if _, err := ReadManagedInput(path); err != nil {
+		t.Fatalf("module-owned selector rejected: %v", err)
+	}
+	for _, field := range []string{"postgres", "pgControlData", "pgBackRest", "bubblewrap", "configFile", "configDigest", "serverCertificateFile", "serverCertificateDigest", "serverKeyFile", "serverKeyDigest"} {
+		postgres[field] = "/caller/override"
+		write()
+		if _, err := ReadManagedInput(path); err == nil {
+			t.Fatalf("module-owned accepted caller field %s", field)
+		}
+		postgres[field] = ""
+	}
+	postgres["provider"] = "unknown"
+	write()
+	if _, err := ReadManagedInput(path); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+}

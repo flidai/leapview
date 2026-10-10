@@ -29,6 +29,38 @@ func RunManagedOccurrence(ctx context.Context, ledger ManagedExecutionLedger, id
 	return runManagedOccurrence(ctx, ledger, id, actor, 3*time.Minute, 30*time.Second, run, replay)
 }
 
+// ExecuteManagedRestore supplies the same concrete coordinator and completed
+// acknowledgement replay to the operator and qualification entrypoints.
+// Its caller must hold exclusive ownership of the enrolled instance home.
+func ExecuteManagedRestore(ctx context.Context, input ManagedInput, config ManagedConfig, authority ManagedAuthorities) (providerrestore.Report, error) {
+	report, _, err := executeManagedRestore(ctx, input, config, authority, nil)
+	return report, err
+}
+
+func executeManagedRestore(ctx context.Context, input ManagedInput, config ManagedConfig, authority ManagedAuthorities, beforeRestore func() error) (providerrestore.Report, bool, error) {
+	ledger, ok := authority.Ledger.(ManagedExecutionLedger)
+	if !ok || typednil.IsNil(ledger) {
+		return providerrestore.Report{}, false, errors.New("managed authority lacks exact execution capability")
+	}
+	started := false
+	report, err := RunManagedOccurrence(ctx, ledger, input.OccurrenceID, input.Validator, func(ctx context.Context, fence recovery.Fence) (providerrestore.Report, error) {
+		if beforeRestore != nil {
+			if err := beforeRestore(); err != nil {
+				return providerrestore.Report{}, err
+			}
+		}
+		started = true
+		coordinator, err := NewManaged(ctx, config, authority)
+		if err != nil {
+			return providerrestore.Report{}, err
+		}
+		return coordinator.Run(ctx, providerrestore.Request{OccurrenceID: input.OccurrenceID, Fence: fence, RecoverySetID: input.RecoverySetID, TargetID: config.Credentials.TargetID, ValidationAttemptID: input.ValidationAttemptID, Validator: input.Validator, Publisher: input.Publisher})
+	}, func(ctx context.Context) (providerrestore.Report, error) {
+		return ReplayManagedRecovery(ctx, config, authority)
+	})
+	return report, started, err
+}
+
 func runManagedOccurrence(ctx context.Context, ledger ManagedExecutionLedger, id, actor string, lease, interval time.Duration, run func(context.Context, recovery.Fence) (providerrestore.Report, error), replay func(context.Context) (providerrestore.Report, error)) (providerrestore.Report, error) {
 	if typednil.IsNil(ledger) || run == nil || interval <= 0 || lease <= interval {
 		return providerrestore.Report{}, errors.New("exact managed execution capability and bounded lease required")

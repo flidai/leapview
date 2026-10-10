@@ -22,6 +22,65 @@ type managedExecutionFixture struct {
 	renewed      chan struct{}
 }
 
+type managedRestoreExecutionLedger struct {
+	*admissionLedger
+	claimable bool
+	starts    int
+}
+
+func (l *managedRestoreExecutionLedger) ClaimExact(context.Context, string, recovery.ClaimInput) (recovery.Occurrence, bool, error) {
+	return l.occurrence, l.claimable, nil
+}
+
+func (l *managedRestoreExecutionLedger) Start(context.Context, string, recovery.Fence, time.Time) error {
+	l.starts++
+	return nil
+}
+
+func (l *managedRestoreExecutionLedger) Heartbeat(context.Context, string, recovery.Fence, time.Time, time.Duration) error {
+	return nil
+}
+
+func TestManagedRestoreExecutorPreservesCompletedRetryAdmissionFailure(t *testing.T) {
+	config, authority, _, completed := managedAdmissionFixture(t)
+	ledger := &managedRestoreExecutionLedger{admissionLedger: completed}
+	authority.Ledger = ledger
+	input := ManagedInput{OccurrenceID: config.OccurrenceID, Validator: "operator"}
+	// The fixture retains genuine report/credential authority but has no restored
+	// provider directories. A completed retry must reverify and refuse them;
+	// it must never route through a fresh restore to repair the missing state.
+	_, expected := ReplayManagedRecovery(t.Context(), config, authority)
+	if expected == nil {
+		t.Fatal("fixture unexpectedly admitted absent restored providers")
+	}
+	_, restored, err := executeManagedRestore(t.Context(), input, config, authority, func() error {
+		t.Fatal("completed retry invoked fresh-destination hook")
+		return nil
+	})
+	if err == nil || err.Error() != expected.Error() || restored || ledger.starts != 0 {
+		t.Fatalf("completed retry bypassed admission: restored=%v starts=%d err=%v", restored, ledger.starts, err)
+	}
+	if _, err := ExecuteManagedRestore(t.Context(), input, config, authority); err == nil || err.Error() != expected.Error() || ledger.starts != 0 {
+		t.Fatalf("ordinary restore entrypoint changed completed retry: starts=%d err=%v", ledger.starts, err)
+	}
+}
+
+func TestManagedRestoreExecutorRechecksDestinationsInsideExactClaim(t *testing.T) {
+	ledger := &managedRestoreExecutionLedger{admissionLedger: &admissionLedger{occurrence: recovery.Occurrence{ID: "occurrence", Status: recovery.StatusPending}}, claimable: true}
+	denied := errors.New("destination changed")
+	checked := false
+	_, restored, err := executeManagedRestore(t.Context(), ManagedInput{OccurrenceID: "occurrence", Validator: "operator"}, ManagedConfig{}, ManagedAuthorities{Ledger: ledger}, func() error {
+		checked = true
+		if ledger.starts != 1 {
+			t.Fatal("destination recheck preceded exact claim/start")
+		}
+		return denied
+	})
+	if !errors.Is(err, denied) || !checked || restored {
+		t.Fatalf("changed destination reached concrete coordinator: checked=%v restored=%v err=%v", checked, restored, err)
+	}
+}
+
 func (f *managedExecutionFixture) ClaimExact(_ context.Context, id string, in recovery.ClaimInput) (recovery.Occurrence, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

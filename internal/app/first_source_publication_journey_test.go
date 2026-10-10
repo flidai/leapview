@@ -33,6 +33,10 @@ func TestFirstSourceProductionPublicationInterruptedCompletion(t *testing.T) {
 }
 
 func runFirstSourceProductionPublicationJourney(t *testing.T, interrupt bool) (*sourceCredentialHTTPJourney, string) {
+	return runFirstSourceProductionPublicationJourneyBeforeRestart(t, interrupt, nil)
+}
+
+func runFirstSourceProductionPublicationJourneyBeforeRestart(t *testing.T, interrupt bool, beforeRestart func(*sourceCredentialHTTPJourney)) (*sourceCredentialHTTPJourney, string) {
 	f := newSourceCredentialHTTPJourneyProfile(t, true)
 	token := f.bootstrapProject(t)
 	identity, err := f.graph.Access.CredentialForAPIToken(t.Context(), token)
@@ -138,6 +142,9 @@ func runFirstSourceProductionPublicationJourney(t *testing.T, interrupt bool) (*
 		return response.Code == http.StatusOK
 	}, time.Minute, 50*time.Millisecond, "committed publication must install its production runtime")
 	_ = f.querySource(t, token, "30")
+	if beforeRestart != nil {
+		beforeRestart(f)
+	}
 	f.restartWithoutEnvironment(t, true)
 	_ = f.querySource(t, token, "30")
 	return f, token

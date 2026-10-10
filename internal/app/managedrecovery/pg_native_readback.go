@@ -177,6 +177,8 @@ func (config PGNativeReadbackConfig) readback(ctx context.Context, cluster *PGSt
 	if err != nil {
 		return nil, err
 	}
+	var diagnostics postgresFailureOutput
+	command.Stderr = &diagnostics
 	if err := command.Start(); err != nil {
 		return nil, errors.New("confined PostgreSQL startup failed")
 	}
@@ -187,8 +189,10 @@ func (config PGNativeReadbackConfig) readback(ctx context.Context, cluster *PGSt
 		defer cancel()
 		stop := exec.CommandContext(cleanup, filepath.Join(filepath.Dir(config.Postgres), "pg_ctl"), "-D", cluster.Directory(), "-m", "fast", "-w", "stop")
 		stop.Env = []string{"PATH=/nonexistent", "LANG=C", "TZ=UTC"}
+		var shutdownDiagnostics postgresFailureOutput
+		stop.Stderr = &shutdownDiagnostics
 		if err := stop.Run(); err != nil {
-			resultErr = errors.Join(resultErr, errors.New("pinned PostgreSQL shutdown failed"))
+			resultErr = errors.Join(resultErr, postgresProcessFailure("pinned PostgreSQL shutdown failed", err, &shutdownDiagnostics))
 			_ = command.Cancel()
 		}
 		select {
@@ -219,7 +223,7 @@ func (config PGNativeReadbackConfig) readback(ctx context.Context, cluster *PGSt
 		select {
 		case err := <-done:
 			done <- err
-			return nil, errors.New("confined PostgreSQL stopped before readback")
+			return nil, postgresProcessFailure("confined PostgreSQL stopped before readback", err, &diagnostics)
 		default:
 		}
 		control, err = pgx.ConnectConfig(ctx, controlConfig)

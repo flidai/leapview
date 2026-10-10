@@ -274,6 +274,12 @@
           BUN_FEATURE_FLAG_NO_ORPHANS = "1";
         };
         runtime-security = runtimeSecurityShell system;
+        managed-recovery = self.devShells.${system}.default.overrideAttrs (_: {
+          LEAPVIEW_TEST_MANAGED_RESTIC = "${pkgs.restic}/bin/restic";
+          LEAPVIEW_TEST_MANAGED_POSTGRES_BIN = "${pkgs.postgresql_18}/bin";
+          LEAPVIEW_TEST_MANAGED_PGBACKREST = "${pkgs.pgbackrest}/bin/pgbackrest";
+          LEAPVIEW_TEST_MANAGED_BWRAP = "${pkgs.bubblewrap}/bin/bwrap";
+        });
       };
       devShells.aarch64-linux.runtime-security = runtimeSecurityShell "aarch64-linux";
       devShells.aarch64-linux.host-qualification = hostQualificationShell "aarch64-linux";

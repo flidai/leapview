@@ -666,6 +666,23 @@ class SSHGuest:
         return bytes(output)
 
 
+def _wait_for_docker_active(guest: SSHGuest, *, timeout: int) -> bytes:
+    # SSH can return before Docker's enabled service finishes booting. Observe
+    # automatic startup within the existing budget; never start the service here.
+    deadline = time.monotonic() + timeout
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            observation = guest.run("systemctl is-active docker", timeout=min(20, remaining))
+            if _one_line(observation, "Docker active state") == "active":
+                return observation
+        except HostGuestError:
+            pass
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(5, remaining))
+    raise HostGuestError("Docker did not become active after reboot within the startup budget")
+
+
 def _https_readiness_command() -> str:
     request = (
         "GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"
@@ -1266,12 +1283,22 @@ def _run_host_installer(guest: SSHGuest, evidence: Path, command: str, *, timeou
         "activate-generation": "activate deployment generation",
         "deployment-environment": "install deployment environment",
         "prepare-postgres-pool": "prepare production postgresql and delivery-pool bootstrap",
+        "bundled-postgres-material": "prepare persistent postgresql credentials and tls",
+        "bundled-postgres-start": "start bundled postgresql:",
+        "bundled-postgres-reconcile": "reconcile bundled postgresql roles, databases, and schema",
         "postgres-connections": "validate first-install postgresql connections",
         "pool-identity": "validate first-install physical-pool identity",
         "pool-evidence": "validate first-install physical-pool evidence",
         "pool-artifacts": "prepare first-install physical-pool artifacts",
         "pool-dry-run": "dry-run first-install physical-pool bootstrap",
         "initialize": "initialize leapview",
+        "initialize-image-pull": "initial image pull failed; initialization can be retried",
+        "initialize-config-validation": "configuration validation failed; initialization can be retried",
+        "initialize-compose-config": "compose configuration is invalid; initialization can be retried",
+        "initialize-credentials": "instance initialization did not deliver credentials",
+        "initialize-empty-credentials": "instance initialization returned empty credentials",
+        "initialize-invalid-credentials": "instance initialization returned invalid credentials",
+        "initialize-acknowledgement": "credentials were saved but acknowledgement failed",
         "pool-apply": "apply production delivery-pool bootstrap",
         "private-marker": "write private-bootstrap installation marker",
         "private-start": "start leapview in private first-install bootstrap",
@@ -1290,6 +1317,9 @@ def _run_host_installer(guest: SSHGuest, evidence: Path, command: str, *, timeou
         "docker-unavailable": "cannot connect to the docker daemon", "image-pull": "pull access denied",
         "csrf-key": "leapview_csrf_key", "agent-key": "leapview_agent_credential_key",
         "disk-full": "no space left on device", "deadline": "deadline exceeded",
+        "container-unhealthy": "is unhealthy",
+        "postgres-connection-closed": "server closed the connection unexpectedly",
+        "postgres-secret-unavailable": "required bundled postgresql secret is unavailable",
     }
     matched_causes = [key for key, phrase in causes.items() if phrase in text]
     if code in (124, 137):
@@ -1883,7 +1913,7 @@ def _install_and_collect(args) -> dict:
 
         pid1 = _one_line(_record(evidence, "postreboot-pid1.txt", guest.run("readlink /proc/1/exe")), "PID 1")
         docker_enabled = _one_line(_record(evidence, "docker-enabled.txt", guest.run("systemctl is-enabled docker")), "Docker enabled state")
-        docker_active = _one_line(_record(evidence, "docker-active.txt", guest.run("systemctl is-active docker")), "Docker active state")
+        docker_active = _one_line(_record(evidence, "docker-active.txt", _wait_for_docker_active(guest, timeout=args.startup_timeout)), "Docker active state")
         if docker_enabled != "enabled" or docker_active != "active" or "systemd" not in pid1:
             raise HostGuestError("systemd or Docker did not remain enabled and active after reboot")
 

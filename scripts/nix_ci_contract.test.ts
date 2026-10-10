@@ -34,6 +34,30 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('managed replacement qualification cannot silently omit native providers in hosted CI', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const taskName = 'test:qualification:managed-replacement'
+  expect(workflow.jobs.development.steps.some((step: any) =>
+    step.run === 'nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_replacement_ci.sh')).toBe(true)
+  expect(workflow.on.pull_request.paths).toContain('scripts/qualify_managed_replacement_ci.sh')
+  expect(readFileSync('scripts/qualify_managed_replacement_ci.sh', 'utf8')).toContain(`task ${taskName}`)
+  const task = parse(readFileSync('Taskfile.yml', 'utf8')).tasks[taskName]
+  expect(task.env.LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED).toBe('true')
+  expect(task.cmds).toContain("go test ./internal/app -run '^TestManagedRecoveryReplacementApplication$' -count=1 -timeout=10m -v")
+  expect(task.cmds).toContain('python3 -B -m unittest discover -s deploy/managed/nixos/tests -p postgres_restore_test.py')
+  const shell = readFileSync('flake.nix', 'utf8')
+  for (const [name, executable] of [
+    ['RESTIC', '${pkgs.restic}/bin/restic'],
+    ['POSTGRES_BIN', '${pkgs.postgresql_18}/bin'],
+    ['PGBACKREST', '${pkgs.pgbackrest}/bin/pgbackrest'],
+    ['BWRAP', '${pkgs.bubblewrap}/bin/bwrap'],
+  ]) {
+    const variable = `LEAPVIEW_TEST_MANAGED_${name}`
+    expect(shell).toContain(`${variable} = "${executable}";`)
+    expect(task.preconditions).toContain(`test -x "$${variable}${name === 'POSTGRES_BIN' ? '/pg_ctl' : ''}"`)
+  }
+})
+
 test('Nix source-generation inputs select their consumer builds', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   for (const input of ['scripts/generate_build_sources.sh', 'scripts/time_build_phase.sh']) {
