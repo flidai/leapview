@@ -133,7 +133,7 @@ export function testDocument(view = 'conversation', scenario: 'active' | 'new' =
     composer: { value: '', disabled: !enabled, placeholder: enabled ? 'Ask about dashboards, metrics, or models...' : 'Agent is not configured.' },
   }
   const submitCommand = scenario === 'new'
-    ? ` data-on:lv-chat-submit="$agent.composer.value = evt.detail.input; @post('/chats/turns')"`
+    ? ` data-on:lv-chat-submit="$agent.status.error = ''; $agent.composer.value = evt.detail.input; @post('/chats/turns')"`
     : ''
   return `
     <!doctype html>
@@ -147,7 +147,7 @@ export function testDocument(view = 'conversation', scenario: 'active' | 'new' =
         </style>
       </head>
       <body>
-        <main ${hydrated ? `data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}"` : ''}>
+        <main ${hydrated ? `data-signals="${escapeHTML(JSON.stringify({ page, agent, agentContext: { surface: 'chat', dashboardId: '', pageId: '', references: [] }, visuals: {}, tables: {} }))}"` : ''}>
           <lv-chat-page${submitCommand}></lv-chat-page>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>

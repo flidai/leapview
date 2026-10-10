@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
+import type { TableHierarchy } from './types'
 
 let server: Server
 let browser: Browser
@@ -191,3 +192,45 @@ test('table height grows to its allocation, shrinks with rows, and fits a new al
     expect(await page.evaluate(() => (window as any).__sizingEvents.at(-1).height)).toBe(220)
   } finally { await page.close() }
 })
+
+for (const hierarchy of [
+  { mode: 'levels', fields: ['label'], label: 'Part' },
+  { mode: 'parent_child', idField: 'id', parentField: 'parent', labelField: 'label' },
+  { mode: 'nested', childrenField: 'children', labelField: 'label', idField: 'id' },
+] satisfies TableHierarchy[]) {
+  test(`${hierarchy.mode} headers announce the active local sort across repeated keyboard changes`, async () => {
+    const page = await openFixture()
+    try {
+      await page.evaluate(async (hierarchy) => {
+        const table = (window as any).__mediaTable
+        const sort = { key: 'amount', direction: 'asc' }
+        const rows = [
+          { id: 'a', label: 'Alpha', amount: 10 },
+          { id: 'b', label: 'Bravo', amount: 20 },
+        ]
+        table.table = { ...table.table, type: 'matrix', hierarchy, sort,
+          availableRows: rows.length, cardinality: { kind: 'exact', value: rows.length },
+          columns: [{ key: 'label', label: 'Part', role: 'row_header' }, { key: 'amount', label: 'Amount', role: 'metric' }],
+          blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort, rows } },
+        }
+        await table.updateComplete
+      }, hierarchy)
+      const amount = page.getByRole('columnheader').filter({ has: page.locator('[data-column-key="amount"]') })
+      const part = page.getByRole('columnheader').filter({ has: page.locator('[data-column-key="__lv_hierarchy"]') })
+      const labels = page.locator('lv-report-table .hierarchy-label')
+      await browserExpect(amount).toHaveAttribute('aria-sort', 'ascending')
+      for (const direction of ['descending', 'ascending', 'descending']) {
+        await amount.getByRole('button', { name: 'Amount', exact: true }).press('Enter')
+        await browserExpect(amount).toHaveAttribute('aria-sort', direction)
+        await browserExpect(part).toHaveAttribute('aria-sort', 'none')
+        await browserExpect.poll(() => labels.allTextContents()).toEqual(direction === 'ascending' ? ['Alpha', 'Bravo'] : ['Bravo', 'Alpha'])
+      }
+      for (const direction of ['ascending', 'descending', 'ascending']) {
+        await part.getByRole('button', { name: 'Part', exact: true }).press('Space')
+        await browserExpect(part).toHaveAttribute('aria-sort', direction)
+        await browserExpect(amount).toHaveAttribute('aria-sort', 'none')
+        await browserExpect.poll(() => labels.allTextContents()).toEqual(direction === 'ascending' ? ['Alpha', 'Bravo'] : ['Bravo', 'Alpha'])
+      }
+    } finally { await page.close() }
+  })
+}

@@ -1123,13 +1123,15 @@ test('side agent exposes dashboard-authored visuals in the individual side view'
  } finally {await page.close()}
 })
 
-test('submission distinguishes builder authoring from expanded main chat', async () => {
+test('submission distinguishes selected builder authoring from expanded main chat', async () => {
  const page = await fixture.browser.newPage()
  try {
   await page.goto(fixture.baseURL)
   const chat = page.locator('lv-chat-page')
   await chat.locator('lv-chat-composer').waitFor()
   const surfaces = await chat.evaluate(async (e: any) => {
+   const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({ agentContext: { dashboardId: 'sales', pageId: 'overview' } })
    const surfaces: string[] = []
    e.addEventListener('lv-chat-submit', (event: CustomEvent) => surfaces.push(event.detail.surface))
    for (const builderOpen of [true, false]) {
