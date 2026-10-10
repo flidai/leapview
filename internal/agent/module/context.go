@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
@@ -40,51 +41,11 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	case "data":
 		return m.resolveDataTurnContext(r.Context(), scope, candidate)
 	case "chat", "builder":
-		if m.catalog == nil {
-			return agent.TurnContext{}, errors.New("catalog is not configured")
-		}
-		if strings.TrimSpace(scope.PrincipalID) == "" {
-			return agent.TurnContext{}, errors.New("catalog principal is unavailable")
-		}
 		projectID, _ := m.activeProjectID(r.Context())
 		scope.ProjectID = projectID
-		catalogScope := ToolsScope(scope)
-		catalogScope.ProjectID = projectID
-		references := make([]agent.TurnReference, 0, len(candidate.References))
-		for _, reference := range candidate.References {
-			kind, err := projectgraph.ParseKind(strings.TrimSpace(reference.Reference.Kind))
-			if err != nil {
-				continue
-			}
-			id, err := projectgraph.NewResourceID(strings.TrimSpace(reference.Reference.ID))
-			if err != nil {
-				continue
-			}
-			item, err := (credentialCatalog{base: m.catalog}).Get(r.Context(), catalogScope, agenttools.CatalogGetRequest{
-				Ref: agenttools.CatalogRef{ID: id.String(), Kind: agenttools.CatalogType(kind)},
-			})
-			if err != nil {
-				// Private drafts are not part of the active serving graph.
-				// Resolve browser references through the edit-authorized draft
-				// facade; never reuse client-provided names or model context.
-				if kind == projectgraph.KindDashboard && m.dashboardAuthoring != nil && !scope.Credential.Restricted {
-					draft, draftErr := m.dashboardAuthoring.Draft(r.Context(), authoringapplication.DraftRequest{
-						ProjectID: projectgraph.ResourceID(projectID), ActorID: scope.PrincipalID, DashboardID: authoring.DashboardID(id.String()),
-					})
-					if draftErr == nil {
-						references = append(references, agent.TurnReference{
-							Reference: agent.TurnReferenceKey{Kind: string(projectgraph.KindDashboard), ID: id.String()},
-							Name:      draft.Lifecycle.Title, Resource: agent.TurnReferenceResource{ID: projectID, Name: projectID},
-							DashboardID: id.String(), ModelID: draft.Lifecycle.SemanticModel.String(),
-							Href:    "/dashboards/" + url.PathEscape(id.String()) + "/edit",
-							Context: []string{"Private dashboard draft. Use get_dashboard_draft or read_dashboard_source to inspect the current revision before editing."},
-						})
-						continue
-					}
-				}
-				return agent.TurnContext{}, errors.New("referenced catalog resource is unknown or unauthorized")
-			}
-			references = append(references, TurnReferenceFromCatalog(item.Item, projectID))
+		references, err := m.resolveCatalogTurnReferences(r.Context(), scope, candidate.References, true)
+		if err != nil {
+			return agent.TurnContext{}, err
 		}
 		resolved := agent.TurnContext{Surface: strings.ToLower(strings.TrimSpace(candidate.Surface)), References: references}
 		// Chat stays attached to its conversation while edits target the active
@@ -139,6 +100,58 @@ func withChatDraftPage(resolved agent.TurnContext, doc document.DashboardDocumen
 		return resolved, nil
 	}
 	return agent.TurnContext{}, fmt.Errorf("dashboard page %q no longer exists; select another page before asking the agent to edit", pageID)
+}
+
+// resolveCatalogTurnReferences reloads reference metadata through principal and
+// credential authorization. Private draft references are only available to the
+// existing chat/builder surfaces that explicitly opt in.
+func (m *Module) resolveCatalogTurnReferences(ctx context.Context, scope agent.Scope, candidates []agent.TurnReference, allowPrivateDraft bool) ([]agent.TurnReference, error) {
+	if m.catalog == nil {
+		return nil, errors.New("catalog is not configured")
+	}
+	if strings.TrimSpace(scope.PrincipalID) == "" {
+		return nil, errors.New("catalog principal is unavailable")
+	}
+	projectID := scope.ProjectID
+	catalogScope := ToolsScope(scope)
+	catalogScope.ProjectID = projectID
+	references := make([]agent.TurnReference, 0, len(candidates))
+	for _, reference := range candidates {
+		kind, err := projectgraph.ParseKind(strings.TrimSpace(reference.Reference.Kind))
+		if err != nil {
+			continue
+		}
+		id, err := projectgraph.NewResourceID(strings.TrimSpace(reference.Reference.ID))
+		if err != nil {
+			continue
+		}
+		item, err := (credentialCatalog{base: m.catalog}).Get(ctx, catalogScope, agenttools.CatalogGetRequest{
+			Ref: agenttools.CatalogRef{ID: id.String(), Kind: agenttools.CatalogType(kind)},
+		})
+		if err != nil {
+			// Private drafts are not part of the active serving graph.
+			// Resolve browser references through the edit-authorized draft
+			// facade; never reuse client-provided names or model context.
+			if allowPrivateDraft && kind == projectgraph.KindDashboard && m.dashboardAuthoring != nil && !scope.Credential.Restricted {
+				draft, draftErr := m.dashboardAuthoring.Draft(ctx, authoringapplication.DraftRequest{
+					ProjectID: projectgraph.ResourceID(projectID), ActorID: scope.PrincipalID, DashboardID: authoring.DashboardID(id.String()),
+				})
+				if draftErr == nil {
+					references = append(references, agent.TurnReference{
+						Reference: agent.TurnReferenceKey{Kind: string(projectgraph.KindDashboard), ID: id.String()},
+						Name:      draft.Lifecycle.Title, Resource: agent.TurnReferenceResource{ID: projectID, Name: projectID},
+						DashboardID: id.String(), ModelID: draft.Lifecycle.SemanticModel.String(),
+						Href:    "/dashboards/" + url.PathEscape(id.String()) + "/edit",
+						Context: []string{"Private dashboard draft. Use get_dashboard_draft or read_dashboard_source to inspect the current revision before editing."},
+					})
+					continue
+				}
+			}
+			return nil, errors.New("referenced catalog resource is unknown or unauthorized")
+		}
+		references = append(references, TurnReferenceFromCatalog(item.Item, projectID))
+	}
+	return references, nil
 }
 
 func (m *Module) resolveBuilderTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
@@ -244,10 +257,50 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 	if err := authorizeSemanticExploration(ctx, metrics, resolvedModel.String(), datasetID, model, explorationSpec); err != nil {
 		return agent.TurnContext{}, errors.New("semantic context is unknown or unauthorized")
 	}
+	references, err := m.resolveDataTurnReferences(ctx, scope, model, resolvedModel.String(), modelID, datasetID, candidate.References)
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
 	return agent.TurnContext{
 		Surface: "data", ModelID: resolvedModel.String(), DatasetID: datasetID,
-		Exploration: explorationSpec,
+		Exploration: explorationSpec, References: references,
 	}, nil
+}
+
+// Data dataset pins are limited to the exploration already authorized above.
+// Other resources use the shared catalog boundary without private-draft access.
+func (m *Module) resolveDataTurnReferences(ctx context.Context, scope agent.Scope, model *semanticmodel.Model, resolvedModelID, selectedModelID, datasetID string, candidates []agent.TurnReference) ([]agent.TurnReference, error) {
+	var references []agent.TurnReference
+	for _, reference := range candidates {
+		if resourceID := strings.TrimSpace(reference.Resource.ID); resourceID != "" && resourceID != scope.ProjectID {
+			return nil, errors.New("referenced catalog resource is unknown or unauthorized")
+		}
+		if strings.ToLower(strings.TrimSpace(reference.Reference.Kind)) == "dataset" {
+			// This is the exact ID emitted by dataExplorerAgentSuggestions.
+			if datasetID == "" || strings.TrimSpace(reference.Reference.ID) != selectedModelID+"/"+datasetID {
+				return nil, errors.New("dataset reference does not match the current exploration")
+			}
+			dataset := model.Datasets[datasetID]
+			name := dataset.DisplayName
+			if strings.TrimSpace(name) == "" {
+				name = datasetID
+			}
+			references = append(references, agent.TurnReference{
+				Reference: agent.TurnReferenceKey{Kind: "dataset", ID: resolvedModelID + "/" + datasetID},
+				Name:      name, Description: dataset.Description, ModelID: resolvedModelID, DatasetID: datasetID,
+				Resource:  agent.TurnReferenceResource{ID: scope.ProjectID, Name: scope.ProjectID},
+				Hierarchy: []string{scope.ProjectID, resolvedModelID}, Context: []string{"active_project_generation"},
+				Href: "/explore?mode=explore&semanticModel=" + url.QueryEscape(resolvedModelID) + "&dataset=" + url.QueryEscape(datasetID),
+			})
+			continue
+		}
+		resolved, err := m.resolveCatalogTurnReferences(ctx, scope, []agent.TurnReference{reference}, false)
+		if err != nil {
+			return nil, err
+		}
+		references = append(references, resolved...)
+	}
+	return references, nil
 }
 
 func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
