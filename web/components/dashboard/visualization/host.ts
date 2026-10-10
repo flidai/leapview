@@ -11,10 +11,11 @@ import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
 import type { VisualFocusPreview } from '../visual-modal-focus'
 import type { ReportTable } from '../table/report-table'
-import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
+import { VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
+import { resolveHostRendererContext } from './host-context'
 import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
-import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
+import { accessibleDataStatus, accessibleVisualizationSummary, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
 import { clearInteractionCommand } from './interaction-command'
 import { resolveVisualizationMetadata, visualizationSharedHeader } from './metadata'
 import { visualizationHostStyles } from './host-styles'
@@ -381,7 +382,7 @@ export class VisualizationHost extends LitElement {
           <span>${loadingLabel}</span>
         </div>` : null}
       </div>
-      <div id="visualization-fallback" class="fallback">${this.accessibleFallback()}</div>
+      <div id="visualization-fallback" class="fallback">${accessibleVisualizationSummary(this.envelope, this.rendererContext())}</div>
       ${this.announcement ? html`<div class="announcement" role="status" aria-live="polite">${this.announcement}</div>` : null}
       ${error ? html`<div class="error" role="alert"><div><p>${error}</p>${this.error && (this.envelope || this.failedEnvelopeValidation) ? html`<button class="icon-action retry-action" type="button" data-visualization-retry ?disabled=${this.applying} @click=${this.retry}>Try again</button>` : null}</div></div>` : null}
     </div>`
@@ -666,45 +667,7 @@ export class VisualizationHost extends LitElement {
   private readonly handleRendererContextChange = (): void => { this.scheduleApply(true) }
 
   private rendererContext(): RendererContext {
-    const target = this.rendererContainer
-    if (!target) return defaultRendererContext
-    const root = this.getRootNode()
-    const builderPreview = root instanceof ShadowRoot && root.host.localName === 'lv-dashboard-builder'
-    const styles = getComputedStyle(target)
-    const color = (name: string, fallback: string): string => styles.getPropertyValue(name).trim() || fallback
-    const colorScheme = document.documentElement.style.colorScheme.trim()
-    const theme = colorScheme === 'dark' || (colorScheme !== 'light' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'
-    return {
-      locale: normalizeRendererLocale(document.documentElement.lang || 'en'),
-      theme,
-      echartsRenderer: builderPreview ? 'svg' : 'canvas',
-      authoringPreview: builderPreview,
-      reducedMotion: this.reducedMotionMedia?.matches ?? true,
-      devicePixelRatio: window.devicePixelRatio || 1,
-      fontFamily: styles.fontFamily || defaultRendererContext.fontFamily,
-      colors: {
-        foreground: color('--lv-fg-default', defaultRendererContext.colors.foreground),
-        muted: color('--lv-chart-axis', defaultRendererContext.colors.muted),
-        grid: color('--lv-chart-grid', defaultRendererContext.colors.grid),
-        surface: color('--lv-chart-surface', defaultRendererContext.colors.surface),
-        accent: color('--lv-fg-accent', defaultRendererContext.colors.accent),
-        success: color('--lv-fg-success', defaultRendererContext.colors.success),
-        attention: color('--lv-fg-warning', defaultRendererContext.colors.attention),
-        danger: color('--lv-fg-danger', defaultRendererContext.colors.danger),
-        data: primerCategoricalPalette.map(({ token }, index) => color(token, defaultRendererContext.colors.data[index]!)),
-      },
-    }
-  }
-
-  private accessibleFallback() {
-    const envelope = this.envelope
-    if (!envelope) return 'Visualization is loading.'
-    const data = accessibleVisualizationData(envelope, this.rendererContext(), 6)
-    const metadata = resolveVisualizationMetadata(envelope)
-    const summary = metadata.summary ?? metadata.description
-    const status = accessibleStatus(envelope)
-    const dataSummary = accessibleDataStatus(envelope, data)
-    return `${metadata.title}.${metadata.subtitle ? ` ${metadata.subtitle}.` : ''} ${summary}. ${status}. ${dataSummary}`
+    return resolveHostRendererContext(this, this.rendererContainer, this.reducedMotionMedia?.matches ?? true)
   }
 }
 
