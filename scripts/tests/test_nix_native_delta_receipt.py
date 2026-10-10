@@ -32,7 +32,8 @@ def delta_fixture(policy, lock):
              'cargo.txt': b'cargo 1.98.1\n', 'source.json': json.dumps(policy['kernel']['selectedFiles']).encode(),
              'patches.json': json.dumps(policy['patchedFiles']).encode(),
              'cargo.jsonl': '\n'.join(map(json.dumps, messages)).encode(),
-             'checks.txt': b'Delta selected FFI upstream unit tests passed\n'}
+             'checks.txt': b'Delta selected FFI upstream unit tests passed\n',
+             'check.log': ('cargoCheckHook flags: -j 2 --profile release --features=' + ','.join(policy['features']) + ' --target x86_64-unknown-linux-gnu --offline --package=delta_kernel_ffi --lib --\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\nFinished cargoCheckHook\n').encode()}
     files.update({name: ('kernel_generated_header_' + name).encode() for name in delta.HEADERS})
     files['headers.json'] = json.dumps({'include/' + name: hashlib.sha256(files[name]).hexdigest() for name in delta.HEADERS}).encode()
     return files
@@ -89,6 +90,21 @@ class DeltaReceiptTests(unittest.TestCase):
             with self.subTest(file=name), self.assertRaises(ValueError):
                 delta.check(Path('/evidence'), policy, 'linux/amd64', lock, lambda p: files[p.name])
             files[name] = original
+
+    def test_upstream_tests_require_selected_optional_profile(self):
+        root = Path(__file__).resolve().parents[2]
+        policy = json.loads((root / 'nix/delta-source-lock.json').read_text())
+        lock = tomllib.loads((root / 'nix/delta-Cargo.lock').read_text())
+        files = delta_fixture(policy, lock)
+        original = files['check.log']
+        for changed in (original.replace(b'--features=' + ','.join(policy['features']).encode(), b''),
+                        original.replace(b'test-ffi,', b''),
+                        original.replace(b'4 passed; 0 failed', b'0 passed; 0 failed') + b'test result: ok. 2 passed; 0 failed;\n',
+                        original.replace(b'Finished cargoCheckHook\n', b''),
+                        original.replace(b'4 passed; 0 failed', b'3 passed; 1 failed')):
+            files['check.log'] = changed
+            with self.subTest(log=changed), self.assertRaises(ValueError):
+                delta.check(Path('/evidence'), policy, 'linux/amd64', lock, lambda p: files[p.name])
 
     def test_rejects_duplicate_json_fields(self):
         with self.assertRaises(ValueError):

@@ -89,6 +89,14 @@ let
         --destination "$TMPDIR/native-evidence/headers.json"
     '';
     doCheck = true;
+    # buildRustPackage derives checkFeatures from buildFeatures, not the
+    # explicitly supplied cargoBuildFeatures above. Test the production profile.
+    checkFeatures = policy.features;
+    checkPhase = ''
+      set -o pipefail
+      cargoCheckHook | ${receipts.command} capture-cargo --repo ${receipts.source} --platform ${receipts.platform} \
+        --destination "$TMPDIR/native-evidence/check.log"
+    '';
     postCheck = ''
       smoke=$(mktemp -d "$TMPDIR/delta-xml-smoke.XXXXXX")
       mkdir "$smoke/src"

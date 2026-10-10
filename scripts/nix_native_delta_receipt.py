@@ -18,7 +18,7 @@ RECIPES = ('nix/delta.nix', 'nix/delta-source-lock.json', 'nix/delta-Cargo.lock'
            'nix/delta-quick-xml-backport-lock.json', 'nix/delta-quick-xml-smoke.rs',
            'nix/quick-xml/0.39.2-backport.patch', 'nix/quick-xml/duplicate-attributes-upstream.patch',
            'nix/quick-xml/namespace-bounds-upstream.patch')
-EVIDENCE = {'compiler.txt', 'cargo.txt', 'cargo.jsonl', 'source.json', 'headers.json', 'checks.txt', 'patches.json'} | set(HEADERS)
+EVIDENCE = {'compiler.txt', 'cargo.txt', 'cargo.jsonl', 'source.json', 'headers.json', 'checks.txt', 'patches.json', 'check.log'} | set(HEADERS)
 
 
 def decode(data):
@@ -100,6 +100,20 @@ def check(evidence, policy, platform, lock, read):
             raise ValueError('Delta generated FFI header missing')
     if read(evidence / 'checks.txt') != b'Delta selected FFI upstream unit tests passed\n':
         raise ValueError('Delta upstream FFI tests missing')
+    checks = read(evidence / 'check.log').decode()
+    if checks.count('Finished cargoCheckHook\n') != 1:
+        raise ValueError('Delta upstream test hook did not finish')
+    # postCheck also runs the XML smoke suite; it cannot stand in for FFI tests.
+    checks = checks.split('Finished cargoCheckHook\n')[0]
+    flags = [shlex.split(line.removeprefix('cargoCheckHook flags: ')) for line in checks.splitlines() if line.startswith('cargoCheckHook flags: ')]
+    if len(flags) != 1:
+        raise ValueError('Delta actual upstream test invocation missing')
+    flags = flags[0]
+    if (not {'--features=' + ','.join(policy['features']), '--package=delta_kernel_ffi', '--lib', '--offline'} <= set(flags)
+            or not any(flags[i:i + 2] == ['--target', TARGETS[platform]] for i in range(len(flags)))
+            or not any(flags[i:i + 2] == ['--profile', 'release'] for i in range(len(flags)))
+            or not re.search(r'^test result: ok\. [1-9][0-9]* passed; 0 failed;', checks, re.M)):
+        raise ValueError('Delta selected upstream test profile or execution differs')
     return compiled_cargo(read(evidence / 'cargo.jsonl').decode(), lock, platform)
 
 
