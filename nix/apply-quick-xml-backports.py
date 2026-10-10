@@ -14,10 +14,12 @@ def sha256(path):
 
 def apply(vendor, patch_command, policy_name="quick-xml-backport-lock.json"):
     policy_root = Path(__file__).resolve().parent
-    if policy_name not in ('quick-xml-backport-lock.json', 'delta-quick-xml-backport-lock.json'):
+    if policy_name not in ('quick-xml-backport-lock.json', 'delta-quick-xml-backport-lock.json', 'vortex-quick-xml-backport-lock.json'):
         raise ValueError('unexpected backport policy name')
     policy = json.loads((policy_root / policy_name).read_text())
-    versions = ['0.39.2'] if policy_name.startswith('delta-') else ['0.37.5', '0.38.4']
+    versions = {'quick-xml-backport-lock.json': ['0.37.5', '0.38.4'],
+                'delta-quick-xml-backport-lock.json': ['0.39.2'],
+                'vortex-quick-xml-backport-lock.json': ['0.39.4']}[policy_name]
     if policy.get('version') != 1 or [p['version'] for p in policy['backports']] != versions:
         raise ValueError('unexpected backport policy')
     for upstream in policy['upstream']:

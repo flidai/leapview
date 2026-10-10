@@ -4,7 +4,7 @@
   "desktopJavascript": "sha256-MLJ6Nvl0R2/OAQdt0DHHdYIkAt0bZbQ7Ai+6QwnFzT8=",
   "maps": "sha256-+dNOwjgM6tPltmKIqzwYqz8eKh/GR/nLaUGAXkBn3gs=",
   "extensions": {
-    "x86_64-linux": "sha256-jJ/L7HcshXVTZ4+1YHFAmCSBaRtDJFatpbjnfLAGT4U=",
-    "aarch64-linux": "sha256-SSBMoMlcrv6UuO2audQ3wKrJZDxe5SGIZ/SMboR1gsA="
+    "x86_64-linux": "sha256-3J/+NuTCLC0jhEKtgYN4mqyIPyscQMHZEeBYlfkCFaQ=",
+    "aarch64-linux": "sha256-uTiRxhH4i7wM5mtQc/MiVE4PsNB0PUig7j+9Z2Xun6c="
   }
 }

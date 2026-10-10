@@ -13,6 +13,7 @@ let
     "scripts/nix_native_avro_receipt.py"
     "scripts/nix_native_delta_receipt.py"
     "scripts/nix_native_azure_receipt.py"
+    "scripts/nix_native_vortex_receipt.py"
   ];
   lance = [
     "nix/lance.nix"
@@ -82,6 +83,22 @@ let
     "nix/check-azure-static-libraries.cpp"
     "scripts/nix_native_azure_receipt.py"
   ];
+  vortex = [
+    "nix/vortex.nix"
+    "nix/vortex-source-lock.json"
+    "nix/vortex-Cargo.lock"
+    "nix/vortex-static-dependencies.patch"
+    "nix/vortex-selected-engine.patch"
+    "nix/check-extension-version.py"
+    "nix/vortex-quick-xml-backport-lock.json"
+    "nix/apply-quick-xml-backports.py"
+    "nix/delta-quick-xml-smoke.rs"
+    "nix/quick-xml/0.39.2-backport.patch"
+    "nix/quick-xml/duplicate-attributes-upstream.patch"
+    "nix/quick-xml/namespace-bounds-upstream.patch"
+    "scripts/nix_native_vortex_receipt.py"
+    "scripts/nix_native_delta_receipt.py"
+  ];
   duckdb = [
     "nix/duckdb.nix"
     "nix/sqlite.nix"
@@ -93,7 +110,8 @@ let
   ++ excel
   ++ avro
   ++ delta
-  ++ azure;
+  ++ azure
+  ++ vortex;
   croaring = [
     "nix/ducklake.nix"
     "nix/ducklake-source-lock.json"
@@ -103,6 +121,8 @@ let
     ++ (
       if component == "lance" then
         lance
+      else if component == "vortex" then
+        vortex
       else if component == "delta" then
         delta
       else if component == "azure" then

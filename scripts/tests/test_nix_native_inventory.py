@@ -51,6 +51,19 @@ class NativeInventoryTests(unittest.TestCase):
         self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
         self.assertEqual(set(selected['libraries']), {'core', 'identity', 'storage-common', 'storage-blobs', 'storage-files-datalake', 'libxml2'})
 
+    def test_vortex_selected_ffi_engine_and_xml_identity(self):
+        lock = native.ROOT / 'nix/vortex-source-lock.json'
+        selected = json.loads(lock.read_text())
+        policy = json.loads(native.POLICY_PATH.read_text())
+        entry = next(e for e in policy['sourceBuiltReplacements'] if e['name'] == 'vortex')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(selected['engine']['revision'], policy['duckdbSourceRevision'])
+        self.assertEqual(selected['rust']['cargoLockSHA256'], hashlib.sha256((native.ROOT / 'nix/vortex-Cargo.lock').read_bytes()).hexdigest())
+        self.assertEqual(selected['features'], [])
+        self.assertEqual(len(selected['bridgeSources']), 17)
+        self.assertTrue(all(name.startswith('quick-xml-0.39.4/') for name in selected['patchedFiles']))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

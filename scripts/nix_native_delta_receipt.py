@@ -32,7 +32,7 @@ def decode(data):
     return json.loads(data, object_pairs_hook=pairs)
 
 
-def compiled_cargo(data, lock, platform):
+def compiled_cargo(data, lock, platform, *, package="delta_kernel_ffi", features=FEATURES, archive="libdelta_kernel_ffi.a"):
     locked = {(p['name'], p['version'], p.get('source', '')): p for p in lock['package']}
     artifacts, finished, root, tls = {}, False, False, False
     for line in data.splitlines():
@@ -49,20 +49,20 @@ def compiled_cargo(data, lock, platform):
             source = ''
         key = (name, version, source)
         if key not in locked or name in ('openssl-sys', 'native-tls'):
-            raise ValueError('Delta compiled package is unlocked or uses native TLS: ' + name)
-        features = sorted(item['features'])
-        if name == 'delta_kernel_ffi' and 'staticlib' in item['target']['kind']:
-            if set(features) != FEATURES:
-                raise ValueError('Delta FFI selected features differ')
-            root |= (any(p.endswith('/' + TARGETS[platform] + '/release/libdelta_kernel_ffi.a') for p in item['filenames'])
+            raise ValueError('Rust FFI compiled package is unlocked or uses native TLS: ' + name)
+        selected_features = sorted(item['features'])
+        if name == package and 'staticlib' in item['target']['kind']:
+            if set(selected_features) != set(features):
+                raise ValueError('Rust FFI selected features differ')
+            root |= (any(p.endswith('/' + TARGETS[platform] + '/release/' + archive) for p in item['filenames'])
                      and item['profile'].get('test') is False)
         tls |= name == 'rustls' and item['profile'].get('test') is False
         value = {'name': name, 'version': version, 'source': source, 'checksum': locked[key].get('checksum'),
                  'target': item['target']['name'], 'kinds': sorted(item['target']['kind']),
-                 'features': features, 'profile': item['profile']}
+                 'features': selected_features, 'profile': item['profile']}
         artifacts[json.dumps(value, sort_keys=True)] = value
     if not finished or not root or not tls:
-        raise ValueError('Delta receipt requires successful selected Rustls FFI compilation')
+        raise ValueError('receipt requires successful selected Rustls FFI compilation')
     return [artifacts[key] for key in sorted(artifacts)]
 
 

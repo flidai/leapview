@@ -1852,6 +1852,21 @@
       "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
       "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
       "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "vortex",
+      "wrapper": {
+        "repository": "https://github.com/vortex-data/duckdb-vortex",
+        "revision": "275ac230e1d9afd08926b6989ec2467f92fae6e3",
+        "sourceNARHash": "sha256-/deOIpEGSdD5nJQ2w/YifNGknezld1Yv3FkFcB9ZlOk=",
+        "patchSHA256": "30edbd3866a695f8f287ded003d99e609b9e98598a3a61c203727963418ff2b5"
+      },
+      "nativeDependencyLock": "nix/vortex-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:9ebe41827182c32ca8963df83c4cdaa4a85a7797d36d8f67587d736b3e65298e",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
     }
   ]
 }

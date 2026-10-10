@@ -12,6 +12,7 @@ let
   avro = import ./avro.nix { inherit pkgs http; };
   delta = import ./delta.nix { inherit pkgs; };
   azure = import ./azure.nix { inherit pkgs http; };
+  vortex = import ./vortex.nix { inherit pkgs; };
   ducklake = import ./ducklake.nix { inherit pkgs; };
   revision = "08e34c447bae34eaee3723cac61f2878b6bdf787";
   registry = builtins.readFile ../internal/extension/builtin.go;
@@ -27,6 +28,7 @@ let
     duckdb_extension_load(httpfs SOURCE_DIR ${http.httpfs.source} EXTENSION_VERSION ${http.httpfs.revision})
     duckdb_extension_load(quack SOURCE_DIR ${http.quack.source} EXTENSION_VERSION ${http.quack.revision})
     duckdb_extension_load(excel SOURCE_DIR ${excel.source} INCLUDE_DIR ${excel.source}/src/excel/include EXTENSION_VERSION ${excel.revision})
+    duckdb_extension_load(vortex SOURCE_DIR ${vortex.source} EXTENSION_VERSION ${vortex.revision})
     duckdb_extension_load(delta SOURCE_DIR ${delta.source} EXTENSION_VERSION ${delta.revision})
     duckdb_extension_load(avro SOURCE_DIR ${avro.source} EXTENSION_VERSION ${avro.revision})
     duckdb_extension_load(azure SOURCE_DIR ${azure.source} EXTENSION_VERSION ${azure.revision})
@@ -84,6 +86,8 @@ pkgs.duckdb.overrideAttrs (old: {
     (pkgs.lib.cmakeFeature "EXPAT_INCLUDE_DIR" "${excel.expat.dev}/include")
     (pkgs.lib.cmakeFeature "MINIZIP_LIBRARY" "${excel.archives}/lib/libminizip-ng.a")
     (pkgs.lib.cmakeFeature "MINIZIP_INCLUDE_DIR" "${excel.minizip}/include")
+    (pkgs.lib.cmakeFeature "VORTEX_FFI_LIBRARY" "${vortex.rust}/lib/libvortex_duckdb.a")
+    (pkgs.lib.cmakeFeature "VORTEX_FFI_INCLUDE_DIR" "${vortex.rust}/include")
     (pkgs.lib.cmakeFeature "DELTA_KERNEL_LIBRARY" "${delta.rust}/lib/libdelta_kernel_ffi.a")
     (pkgs.lib.cmakeFeature "DELTA_KERNEL_INCLUDE_DIR" "${delta.rust}/include")
     (pkgs.lib.cmakeFeature "AVRO_LIBRARY" "${avro.archives}/lib/libavro.a")
@@ -134,6 +138,10 @@ pkgs.duckdb.overrideAttrs (old: {
     root = pathlib.Path(sys.argv[1])
     pathlib.Path(sys.argv[2]).write_text(json.dumps({str(p.relative_to(root)): {'archive': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted((root / 'lib').glob('*.a'))}, sort_keys=True) + '\n')
     PYEXCEL
+    ${pkgs.python3}/bin/python3 ${receipts.source}/scripts/nix_native_vortex_receipt.py binding --repo ${receipts.source} \
+      --output-root ${vortex.rust} --destination "$TMPDIR/native-evidence/vortex-link.json"
+    ${pkgs.python3}/bin/python3 ${receipts.source}/scripts/nix_native_vortex_receipt.py engine-source --repo ${receipts.source} \
+      --output-root "$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' CMakeCache.txt)" --destination "$TMPDIR/native-evidence/vortex-engine-source.json"
     ${pkgs.python3}/bin/python3 ${receipts.source}/scripts/nix_native_delta_receipt.py binding --repo ${receipts.source} \
       --output-root ${delta.rust} --destination "$TMPDIR/native-evidence/delta-link.json"
     ${pkgs.python3}/bin/python3 - ${avro.archives} "$TMPDIR/native-evidence/avro-link.json" <<'PYAVRO'
@@ -175,6 +183,8 @@ pkgs.duckdb.overrideAttrs (old: {
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'avro' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${avro.revision}';" | grep -q 1
     "$out/bin/duckdb" -c "COPY (SELECT 42 AS retained_value) TO '$TMPDIR/native.avro' (FORMAT AVRO); SELECT retained_value FROM read_avro('$TMPDIR/native.avro');" | grep -q 42
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'azure' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${azure.revision}';" | grep -q 1
+    "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'vortex' AND installed AND install_mode = 'STATICALLY_LINKED' AND extension_version = '${vortex.revision}';" | grep -q 1
+    "$out/bin/duckdb" -c "COPY (SELECT 42 AS retained_value) TO '$TMPDIR/native.vortex' (FORMAT vortex); SELECT retained_value FROM read_vortex('$TMPDIR/native.vortex');" | grep -q 42
     "$out/bin/duckdb" -c "SELECT version();" | grep -q v1.5.4
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'sqlite_scanner' AND installed AND install_mode = 'STATICALLY_LINKED' AND install_path = '(BUILT-IN)';" | grep -q 1
     "$out/bin/duckdb" -c "SELECT count(*) FROM duckdb_extensions() WHERE extension_name = 'ducklake' AND installed AND install_mode = 'STATICALLY_LINKED' AND install_path = '(BUILT-IN)';" | grep -q 1
@@ -190,6 +200,7 @@ pkgs.duckdb.overrideAttrs (old: {
       avro
       delta
       azure
+      vortex
       revision
       ;
   };

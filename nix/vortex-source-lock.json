@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "wrapper": {
+    "revision": "275ac230e1d9afd08926b6989ec2467f92fae6e3",
+    "sourceNARHash": "sha256-/deOIpEGSdD5nJQ2w/YifNGknezld1Yv3FkFcB9ZlOk=",
+    "patchSHA256": "30edbd3866a695f8f287ded003d99e609b9e98598a3a61c203727963418ff2b5"
+  },
+  "rust": {
+    "revision": "7b536257e2653c3bd293e12e51ccbcb445534e60",
+    "sourceNARHash": "sha256-pxjwNe+1CPvjAwj+H1xprYvplT0aPdC/wLTIkwXq5kE=",
+    "cargoLockSHA256": "4502cbe4f9611bbbdb4990226937e1d027fad414b533589f9ceb92cb9dd4aeb0",
+    "patchSHA256": "dfe6797d76e10064b99d1e886ec132b6e822906a302999ebb39d3a6957aebb36",
+    "selectedFiles": {
+      "Cargo.lock": "4502cbe4f9611bbbdb4990226937e1d027fad414b533589f9ceb92cb9dd4aeb0",
+      "Cargo.toml": "01557610b3876bc104de37be73629942e588b3fd30b29359113a31774d40b9d5",
+      ".cargo/config.toml": "82de4ce3a6e90c673d42ac29c83eb6a0d81873f2a84fcf74e4471263711d81a8",
+      "vortex-duckdb/Cargo.toml": "7f5ca333e76ab1545025a12b971cc471720386323a1a457d9dbb290b1cdc5a7b",
+      "vortex-duckdb/cbindgen.toml": "01f3ca67cd08647ee21f68d3a97a167be09241a9b1c3bfc331203928e0ba4251",
+      "vortex-duckdb/src/lib.rs": "da0af3f587fdb1a8b7a9bbbf540d6d676a50c20cf1c62c6fc0e243730fe4c5ed",
+      "vortex-duckdb/cpp/client_context.cpp": "c6d38717b9489ade854febcc691d9611c277ea459ec81ae68c47403144758643",
+      "vortex-duckdb/cpp/config.cpp": "11712afdc6363d808a6f215f2dcf9f49ecd21ba852674a35a7b478b8f3679610",
+      "vortex-duckdb/cpp/copy_function.cpp": "f680d5c8e055c85fb16c28b18d46ac7d0cc7845b85b970c8bf8b42bf8bbe5b26",
+      "vortex-duckdb/cpp/data.cpp": "bf94f92ac6aed337050452919eff244fe0d9ea85d5bb0b936b95d4bb9da51106",
+      "vortex-duckdb/cpp/data_chunk.cpp": "577adbda62bfcf3643863c083041ae03d8eb0855647559070a1d83b7427c4ea5",
+      "vortex-duckdb/cpp/error.cpp": "7b26ce2ab90d2d8fa2e821f5246bad6e8967a4a94c086471a0d84552a48a9ca6",
+      "vortex-duckdb/cpp/expr.cpp": "847b386cce26d99053f453f62a95044d000564470c2e31888b1ffd32b54fbbe1",
+      "vortex-duckdb/cpp/file_system.cpp": "f5119cb0a6e568b8da7c7f5abe29d922c208b9237bf0d27892528fcfd84cd13a",
+      "vortex-duckdb/cpp/logical_type.cpp": "2f04fa224de09e82477140657c1596c5678390da0369c330f0e16c50455fee85",
+      "vortex-duckdb/cpp/replacement_scan.cpp": "5ccdb1dec5e425a0b6857b8a0bab6fa75989903720ddddc1f61f604ebc2ec8a1",
+      "vortex-duckdb/cpp/reusable_dict.cpp": "1b0ac1e7bba1c212b353a2d5e27666b8e06e5f27c2b6284935eb78e8402c91d6",
+      "vortex-duckdb/cpp/scalar_function.cpp": "11d5bcd34eb7c094e7bbe6e30b50fc2b9254c219520e1e162944c81798f47775",
+      "vortex-duckdb/cpp/table_filter.cpp": "41ea01e73512cd245b9851dda528c3c295242117ea21b369742c89a09a5e7b47",
+      "vortex-duckdb/cpp/table_function.cpp": "96626abc5d0a6a2524bad0bc45880c40d5eaa7c57b5904be05c433421462cb62",
+      "vortex-duckdb/cpp/value.cpp": "ffb671a134b3e87f7c61a046f91af563154392d6a47477734490819c84fe9e84",
+      "vortex-duckdb/cpp/vector.cpp": "bd0d499ce46340fa528ee469f9c4d4f68540f75b84846b44d0cc493e26c5c2e1",
+      "vortex-duckdb/cpp/vector_buffer.cpp": "215e31a3cd6f45c3e6d35085f0286d180044c788e337b5197a09894e940547c0",
+      "vortex-duckdb/cpp/include/duckdb_vx.h": "cee9b4014340a4ff7f31abc5478c8b4e83939f74560f6e1e754482f9dc2c099e",
+      "vortex-duckdb/cpp/include/duckdb_vx/client_context.h": "c2f958d49bcae6148b8cf5fa7cadb954205b073aaa9fcab791b6b12d4676f9f3",
+      "vortex-duckdb/cpp/include/duckdb_vx/config.h": "c7a242f59e85e74617202aa1bcee7de981021ac73d28a44a5d997e8e1b5c56f7",
+      "vortex-duckdb/cpp/include/duckdb_vx/copy_function.h": "8af3a945520a85007699869bc8bc37e97ebef0e8183856570d36046a2dbf661d",
+      "vortex-duckdb/cpp/include/duckdb_vx/data.h": "9c32bcdd3783b1d96b09ad3047410ee1286a7daf19d12a6d86773c42d61ff9ff",
+      "vortex-duckdb/cpp/include/duckdb_vx/data_chunk.h": "23f50ff50eea5b4abd1da4050d4f116ce3478912553507387cff230d177fa5b1",
+      "vortex-duckdb/cpp/include/duckdb_vx/error.h": "5b7deee064a09d991dd11db364b9a7a9ec0f6c0603aae8019e8ed95732b0d90c",
+      "vortex-duckdb/cpp/include/duckdb_vx/expr.h": "d4e8e60aa9d34d329b4bd9ffaa76b7d95bbdf4312d1ad2528a355fd0d176629d",
+      "vortex-duckdb/cpp/include/duckdb_vx/file_system.h": "983f8f9e103e9ff92e952efe8b85ca5b5fd1a9bb494429ea81d59001190f9431",
+      "vortex-duckdb/cpp/include/duckdb_vx/function.h": "80335e4b59b86432dff0703200bb183a7b23c98b39e03a7ee75c1cb3d6774b87",
+      "vortex-duckdb/cpp/include/duckdb_vx/logical_type.h": "c1daf10d5ad59642965e3bcf12bc99a6c48568a0055b36b1ec556f1450c7fcae",
+      "vortex-duckdb/cpp/include/duckdb_vx/replacement_scan.h": "ce1b45349e95575a3d31bb019a58e9fbb47c2a9229fc30c2cea284aaadf93c28",
+      "vortex-duckdb/cpp/include/duckdb_vx/reusable_dict.h": "025d1d4ffb1f0300618663aaccd743b91c86260087b745777ed9faa311e7a5fe",
+      "vortex-duckdb/cpp/include/duckdb_vx/scalar_function.h": "005ed4d0dc63d7ed52ec7f018f0c9cfe7a346ba18bc0cd970e5545ec0372cca0",
+      "vortex-duckdb/cpp/include/duckdb_vx/table_filter.h": "bdc57cbf37965c18e58e68c36cb1f49920e213c11f7da279b646f0451819f2c7",
+      "vortex-duckdb/cpp/include/duckdb_vx/table_function.h": "abb8a02c1d960a11f5bbd97458f8f7f6b59c0d328ba33c08c8970d3d282e613e",
+      "vortex-duckdb/cpp/include/duckdb_vx/value.h": "c854c925aaca2d3201e6a02953b2802f5be731bceae4a49c5035dd7ac8cbd46a",
+      "vortex-duckdb/cpp/include/duckdb_vx/vector.h": "c5a36498dd34357abdea3c81103d975b964f1789df5639bde7b251c5992e3462",
+      "vortex-duckdb/cpp/include/duckdb_vx/vector_buffer.h": "a3c2b392ce68d7e5faa3bbbe80456ea8af3a7d40d408582571c444fad1583e8a",
+      "vortex-duckdb/build.rs": "792f1f1886f2142b0edb986a04a1ee1201ef1af5d0277f51a9fbf000bd72e144"
+    }
+  },
+  "engine": {
+    "revision": "08e34c447bae34eaee3723cac61f2878b6bdf787",
+    "version": "1.5.4",
+    "sourceNARHash": "sha256-6xpKZKfH5/nwE2nU5kcpgITKFm3ilb1PYf9QEk+bKoM=",
+    "selectedFiles": {
+      "src/include/duckdb.h": "b6d1d212603b751c6613868b4d499952c4bbd9e241c6ae5979da431505282151",
+      "src/include/duckdb.hpp": "01f1ac7ec523668f6ccbe91d73390e165d5261a191ae7ecc47a64113cef45aed",
+      "src/include/duckdb/main/database.hpp": "88d684cca1bc11d3d6b978f209db856a0cdfeccfda6b5b934e316b48fc22242d",
+      "src/include/duckdb/function/table_function.hpp": "8d5cef6a27211870b261a9b369b113b112f9db0049072c9b467a943fc7da3809"
+    }
+  },
+  "compilerVersion": "1.98.1",
+  "features": [],
+  "bridgeSources": [
+    "cpp/client_context.cpp",
+    "cpp/config.cpp",
+    "cpp/copy_function.cpp",
+    "cpp/data.cpp",
+    "cpp/data_chunk.cpp",
+    "cpp/error.cpp",
+    "cpp/expr.cpp",
+    "cpp/file_system.cpp",
+    "cpp/logical_type.cpp",
+    "cpp/replacement_scan.cpp",
+    "cpp/reusable_dict.cpp",
+    "cpp/scalar_function.cpp",
+    "cpp/table_filter.cpp",
+    "cpp/table_function.cpp",
+    "cpp/value.cpp",
+    "cpp/vector.cpp",
+    "cpp/vector_buffer.cpp"
+  ],
+  "headers": [
+    "include/vortex.h",
+    "include/duckdb_vx.h",
+    "include/duckdb_vx/client_context.h",
+    "include/duckdb_vx/config.h",
+    "include/duckdb_vx/copy_function.h",
+    "include/duckdb_vx/data.h",
+    "include/duckdb_vx/data_chunk.h",
+    "include/duckdb_vx/error.h",
+    "include/duckdb_vx/expr.h",
+    "include/duckdb_vx/file_system.h",
+    "include/duckdb_vx/function.h",
+    "include/duckdb_vx/logical_type.h",
+    "include/duckdb_vx/replacement_scan.h",
+    "include/duckdb_vx/reusable_dict.h",
+    "include/duckdb_vx/scalar_function.h",
+    "include/duckdb_vx/table_filter.h",
+    "include/duckdb_vx/table_function.h",
+    "include/duckdb_vx/value.h",
+    "include/duckdb_vx/vector.h",
+    "include/duckdb_vx/vector_buffer.h"
+  ],
+  "gitCargoSources": {
+    "tpchgen-2.0.2": "sha256-NmKWWmpTpIggQc76y8ui/NI7sbJd9eH5gXoNlgprPEM=",
+    "tpchgen-arrow-2.0.2": "sha256-NmKWWmpTpIggQc76y8ui/NI7sbJd9eH5gXoNlgprPEM="
+  },
+  "patches": [
+    {
+      "policy": "nix/vortex-quick-xml-backport-lock.json",
+      "sha256": "0ce357f3a21b007f835e47734805e97dfe333044efcf527fb0d9e93ec68ea4dd"
+    }
+  ],
+  "patchedFiles": {
+    "quick-xml-0.39.4/src/events/attributes.rs": "eacc850600fb63caef1dcb07a71e685c9434c46337dfa2bde577f719d0f2bb7a",
+    "quick-xml-0.39.4/src/name.rs": "3e8b538627d9366596609bb4fabb90b3a61f5bc5bb1dfcc5960ef44426f712b5",
+    "quick-xml-0.39.4/src/reader/ns_reader.rs": "8f92c8af3f15a6f7c4cf4646ae5ff1017cb1fea8c1f63d8b8137c2ce2b526a31"
+  }
+}

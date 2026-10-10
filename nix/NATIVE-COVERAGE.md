@@ -553,6 +553,41 @@ runs the existing canonical source fixture: a scoped SharedKey signs the request
 a CSV row is read, a missing object fails, and a subsequent valid read succeeds.
 The executable and passing log hashes are retained. Execution on the revised
 source-built engine and both-architecture native publisher qualification remain
-pending. Three other signed extension closures remain (Iceberg, Spatial
-and Vortex), alongside engine vendored identities and the complete native
+pending. Two other signed extension closures remain (Iceberg and Spatial), alongside engine vendored identities and the complete native
 security assessment. No whole-application admission is granted by this milestone.
+
+## Controlled Vortex candidate
+
+The Vortex candidate selects wrapper `275ac230e1d9afd08926b6989ec2467f92fae6e3`
+and Rust workspace `7b536257e2653c3bd293e12e51ccbcb445534e60`. The exact
+Cargo lock and Git crate hashes are retained; only the actual `vortex-duckdb`
+static FFI target is compiled for the application. No root feature is added.
+The source-only engine input is the same pinned DuckDB revision used by the
+final engine. The explicit upstream source branch generates C-to-Rust and
+Rust-to-C bindings and compiles 17 C++ bridge sources before returning; a narrow
+assertion prevents fallback to downloaded engines. The wrapper uses the selected
+archive and generated header directory without Corrosion/network/package installs.
+
+The selected object-store graph includes quick-xml 0.39.4, which still lacks the
+two retained namespace/duplicate-attribute protections. Its independent checksum
+policy applies the same source-compatible backport used for Delta. The actual
+unpatched namespace test fails at 257 declarations, while the patched parser
+passes ordinary reads, default/configured bounds and duplicate-attribute checks.
+Lance and Delta keep their own exact-version policies.
+
+The receipt retains the actual Cargo compiler artifacts, C++ bridge commands,
+compiler identities, selected engine/source/patch hashes, generated ABI bytes and
+static output hash. Final engine evidence rehashes the selected engine headers
+and checks its CMake wrapper/library/include selection; application composition
+cross-checks the archive and ABI hashes. All retained build paths are encoded to
+avoid retaining the compiler closure in portable/runtime images. These are build
+composition records, not an exhaustive archive-member or binary closure proof.
+
+The selected Rust derivation runs upstream pure file tests without creating an
+engine dependency cycle. The tools-only native workload writes Vortex, then uses
+the canonical admitted path reader in two fresh sessions to check filtered rows,
+nulls and decimals. The manual lane requires a non-skipped pass and binds the test
+binary and log hashes. Actual selected Rust compilation, rebuilt-engine runtime
+and two-architecture publisher qualification must pass before this candidate is
+claimed proven. Remaining signed components, engine vendored identities and fresh
+complete native security assessment still block whole-application admission.

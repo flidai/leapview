@@ -1,0 +1,11 @@
+--- a/vortex-duckdb/build.rs
++++ b/vortex-duckdb/build.rs
+@@ -417,6 +417,8 @@
+     // If variables are not set, we are either running locally or
+     // in vortex's CI.
+ 
++    // Controlled builds must never fall back to downloaded DuckDB libraries or sources.
++    assert!(env::var_os("DUCKDB_SOURCE_DIR").is_some(), "selected DuckDB source required");
+     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+     if let Some(source_dir) = env::var_os("DUCKDB_SOURCE_DIR") {
+         let source_dir = PathBuf::from(source_dir);
