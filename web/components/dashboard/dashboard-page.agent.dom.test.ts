@@ -98,8 +98,10 @@ test('dashboard agent clears draft and references when the active conversation c
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
-    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+    // A long async evaluation can lose its inspector result Promise during GC.
+    // Keep the module handle and use synchronous actions plus observable waits.
+    const runtime = await page.evaluateHandle(() => import('/static/vendor/datastar-1.0.2.js?v=dev'))
+    await runtime.evaluate((runtime: any) => {
       runtime.mergePatch({
         agent: {
           activeConversationId: 'conversation-one',
@@ -107,10 +109,18 @@ test('dashboard agent clears draft and references when the active conversation c
           composer: { value: '', disabled: false, placeholder: 'Ask' },
         },
       })
-      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
-      await drawer.updateComplete
-      drawer.openDrawer()
-      await drawer.updateComplete
+    })
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer') as any
+      return drawer?.agent.activeConversationId === 'conversation-one' && drawer.hasUpdated && !drawer.isUpdatePending
+    })
+    const drawer = page.locator('lv-chat-drawer')
+    await drawer.evaluate((drawer: any) => drawer.openDrawer())
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer') as any
+      return drawer?.open && !drawer.isUpdatePending
+    })
+    await drawer.evaluate((drawer: any) => {
       drawer.openWithReference({
         reference: { kind: 'visual', id: 'sales.orders' },
         name: 'Orders',
@@ -121,16 +131,27 @@ test('dashboard agent clears draft and references when the active conversation c
       })
       const composer = drawer.shadowRoot.querySelector('lv-chat-composer') as any
       composer.setDraft('Keep this draft')
-      await composer.updateComplete
-      runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } })
-      await drawer.updateComplete
-      await composer.updateComplete
+    })
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer') as any
+      const composer = drawer?.shadowRoot?.querySelector('lv-chat-composer') as any
+      return drawer?.open && !drawer.isUpdatePending && composer?.hasUpdated && !composer.isUpdatePending
+    })
+    const readDraft = (drawer: any) => {
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer') as any
       return {
         draft: composer.shadowRoot.querySelector('textarea')?.value,
         references: composer.references.length,
       }
+    }
+    expect(await drawer.evaluate(readDraft)).toEqual({ draft: 'Keep this draft', references: 1 })
+    await runtime.evaluate((runtime: any) => runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } }))
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer') as any
+      const composer = drawer?.shadowRoot?.querySelector('lv-chat-composer') as any
+      return drawer?.agent.activeConversationId === 'conversation-two' && !drawer.isUpdatePending && composer && !composer.isUpdatePending
     })
-    expect(state).toEqual({ draft: '', references: 0 })
+    expect(await drawer.evaluate(readDraft)).toEqual({ draft: '', references: 0 })
   } finally { await page.close() }
 })
 

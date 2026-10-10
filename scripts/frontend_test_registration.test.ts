@@ -139,6 +139,29 @@ test('only Bun test invocations create test path patterns', () => {
   expect(bunRunTestScripts('TEST_TMP=/tmp bun run test:registered && echo "bun run test:orphan"')).toEqual(['test:registered'])
 })
 
+test('browser diagnostics preserves test registration without accepting non-executing mentions', () => {
+  const file = 'web/components/dashboard/dashboard-page.agent.dom.test.ts'
+  const wrapped = `node scripts/browser_test_diagnostics.mjs -- bun test ${file}`
+  expect(testPathPatterns(wrapped)).toEqual([file])
+  expect(testPathPatterns(`TEST_TMP=/tmp ${wrapped}`)).toEqual([file])
+  for (const command of [
+    `echo "${wrapped}"`,
+    `echo 'ignored && ${wrapped}'`,
+    `node scripts/browser_test_diagnostics.mjs -- echo bun test ${file}`,
+    `node scripts/browser_test_diagnostics.mjs bun test ${file}`,
+    `node scripts/unknown_wrapper.mjs -- bun test ${file}`,
+    `node scripts/browser_test_diagnostics.mjs -- bun scripts/build_test_assets.ts ${file}`,
+  ]) expect(testPathPatterns(command)).toEqual([])
+
+  const result = auditFrontendTestRegistration({
+    taskfile: { tasks: { 'ci:lane:frontend': { cmds: ['bun run test:dashboard'] } } },
+    packageJson: { scripts: { 'test:dashboard': wrapped } },
+    componentTestFiles: [file],
+    taskRoots: ['ci:lane:frontend'],
+  })
+  expect(registrationFailures(result)).toEqual([])
+})
+
 test('quoted and escaped shell separators do not create reachable commands', () => {
   const orphan = 'web/components/orphan/orphan.test.ts'
   expect(testPathPatterns(`echo "ignored && bun test ${orphan}"`)).toEqual([])
