@@ -29,7 +29,9 @@ LANCE_RECIPES = (
     'nix/quick-xml/0.37.5-backport.patch', 'nix/quick-xml/0.38.4-backport.patch',
 )
 DUCKDB_RECIPES = ('nix/duckdb.nix', 'nix/sqlite.nix')
-RECIPE_FILES = COMMON_RECIPES + LANCE_RECIPES + DUCKDB_RECIPES + ('nix/application.nix', 'nix/portable.nix')
+RECIPE_FILES = COMMON_RECIPES + LANCE_RECIPES + DUCKDB_RECIPES + (
+    'nix/application.nix', 'nix/patched-runtime.nix', 'nix/glibc-CVE-2026-19499.patch', 'nix/portable.nix',
+)
 EVIDENCE = {
     'lance': {'compiler.txt', 'cargo.txt', 'cargo.jsonl', 'patches.json'},
     'duckdb': {'compiler.txt', 'cmake-cache.txt', 'compile-commands.json', 'extensions.cmake', 'sqlite-source.json'},
@@ -379,8 +381,63 @@ def verify_application(directory, repo, platform, revision, binaries):
             'unresolved': ['signed extension compiled closures', 'engine vendored dependency identities', 'fresh complete native vulnerability scan']}
 
 
-def portable(directory, repo, platform, revision, original, exported, destination, interpreter, tool_version):
+def validate_replacements(data):
+    pairs = decode_json(data)
+    if not isinstance(pairs, list) or len(pairs) != 2:
+        raise ValueError('runtime replacement mapping differs from recipe')
+    for pair, component in zip(pairs, ('glibc', 'gcc')):
+        if not isinstance(pair, dict) or set(pair) != {'old', 'new'}:
+            raise ValueError('invalid runtime replacement mapping')
+        pattern = r'/nix/store/[0-9a-z]{32}-' + component + r'-[^/\s]+'
+        if any(not re.fullmatch(pattern, value) for value in pair.values()) or len(pair['old']) != len(pair['new']) or pair['old'] == pair['new']:
+            raise ValueError('invalid same-length runtime replacement identity')
+    return pairs
+
+
+def runtime_rewrite(directory, repo, platform, revision, original, rewritten, destination, replacements):
     verify_application(directory, repo, platform, revision, original)
+    verify_application(destination, repo, platform, revision, None)
+    if digest(directory / 'application.json') != digest(destination / 'application.json'):
+        raise ValueError('runtime transformation replaced its original receipt')
+    data = canonical(validate_replacements(read(replacements)))
+    value = {'schemaVersion': 1, 'scope': SCOPE, 'platform': platform, 'revision': revision,
+             'applicationReceiptSHA256': digest(directory / 'application.json'),
+             'inputOutputs': load(directory / 'application.json')['outputs'],
+             'replacementMappingSHA256': hashlib.sha256(data).hexdigest(),
+             'outputs': binary_hashes(rewritten, platform)}
+    # The destination is the existing output of replaceDirectDependencies.
+    with (destination / 'runtime-replacements.json.b64').open('xb') as output:
+        output.write(base64.b64encode(data))
+    with (destination / 'runtime.json').open('xb') as output:
+        output.write(canonical(value))
+    return verify_runtime(destination, repo, platform, revision, rewritten)
+
+
+def verify_runtime(directory, repo, platform, revision, binaries=None):
+    result = verify_application(directory, repo, platform, revision, None)
+    value = load(directory / 'runtime.json')
+    if (set(value) != {'schemaVersion', 'scope', 'platform', 'revision', 'applicationReceiptSHA256', 'inputOutputs', 'replacementMappingSHA256', 'outputs'} or
+            type(value['schemaVersion']) is not int or value['schemaVersion'] != 1 or value['scope'] != SCOPE or value['platform'] != platform or value['revision'] != revision or
+            value['applicationReceiptSHA256'] != result['applicationReceiptSHA256'] or
+            value['inputOutputs'] != load(directory / 'application.json')['outputs']):
+        raise ValueError('runtime transformation input substitution')
+    if (directory / 'runtime-replacements.json').exists() or not (directory / 'runtime-replacements.json.b64').is_file():
+        raise ValueError('runtime mapping requires encoded evidence')
+    data = evidence_read(directory / 'runtime-replacements.json')
+    if canonical(validate_replacements(data)) != data or hashlib.sha256(data).hexdigest() != value['replacementMappingSHA256']:
+        raise ValueError('runtime replacement mapping substitution')
+    if set(value['outputs']) != {'leapview', 'leapviewctl'} or any(not re.fullmatch('[0-9a-f]{64}', sha) for sha in value['outputs'].values()):
+        raise ValueError('invalid runtime output identities')
+    if binaries is not None and value['outputs'] != binary_hashes(binaries, platform):
+        raise ValueError('runtime output substitution')
+    if read(directory / 'runtime.json') != canonical(value):
+        raise ValueError('noncanonical runtime receipt')
+    result['runtimeReceiptSHA256'] = digest(directory / 'runtime.json')
+    return result
+
+
+def portable(directory, repo, platform, revision, original, exported, destination, interpreter, tool_version):
+    runtime = verify_runtime(directory, repo, platform, revision, original)
     if not re.fullmatch(r'/lib(64)?/ld-linux-[A-Za-z0-9_-]+\.so\.[0-9]+', interpreter):
         raise ValueError('unexpected portable ELF interpreter')
     version = read(tool_version).decode().strip()
@@ -388,7 +445,8 @@ def portable(directory, repo, platform, revision, original, exported, destinatio
         raise ValueError('missing patchelf compiler identity')
     value = {'schemaVersion': 1, 'scope': SCOPE, 'platform': platform, 'revision': revision,
              'applicationReceiptSHA256': digest(directory / 'application.json'),
-             'inputOutputs': load(directory / 'application.json')['outputs'],
+             'runtimeReceiptSHA256': runtime['runtimeReceiptSHA256'],
+             'inputOutputs': load(directory / 'runtime.json')['outputs'],
              'transform': {'tool': version, 'arguments': ['--no-sort', '--set-interpreter', interpreter, '--remove-rpath']},
              'outputs': binary_hashes(exported, platform)}
     shutil.copytree(directory, destination)
@@ -397,12 +455,13 @@ def portable(directory, repo, platform, revision, original, exported, destinatio
 
 
 def verify_portable(directory, repo, platform, revision, binaries):
-    result = verify_application(directory, repo, platform, revision, None)
+    result = verify_runtime(directory, repo, platform, revision)
     value = load(directory / 'portable.json')
-    if (set(value) != {'schemaVersion', 'scope', 'platform', 'revision', 'applicationReceiptSHA256', 'inputOutputs', 'transform', 'outputs'} or
+    if (set(value) != {'schemaVersion', 'scope', 'platform', 'revision', 'applicationReceiptSHA256', 'runtimeReceiptSHA256', 'inputOutputs', 'transform', 'outputs'} or
             type(value['schemaVersion']) is not int or value['schemaVersion'] != 1 or value['scope'] != SCOPE or value['platform'] != platform or value['revision'] != revision or
             value['applicationReceiptSHA256'] != result['applicationReceiptSHA256'] or
-            value['inputOutputs'] != load(directory / 'application.json')['outputs']):
+            value['runtimeReceiptSHA256'] != result['runtimeReceiptSHA256'] or
+            value['inputOutputs'] != load(directory / 'runtime.json')['outputs']):
         raise ValueError('portable transformation input substitution')
     transform = value['transform']
     if (set(transform) != {'tool', 'arguments'} or not transform['tool'].startswith('patchelf ') or
@@ -420,15 +479,29 @@ def verify_portable(directory, repo, platform, revision, binaries):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['component', 'compose', 'verify', 'patches', 'portable', 'verify-portable', 'capture-cargo'])
+    parser.add_argument('command', choices=['component', 'compose', 'verify', 'patches', 'runtime', 'verify-runtime', 'portable', 'verify-portable', 'capture-cargo'])
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--platform', choices=PLATFORMS, required=True)
     parser.add_argument('--component', choices=EVIDENCE)
-    for flag in ('evidence', 'output-root', 'destination', 'duckdb', 'lance', 'binaries', 'link-inputs', 'input-receipt', 'tool-version'):
+    for flag in ('evidence', 'output-root', 'destination', 'duckdb', 'lance', 'binaries', 'link-inputs', 'input-receipt', 'tool-version', 'replacements'):
         parser.add_argument('--' + flag, type=Path)
     parser.add_argument('--revision')
     parser.add_argument('--interpreter')
     args = parser.parse_args()
+    required = {
+        'component': ('component', 'evidence', 'output_root', 'destination'),
+        'compose': ('revision', 'duckdb', 'lance', 'binaries', 'link_inputs', 'evidence', 'destination'),
+        'verify': ('revision', 'binaries', 'destination'),
+        'verify-runtime': ('revision', 'binaries', 'destination'),
+        'verify-portable': ('revision', 'binaries', 'destination'),
+        'runtime': ('revision', 'binaries', 'input_receipt', 'output_root', 'destination', 'replacements'),
+        'portable': ('revision', 'binaries', 'input_receipt', 'output_root', 'destination', 'interpreter', 'tool_version'),
+        'patches': ('output_root', 'destination'),
+        'capture-cargo': ('destination',),
+    }
+    for name in required[args.command]:
+        if getattr(args, name) is None:
+            parser.error(f'{args.command} requires --{name.replace("_", "-")}')
     if args.command == 'capture-cargo':
         capture(sys.stdin.buffer, args.destination)
         return
@@ -441,6 +514,10 @@ def main():
         result = compose(args.repo, args.platform, args.revision, args.duckdb, args.lance, args.binaries, args.link_inputs, args.evidence, args.destination)
     elif args.command == 'portable':
         result = portable(args.input_receipt, args.repo, args.platform, args.revision, args.binaries, args.output_root, args.destination, args.interpreter, args.tool_version)
+    elif args.command == 'runtime':
+        result = runtime_rewrite(args.input_receipt, args.repo, args.platform, args.revision, args.binaries, args.output_root, args.destination, args.replacements)
+    elif args.command == 'verify-runtime':
+        result = verify_runtime(args.destination, args.repo, args.platform, args.revision, args.binaries)
     elif args.command == 'verify-portable':
         result = verify_portable(args.destination, args.repo, args.platform, args.revision, args.binaries)
     else:

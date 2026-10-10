@@ -33,6 +33,8 @@ let
         ++ duckdb
         ++ [
           "nix/application.nix"
+          "nix/patched-runtime.nix"
+          "nix/glibc-CVE-2026-19499.patch"
           "nix/portable.nix"
         ]
     );

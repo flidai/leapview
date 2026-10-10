@@ -25,8 +25,10 @@ is not used as evidence for the application's compiled SQLite component.
 
 The application checks both component receipts against its selected archive
 bytes and records the actual link-input list, compiler, build tags, and final
-ELF hashes. The portable export retains a separate transformation receipt for
-the post-`patchelf` bytes. The image carries these receipts at
+ELF hashes. Runtime dependency replacement retains its own input/output binding
+and the two exact glibc/libstdc++ replacement pairs, followed by a portable
+transformation receipt for the post-`patchelf` bytes. The image carries this
+complete original → runtime rewrite → portable receipt chain at
 `/usr/local/share/leapview/native-build`; its LeapView executable is
 `/usr/local/bin/leapview` and its controller is `/usr/local/libexec/leapviewctl`.
 Build paths are retained only in compiler/configuration evidence; source
@@ -47,7 +49,13 @@ python3 scripts/nix_native_build_receipt.py verify-portable \
   --binaries /path/to/extracted/bin
 ```
 
-Use `verify` for the original Nix application output before portable conversion.
+Use `verify` for the original application output and `verify-runtime` for the
+runtime-rewritten `.#leapview` output before portable conversion. The manual
+`native-application` Nix workflow retains the latter output's complete receipt
+bundle, its build output metadata, and a consumer verification bound to the
+actual application binary hashes, checkout revision, and native platform.
+The existing native extension publisher still executes LOAD/signature checks;
+its discovery record also binds the retained native-build verification hash.
 The consumer compares recipe fingerprints to the supplied trusted checkout,
 recomputes the compiled Cargo selection using its current patched lock, rejects
 missing or substituted component/link/output evidence, and checks final ELF

@@ -3,6 +3,9 @@ import base64
 import io
 import json
 import pathlib
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -208,6 +211,7 @@ class BuildReceipts(unittest.TestCase):
 
     def test_portable_transformation_binds_actual_shipped_bytes(self):
         directory, binaries = self.application()
+        directory, binaries = self.runtime(directory, binaries)
         exported = self.root / 'portable-bin'
         exported.mkdir()
         for binary in binaries.iterdir():
@@ -224,6 +228,50 @@ class BuildReceipts(unittest.TestCase):
         receipt.write(destination / 'portable.json', value)
         with self.assertRaisesRegex(ValueError, 'input substitution'):
             receipt.verify_portable(destination, REPO, 'linux/amd64', 'a' * 40, exported)
+
+    def runtime(self, directory, binaries):
+        output = self.root / 'rewritten-bin'
+        output.mkdir()
+        for binary in binaries.iterdir():
+            (output / binary.name).write_bytes(binary.read_bytes() + b'rewritten runtime references')
+        pairs = self.root / 'replacements.json'
+        receipt.write(pairs, [
+            {'old': '/nix/store/' + 'a' * 32 + '-glibc-2.40', 'new': '/nix/store/' + 'b' * 32 + '-glibc-2.40'},
+            {'old': '/nix/store/' + 'c' * 32 + '-gcc-15-lib', 'new': '/nix/store/' + 'd' * 32 + '-gcc-15-lib'},
+        ])
+        destination = self.root / 'runtime-receipts'
+        shutil.copytree(directory, destination)
+        receipt.runtime_rewrite(directory, REPO, 'linux/amd64', 'a' * 40, binaries, output, destination, pairs)
+        return destination, output
+
+    def test_runtime_rewrite_binds_original_and_replaced_bytes(self):
+        directory, binaries = self.application()
+        destination, rewritten = self.runtime(directory, binaries)
+        result = receipt.verify_runtime(destination, REPO, 'linux/amd64', 'a' * 40, rewritten)
+        self.assertIn('runtimeReceiptSHA256', result)
+        with self.assertRaisesRegex(ValueError, 'runtime output substitution'):
+            receipt.verify_runtime(destination, REPO, 'linux/amd64', 'a' * 40, binaries)
+        self.assertNotIn(b'/nix/store/', (destination / 'runtime-replacements.json.b64').read_bytes())
+        encoded = destination / 'runtime-replacements.json.b64'
+        original_mapping = encoded.read_bytes()
+        encoded.write_bytes(base64.b64encode(base64.b64decode(original_mapping).replace(b'b' * 32, b'e' * 32)))
+        with self.assertRaisesRegex(ValueError, 'replacement mapping substitution'):
+            receipt.verify_runtime(destination, REPO, 'linux/amd64', 'a' * 40, rewritten)
+        encoded.write_bytes(original_mapping)
+        value = receipt.load(destination / 'runtime.json')
+        value['inputOutputs']['leapview'] = '0' * 64
+        receipt.write(destination / 'runtime.json', value)
+        with self.assertRaisesRegex(ValueError, 'runtime transformation input substitution'):
+            receipt.verify_runtime(destination, REPO, 'linux/amd64', 'a' * 40, rewritten)
+
+    def test_consumer_cli_cannot_skip_actual_binary_verification(self):
+        for command in ('verify', 'verify-runtime', 'verify-portable'):
+            with self.subTest(command=command):
+                result = subprocess.run([sys.executable, str(SCRIPT), command,
+                    '--repo', str(REPO), '--platform', 'linux/amd64', '--revision', 'a' * 40,
+                    '--destination', str(self.root)], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('requires --binaries', result.stderr)
 
     def test_wrong_elf_architecture_rejected(self):
         directory, binaries = self.application()

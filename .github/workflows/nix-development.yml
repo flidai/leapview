@@ -254,6 +254,17 @@ jobs:
           nix build --no-update-lock-file .#leapview-tools --no-link --json -L \
             > .tmp/native-application/build.json
           tools=$(python3 -c 'import json; print(json.load(open(".tmp/native-application/build.json"))[0]["outputs"]["tools"])')
+          # The packaged application has a separate runtime dependency rewrite.
+          # Realize that cached output explicitly instead of guessing it from
+          # the tools-only build's output selection.
+          nix build --no-update-lock-file .#leapview --no-link --json -L \
+            > .tmp/native-application/application-build.json
+          application=$(python3 -c 'import json; print(json.load(open(".tmp/native-application/application-build.json"))[0]["outputs"]["out"])')
+          cp -R "$application/share/leapview/native-build" .tmp/native-application/native-build
+          python3 scripts/nix_native_build_receipt.py verify-runtime \
+            --repo "$PWD" --platform "linux/$ARCH" --revision "$GITHUB_SHA" \
+            --binaries "$application/bin" --destination .tmp/native-application/native-build \
+            > .tmp/native-application/native-build-verification.json
           # Discovery executes native LOAD/signature verification, not a cross
           # build or an unverified download. It grants no release admission.
           "$tools/bin/extensionsupply" --out "$PWD/.tmp/native-application/extensions"
@@ -271,6 +282,7 @@ jobs:
               'nativeExecution': True, 'releaseAdmission': False,
               'extensionSupplyToolSHA256': hashlib.file_digest(tool.open('rb'), 'sha256').hexdigest(),
               'extensionSupplyNARHash': (root / 'extensions.nar-sha256').read_text().strip(),
+              'nativeBuildVerificationSHA256': hashlib.sha256((root / 'native-build-verification.json').read_bytes()).hexdigest(),
           }
           (root / 'discovery.json').write_text(json.dumps(receipt, indent=2) + '\n')
           PY

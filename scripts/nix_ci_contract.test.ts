@@ -1014,6 +1014,28 @@ test('Nix development evaluates the native ARM runtime-security shell without bu
   expect(armShell).toBeLessThan(format)
 })
 
+test('manual native application retains receipts bound to the rewritten application and real publisher', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const job = workflow.jobs['native-application']
+  expect(job.if).toContain("inputs.checks == 'native-application'")
+  expect(job.strategy.matrix.include.map((entry: any) => entry.arch)).toEqual(['amd64', 'arm64'])
+  const build = job.steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain('nix build --no-update-lock-file .#leapview --no-link --json -L')
+  expect(build.run).toContain('application-build.json')
+  expect(build.run).toContain('cp -R "$application/share/leapview/native-build" .tmp/native-application/native-build')
+  expect(build.run).toContain('scripts/nix_native_build_receipt.py verify-runtime')
+  expect(build.run).toContain('--repo "$PWD" --platform "linux/$ARCH" --revision "$GITHUB_SHA"')
+  expect(build.run).toContain('--binaries "$application/bin" --destination .tmp/native-application/native-build')
+  expect(build.run).toContain('> .tmp/native-application/native-build-verification.json')
+  expect(build.run.indexOf('verify-runtime')).toBeLessThan(build.run.indexOf('"$tools/bin/extensionsupply" --out'))
+  expect(build.run).toContain("'releaseAdmission': False")
+  expect(build.run).toContain("'nativeBuildVerificationSHA256'")
+  const upload = job.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(upload.if).toBe('always()')
+  expect(upload.with.path).toBe('.tmp/native-application/')
+  expect(upload.with.name).toContain('${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}')
+})
+
 test('Nix development evaluates both native host-verifier shells and generation tools', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const steps = workflow.jobs.development.steps
