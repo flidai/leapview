@@ -37,3 +37,20 @@ test('external conformance prepares pinned fixture images before container work'
   expect(external.indexOf('bash scripts/prepare_ci_fixture_images.sh minio')).toBeLessThan(
     external.indexOf('go test -tags integration ./internal/platform/testminio -count=1'))
 })
+
+test('recovery qualification prepares pinned provider images before each fresh runner contract', () => {
+  const workflow = parse(readFileSync('.github/workflows/recovery-evidence-qualification.yml', 'utf8'))
+  for (const input of ['scripts/prepare_ci_fixture_images.sh', 'scripts/tests/test_prepare_ci_fixture_images.py',
+    'scripts/ci_dependency_acquisition_contract.test.ts']) {
+    expect(workflow.on.pull_request.paths).toContain(input)
+  }
+  for (const [job, contract] of [['evidence-qualification', 'Qualify recovery evidence against disposable providers'],
+    ['full-validation', 'Run the existing full-validation extras']]) {
+    const steps = workflow.jobs[job].steps
+    const index = steps.findIndex((step: any) => step.name === 'Prepare pinned provider images')
+    expect(index).toBeGreaterThanOrEqual(0)
+    expect(steps[index].run).toContain('bash scripts/prepare_ci_fixture_images.sh postgres')
+    expect(steps[index].run).toContain('bash scripts/prepare_ci_fixture_images.sh minio')
+    expect(index).toBeLessThan(steps.findIndex((step: any) => step.name === contract))
+  }
+})

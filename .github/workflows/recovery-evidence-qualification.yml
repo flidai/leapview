@@ -7,6 +7,9 @@ on:
       - '.github/workflows/recovery-evidence-qualification.yml'
       - '.github/actions/setup-ci/**'
       - '.github/actions/setup-docker/**'
+      - 'scripts/prepare_ci_fixture_images.sh'
+      - 'scripts/tests/test_prepare_ci_fixture_images.py'
+      - 'scripts/ci_dependency_acquisition_contract.test.ts'
       - 'deploy/postgres/**'
       - 'internal/platform/postgres/postgrestest/**'
       - 'internal/platform/testminio/**'
@@ -39,6 +42,10 @@ jobs:
           browser: 'false'
       - name: Prepare generated contracts
         run: task generate
+      - name: Prepare pinned provider images
+        run: |
+          bash scripts/prepare_ci_fixture_images.sh postgres
+          bash scripts/prepare_ci_fixture_images.sh minio
       - name: Qualify recovery evidence against disposable providers
         env:
           LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: 'true'
@@ -71,5 +78,9 @@ jobs:
           terraform: 'true'
       - name: Prepare generated and embedded assets
         run: task ci:prepare
+      - name: Prepare pinned provider images
+        run: |
+          bash scripts/prepare_ci_fixture_images.sh postgres
+          bash scripts/prepare_ci_fixture_images.sh minio
       - name: Run the existing full-validation extras
         run: task ci:full:extras
