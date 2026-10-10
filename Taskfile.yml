@@ -1783,6 +1783,13 @@ tasks:
     cmds:
       - nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh
 
+  managed:postgres:bootstrap-test:
+    desc: Verify fresh native PostgreSQL bootstrap and privilege boundaries in the managed-recovery Nix shell
+    preconditions:
+      - test -x "$LEAPVIEW_TEST_MANAGED_POSTGRES_BIN/psql"
+    cmds:
+      - POSTGRES_BIN="$LEAPVIEW_TEST_MANAGED_POSTGRES_BIN" python3 -B -m unittest discover -s deploy/managed/postgres -p '*_test.py'
+
   managed:hosts:postgres-promotion-test:
     desc: Exercise actual installed PostgreSQL promotion module, private TLS and exact reboot retry in disposable guests
     cmds:
