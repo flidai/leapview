@@ -154,7 +154,7 @@ func validatePreparedRehearsal(r NativeRequest) error {
 	if !digestPattern.MatchString(state.CandidateEnvironmentDigest) {
 		return errors.New("prepared rehearsal has no candidate environment binding")
 	}
-	if prior.CandidateImage != r.CandidateImage || prior.CandidateRevision != r.CandidateRevision || prior.attestationRevision() != r.attestationRevision() || prior.PredecessorImage != r.PredecessorImage || prior.PredecessorRevision != r.PredecessorRevision || !reflect.DeepEqual(prior.Profile, r.Profile) || !reflect.DeepEqual(prior.Plan, r.Plan) || !reflect.DeepEqual(prior.AccessTransition, r.AccessTransition) {
+	if prior.CandidateImage != r.CandidateImage || prior.CandidateRevision != r.CandidateRevision || prior.attestationRevision() != r.attestationRevision() || prior.PredecessorImage != r.PredecessorImage || prior.PredecessorRevision != r.PredecessorRevision || !reflect.DeepEqual(prior.Profile, r.Profile) || !reflect.DeepEqual(prior.Plan, r.Plan) || !reflect.DeepEqual(prior.AccessTransition, r.AccessTransition) || !reflect.DeepEqual(prior.AgentCredentialTransition, r.AgentCredentialTransition) {
 		return errors.New("prepared rehearsal does not bind this source and installation transition")
 	}
 	var capturedEnvironment []byte
