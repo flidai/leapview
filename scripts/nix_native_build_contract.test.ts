@@ -1,0 +1,178 @@
+import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { parse } from 'yaml'
+
+test('native database fixtures execute the selected engine outside the Nix sandbox', () => {
+  const application = readFileSync('nix/application.nix', 'utf8')
+  expect(application).toContain('go test -c -tags="$tags,integration" -o "$tools/libexec/database-connectors.test"')
+  expect(application).toContain('go test -c -tags="$tags,integration" -o "$tools/libexec/postgres-ducklake.test"')
+  expect(application).toContain('--database ${duckdb.database.archives}')
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const job = workflow.jobs['native-application']
+  expect(job.steps.find((step: any) => step.uses === './.github/actions/setup-docker').with.postgres).toBe('true')
+  const build = job.steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain('"$tools/libexec/database-connectors.test" -test.v -test.timeout=10m')
+  expect(build.run).toContain('TestNativePostgreSQLSourceReadDenialAndRecovery|TestNativeMySQLSourceReadDenialAndRecovery')
+  expect(build.run).toContain("-test.run '^TestPostgresDuckLakeRuntimeLifecycle$'")
+  expect(build.env.LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED).toBe('true')
+  expect(build.run).toContain('grep -Eq "^--- PASS: $name \\("')
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestPostgresDuckLakeRuntimeLifecycle \\('")
+  for (const name of ['databaseConnectorTestSHA256', 'databaseConnectorLogSHA256', 'postgresDuckLakeTestSHA256', 'postgresDuckLakeLogSHA256']) {
+    expect(build.run).toContain(`'${name}'`)
+  }
+  expect(build.run.indexOf('database-connectors.test')).toBeLessThan(build.run.indexOf('"$tools/bin/extensionsupply" --out'))
+})
+
+test('selected Excel workload executes and retains non-skipped native evidence', () => {
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('python3 -m unittest discover -s scripts/tests -p test_nix_native_excel_receipt.py')
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain("-test.run '^TestNativeExcelSourceReadAndFreshSession$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeExcelSourceReadAndFreshSession \\('")
+  expect(build.run).toContain("'excelSourceTestSHA256'")
+  expect(build.run).toContain("'excelSourceLogSHA256'")
+  const application = readFileSync('nix/application.nix', 'utf8')
+  expect(application).toContain('--excel ${duckdb.excel.archives}')
+  expect(application).toContain('$excelLibraries $avroLibraries $azureLibraries $icebergLibraries ${duckdb.delta.rust}/lib/libdelta_kernel_ffi.a ${duckdb.vortex.rust}/lib/libvortex_duckdb.a -Wl,--end-group')
+  const recipe = readFileSync('nix/duckdb.nix', 'utf8')
+  expect(recipe).toContain('duckdb_extension_load(excel SOURCE_DIR ${excel.source} INCLUDE_DIR ${excel.source}/src/excel/include EXTENSION_VERSION ${excel.revision})')
+  expect(recipe).toContain('"EXPAT_LIBRARY" "${excel.archives}/lib/libexpat.a"')
+  expect(recipe).toContain('"MINIZIP_LIBRARY" "${excel.archives}/lib/libminizip-ng.a"')
+})
+
+test('native HTTPFS checks default trust using the image CA layout in an isolated filesystem', () => {
+  const application = readFileSync('nix/application.nix', 'utf8')
+  const image = readFileSync('nix/image.nix', 'utf8')
+  const root = readFileSync('nix/ca-root.nix', 'utf8')
+  expect(image).toContain('cp -R ${caRoot}/etc/ssl "$out/etc/ssl"')
+  expect(root).toContain('bash ${./ca-root.sh} ${pkgs.cacert} "$out"')
+  expect(application).toContain('go test -c -tags="$tags" -o "$tools/libexec/http-ca.test"')
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain('sudo "$tools/libexec/check-http-default-ca" "$tools/libexec/http-ca.test" "$tools/libexec/ca-root.sh"')
+  expect(build.run).toContain("'httpDefaultTrustLogSHA256'")
+  const check = readFileSync('nix/check-http-default-ca.sh', 'utf8')
+  expect(check).toContain('chroot "$fixture/root" /tmp/probe')
+  expect(check).toContain('if verify > "$fixture/rejected.log" 2>&1; then')
+  expect(check).toContain('bash "$layout" "$fixture/source" "$fixture/root"')
+  expect(check).toContain("-test.run '^TestCompiledHTTPFSDefaultTrust$'")
+})
+
+test('manual native application retains receipts bound to the rewritten application and real publisher', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const job = workflow.jobs['native-application']
+  expect(job.if).toContain("inputs.checks == 'native-application'")
+  expect(job.strategy.matrix.include.map((entry: any) => entry.arch)).toEqual(['amd64', 'arm64'])
+  const build = job.steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain('nix build --no-update-lock-file .#leapview --no-link --json -L')
+  expect(build.run).toContain('application-build.json')
+  expect(build.run).toContain('cp -R "$application/share/leapview/native-build" .tmp/native-application/native-build')
+  expect(build.run).toContain('scripts/nix_native_build_receipt.py verify-runtime')
+  expect(build.run).toContain('--repo "$PWD" --platform "linux/$ARCH" --revision "$GITHUB_SHA"')
+  expect(build.run).toContain('--binaries "$application/bin" --destination .tmp/native-application/native-build')
+  expect(build.run).toContain('> .tmp/native-application/native-build-verification.json')
+  expect(build.run.indexOf('verify-runtime')).toBeLessThan(build.run.indexOf('"$tools/bin/extensionsupply" --out'))
+  expect(build.run).toContain("'releaseAdmission': False")
+  expect(build.run).toContain("'nativeBuildVerificationSHA256'")
+  const upload = job.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(upload.if).toBe('always()')
+  expect(upload.with.path).toBe('.tmp/native-application/')
+  expect(upload.with.name).toContain('${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}')
+})
+
+test('selected Avro fork executes and retains non-skipped native evidence', () => {
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('python3 -m unittest discover -s scripts/tests -p test_nix_native_avro_receipt.py')
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain("-test.run '^TestNativeAvroReadAndFreshSession$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeAvroReadAndFreshSession \\('")
+  expect(build.run).toContain("'avroSourceTestSHA256'")
+  expect(build.run).toContain("'avroSourceLogSHA256'")
+  expect(readFileSync('nix/application.nix', 'utf8')).toContain('--avro ${duckdb.avro.archives}')
+  const recipe = readFileSync('nix/duckdb.nix', 'utf8')
+  expect(recipe).toContain('duckdb_extension_load(avro SOURCE_DIR ${avro.source} EXTENSION_VERSION ${avro.revision})')
+  expect(recipe).toContain('"AVRO_LIBRARY" "${avro.archives}/lib/libavro.a"')
+  expect(recipe).toContain('"SNAPPY_LIBRARY" "${avro.archives}/lib/libsnappy.a"')
+})
+
+
+test('Delta qualification executes selected snapshots and binds the Rust headers', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8')) as any
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain("-test.run '^TestNativeDeltaSnapshotsAndFreshSession$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeDeltaSnapshotsAndFreshSession")
+  expect(build.run).toContain("'deltaSourceTestSHA256'")
+  expect(build.run).toContain("'deltaSourceLogSHA256'")
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('python3 -m unittest discover -s scripts/tests -p test_nix_native_delta_receipt.py')
+  expect(readFileSync('nix/application.nix', 'utf8')).toContain('--delta ${duckdb.delta.rust}')
+  const recipe = readFileSync('nix/duckdb.nix', 'utf8')
+  expect(recipe).toContain('duckdb_extension_load(delta SOURCE_DIR ${delta.source} EXTENSION_VERSION ${delta.revision})')
+  expect(recipe).toContain('"DELTA_KERNEL_LIBRARY" "${delta.rust}/lib/libdelta_kernel_ffi.a"')
+  expect(recipe).toContain('"DELTA_KERNEL_INCLUDE_DIR" "${delta.rust}/include"')
+})
+
+test('selected Azure SDK executes its signed reader and retains non-skipped evidence', () => {
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('python3 -m unittest discover -s scripts/tests -p test_nix_native_azure_receipt.py')
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain("-test.run '^TestNativeAzureStaticReadAndRecovery$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeAzureStaticReadAndRecovery \\('")
+  expect(build.run).toContain("'azureSourceTestSHA256'")
+  expect(build.run).toContain("'azureSourceLogSHA256'")
+  expect(readFileSync('nix/application.nix', 'utf8')).toContain('--azure ${duckdb.azure.archives}')
+  expect(readFileSync('nix/duckdb.nix', 'utf8')).toContain('duckdb_extension_load(azure SOURCE_DIR ${azure.source} EXTENSION_VERSION ${azure.revision})')
+})
+
+test('Azure static XML preserves upstream checks after custom build capture', () => {
+  const recipe = readFileSync('nix/azure.nix', 'utf8')
+  expect(recipe).toContain('checkPhase =')
+  expect(recipe).toContain('make -j"$NIX_BUILD_CORES" check SHELL="$SHELL"')
+  expect(recipe.indexOf('make -j"$NIX_BUILD_CORES" check')).toBeLessThan(recipe.indexOf("printf 'libxml2 upstream checks passed"))
+  expect(recipe).toContain('libxml2-checks.txt')
+})
+
+test('Vortex qualifies the exact compiled bridge through canonical path reads', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain("-test.run '^TestNativeVortexSourceReadAndFreshSession$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeVortexSourceReadAndFreshSession")
+  expect(build.run).toContain("'vortexSourceLogSHA256'")
+  expect(build.run).toContain("'vortexSourceTestSHA256'")
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('python3 -m unittest discover -s scripts/tests -p test_nix_native_vortex_receipt.py')
+  expect(readFileSync('nix/application.nix', 'utf8')).toContain('--vortex ${duckdb.vortex.rust}')
+  const recipe = readFileSync('nix/duckdb.nix', 'utf8')
+  expect(recipe).toContain('duckdb_extension_load(vortex SOURCE_DIR ${vortex.source} EXTENSION_VERSION ${vortex.revision})')
+  expect(recipe).toContain('"VORTEX_FFI_LIBRARY" "${vortex.rust}/lib/libvortex_duckdb.a"')
+  expect(recipe).toContain('"VORTEX_FFI_INCLUDE_DIR" "${vortex.rust}/include"')
+})
+
+
+test('Iceberg qualification preserves snapshot fixtures, exact linked binary and plain DuckDB CMake signature', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['native-application'].steps.find((step: any) => step.run?.includes('.#leapview-tools'))
+  expect(build.run).toContain('(cd internal/analytics/duckdb')
+  expect(build.run).toContain("-test.run '^TestNativeIcebergSnapshotsAndFreshSession$'")
+  expect(build.run).toContain("grep -Eq '^--- PASS: TestNativeIcebergSnapshotsAndFreshSession \\('")
+  expect(build.run).toContain("'icebergSourceTestSHA256'")
+  expect(build.run).toContain("'icebergSourceLogSHA256'")
+  expect(readFileSync('nix/application.nix', 'utf8')).toContain('--iceberg ${duckdb.iceberg.archives}')
+  const patch = readFileSync('nix/iceberg-static-dependencies.patch', 'utf8')
+  // Pinned DuckDB's build_loadable_extension already uses the plain signature.
+  expect(patch).toContain('+  target_link_libraries(${target} -Wl,--start-group')
+  expect(patch).not.toContain('+  target_link_libraries(${target} PRIVATE')
+})
+
+
+test('shared SQLite preserves one selected archive and executes its FTS/RTREE checks', () => {
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('test_nix_native_sqlite_receipt.py')
+  expect(readFileSync('nix/duckdb.nix', 'utf8')).toContain('"SQLITE_SELECTED_LIBRARY" "${sqlite.library}/lib/libsqlite3.a"')
+  const application = readFileSync('nix/application.nix', 'utf8')
+  expect(application).toContain('--sqlite ${duckdb.sqlite.library}')
+  expect(application).toContain('$nativeLibraries ${duckdb.sqlite.library}/lib/libsqlite3.a')
+  const recipe = readFileSync('nix/sqlite-library.nix', 'utf8')
+  expect(recipe).toContain('"$out/lib/libsqlite3.a" -lm -lpthread -ldl')
+  expect(recipe).toContain('"$TMPDIR/sqlite-final-consumer" "$TMPDIR/sqlite-final-archive.db"')
+  const smoke = readFileSync('nix/sqlite-smoke.c', 'utf8')
+  expect(smoke).toContain('CREATE VIRTUAL TABLE bounds USING rtree')
+  expect(smoke).toContain('sqlite3_compileoption_used("ENABLE_FTS5")')
+})

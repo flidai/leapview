@@ -96,7 +96,7 @@ func (r *SourceRuntime) prepare(ctx context.Context, model *semanticmodel.Model,
 			if err := validateAdmittedExtension(extension, admitted); err != nil {
 				return nil, err
 			}
-			if _, err := session.ExecContext(ctx, loadExtensionStatement(admitted.Path)); err != nil {
+			if _, err := session.ExecContext(ctx, loadAdmittedExtensionStatement(admitted)); err != nil {
 				return nil, fmt.Errorf("loading admitted extension %s: %w", extension, err)
 			}
 		}

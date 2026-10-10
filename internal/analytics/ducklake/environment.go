@@ -648,10 +648,10 @@ func (e *Environment) EnsureExtension(ctx context.Context, name string) error {
 			admitted, admissionErr := e.extensionAdmission.AdmitExtension(ctx, name)
 			if admissionErr != nil {
 				err = admissionErr
-			} else if validationErr := validateAdmittedExtension(admitted, name); validationErr != nil {
+			} else if statement, validationErr := admittedExtensionLoadStatement(admitted, name); validationErr != nil {
 				err = validationErr
 			} else {
-				_, err = session.ExecContext(ctx, "LOAD '"+sqlLiteral(admitted.Path)+"'")
+				_, err = session.ExecContext(ctx, statement)
 			}
 		} else {
 			err = fmt.Errorf("DuckLake extension admission is required")

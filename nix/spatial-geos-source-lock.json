@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/libgeos/geos",
+  "revision": "7db6f62d50221a7ccac91c329a9a4fe61d172a56",
+  "version": "3.14.1",
+  "sourceNARHash": "sha256-9Jx2NGeTaDwrHQ5Yz8tY9OAda2cuaRMUpDo4foF6EhE=",
+  "selectedFiles": {
+    "CMakeLists.txt": "95680eed1fc8517bdd6c17280d384d02396def4128e160279006c39e04612b32",
+    "capi/geos_c.cpp": "195e8d4d6b3e7b80e4c09ff597605c5d721b58db583a49fdb0eefc95f78300e8",
+    "capi/geos_ts_c.cpp": "a8b0bb8a4c7c5239c0396d51439006c581d1c53e485fb99965c723c8ac812704",
+    "include/geos/version.h.in": "2f1a641565dca15e39c3910120fcd96870201f69b226fabcf5c6483a5953ee85",
+    "src/geom/Geometry.cpp": "107ac1f2aa816a488a2d9fb643a8a2942bb209d2c8fd357f1ff9f46572a93cfe"
+  },
+  "features": {
+    "BUILD_SHARED_LIBS": false,
+    "CMAKE_POSITION_INDEPENDENT_CODE": true,
+    "BUILD_TESTING": true,
+    "BUILD_BENCHMARKS": false,
+    "BUILD_GEOSOP": false,
+    "BUILD_WEBSITE": false
+  },
+  "scope": "Selected GEOS producer only; complete Spatial closure, engine and publisher qualification remain pending."
+}

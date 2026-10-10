@@ -1,0 +1,9 @@
+--- a/lang/c/tests/CMakeLists.txt
++++ b/lang/c/tests/CMakeLists.txt
+@@ -86,4 +86,5 @@
+ add_avro_test_checkmem(test_avro_1691)
+ add_avro_test_checkmem(test_avro_1906)
+ add_avro_test_checkmem(test_avro_1904)
+-add_avro_test_checkmem(test_avro_logical_types)
++# Pinned DuckDB fork registers this test but does not ship its source file.
++# LeapView separately requires its static codec/logical-schema consumer.

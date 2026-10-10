@@ -40,8 +40,9 @@ in
     ${application.tools}/bin/mapassets --out "$out"
   '';
   extensions = fixed "leapview-extension-supply" extensionHash ''
-    # The existing publisher verifies exact extension LOADs and official signatures.
-    # The Nix hash additionally pins the entire resulting supply across rebuilds.
+    # The publisher verifies closed compiled source descriptors and actual
+    # static registration; remaining extensions retain official exact-file LOADs.
+    # The Nix hash pins the complete resulting supply across rebuilds.
     ${application.tools}/bin/extensionsupply --out "$TMPDIR/supply"
     cp -R "$TMPDIR/supply" "$out"
   '';

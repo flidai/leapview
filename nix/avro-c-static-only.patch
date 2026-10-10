@@ -1,0 +1,53 @@
+--- a/lang/c/CMakeLists.txt
++++ b/lang/c/CMakeLists.txt
+@@ -25,6 +25,7 @@
+ option(BUILD_EXAMPLES "Build examples." OFF)
+ option(BUILD_TESTS "Build tests." OFF)
+ option(BUILD_DOCS "Build docs." OFF)
++option(BUILD_SHARED_LIBS "Build shared Avro library." ON)
+ # Eliminates warning about linker paths when linking both zlib and
+ # liblzma.
+ cmake_policy(SET CMP0003 NEW)
+--- a/lang/c/src/CMakeLists.txt
++++ b/lang/c/src/CMakeLists.txt
+@@ -88,7 +88,7 @@
+ target_link_libraries(avro-static ${JANSSON_LIBRARIES} ${CODEC_LIBRARIES} ${THREADS_LIBRARIES})
+ set_target_properties(avro-static PROPERTIES OUTPUT_NAME avro)
+ 
+-if (NOT WIN32)
++if (BUILD_SHARED_LIBS AND NOT WIN32)
+ # TODO: Create Windows DLLs. See https://www.cmake.org/Wiki/BuildingWinDLL
+ add_library(avro-shared SHARED ${AVRO_SRC})
+ target_link_libraries(avro-shared ${JANSSON_LIBRARIES} ${CODEC_LIBRARIES} ${THREADS_LIBRARIES})
+@@ -96,7 +96,7 @@
+         OUTPUT_NAME avro
+         VERSION ${LIBAVRO_DOT_VERSION}
+         SOVERSION ${LIBAVRO_SOVERSION})
+-endif(NOT WIN32)
++endif()
+ 
+ install(FILES
+         ${CMAKE_CURRENT_SOURCE_DIR}/avro.h
+@@ -108,19 +108,19 @@
+ 
+ include(GNUInstallDirs)
+ 
+-if (WIN32)
++if (WIN32 OR NOT BUILD_SHARED_LIBS)
+ install(TARGETS avro-static
+ 	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
+-else(WIN32)
++else()
+ install(TARGETS avro-static avro-shared
+ 	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+ 	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
+-endif(WIN32)
++endif()
+ 
+ # Install pkg-config file
+ 

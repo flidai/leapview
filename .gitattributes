@@ -1,1 +1,3 @@
 pkg/duckdbsql/internal/upstream/function_docs/** -whitespace
+# Preserve hash-pinned patch context lines and upstream receipt bytes.
+nix/quick-xml/*.patch -whitespace

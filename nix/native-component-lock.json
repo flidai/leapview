@@ -1659,8 +1659,8 @@
       "reason": "vendored-component vulnerability identities and source-specific patch matching not yet complete"
     },
     {
-      "component": "all14 extension payloads",
-      "reason": "exact compiled transitive dependency closure not yet bound to pinned payloads for both native architectures"
+      "component": "native extension components",
+      "reason": "3 remaining signed extension payload closures (Iceberg, Spatial, Vortex) are not bound to actual compiled dependency selections on both architectures; revised source-built HTTP, database, Excel, Avro, Delta and Azure whole-engine runtime and publisher qualification remain pending; source-built receipts are build-composition evidence, not exhaustive binary closure"
     },
     {
       "component": "native vulnerability assessment",
@@ -1668,7 +1668,220 @@
     }
   ],
   "extensionSupplyHashes": {
-    "linux/amd64": "sha256-wLSZ2dQ8nlSxeQkzO18EuPJFLZruPV8g0g3uX6gzanU=",
-    "linux/arm64": "sha256-yvi6Rhmnc63K2eXDqY/UwT++E3EBRD8sRzrIhrQa258="
-  }
+    "linux/amd64": "sha256-jJ/L7HcshXVTZ4+1YHFAmCSBaRtDJFatpbjnfLAGT4U=",
+    "linux/arm64": "sha256-SSBMoMlcrv6UuO2audQ3wKrJZDxe5SGIZ/SMboR1gsA="
+  },
+  "sourceBuiltReplacements": [
+    {
+      "name": "sqlite",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "wrapper": {
+        "repository": "duckdb/duckdb-sqlite",
+        "sourceRevision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+        "sourceNARSRI": "sha256-KGN/HbL3S0W8885CEarSUcTA6haSCFq5ElWA9Fzxnlg="
+      },
+      "amalgamation": {
+        "version": "3.53.4",
+        "url": "https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip",
+        "archiveSHA256": "sha256:1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d",
+        "sourceID": "2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc",
+        "sqlite3.cSHA256": "sha256:b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+        "sqlite3.cSHA3_256": "67f423e9ebbbdc473cbc4772c872ee6b89f31fde4ed0279a5c25d5f65c043a16",
+        "sqlite3.hSHA256": "sha256:919e7f2e8ed1d8f56ac17b412b8971c76aa5d1a879752cc6058f75e7d5910e1d"
+      },
+      "originalSignedPayloadDisposition": "Original extensions[].sqlite payload hashes are historical observed official binaries and are not identities or provenance of this rebuilt component."
+    },
+    {
+      "name": "ducklake",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/ducklake",
+        "revision": "d318a545571d7d46eb751fa2aa5f6f4389285d3c",
+        "sourceNARHash": "sha256-qq+U3+X2cGtw91/WnhJJG2WyWQflkJMuBvGjQ0si2DY="
+      },
+      "nativeDependencyLock": "nix/ducklake-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:23de3cc5a3cfc32bf7c054abbc89e4feec9fbf40dee4a3f1519bfcabd607935e",
+      "nativeDependency": {
+        "repository": "https://github.com/RoaringBitmap/CRoaring",
+        "version": "5.2.2",
+        "revision": "6ef0aaad28eb6298db5a7022695b290a8fe47e66",
+        "sourceNARHash": "sha256-ZipK1pNdxNaEAVkFygH6pwOHXvQWfGKVk1S6onKpvPE=",
+        "pkgConfigPatchSHA256": "39a8fef1dd74a0b5281fe9a6a5459a4e4d0d950ea608d7481bb734d92e93b8df",
+        "patchedFiles": {
+          "CMakeLists.txt": "1a1f8ff32e848560d77ce642afba6ac2e89839f31c799b1d377bf0ae203dfcbb",
+          "include/roaring/roaring_version.h": "ac6a2170d73532ce5e456730498ac52f1bb7e436b41b48acc64b99a99355870c",
+          "roaring.pc.in": "f336168b27ddca63a27fa0c0eaa5a6e84f4cf38f8128d839e656c0d80050c51f"
+        },
+        "cmake": {
+          "BUILD_SHARED_LIBS": false,
+          "ROARING_BUILD_STATIC": true,
+          "CMAKE_POSITION_INDEPENDENT_CODE": true,
+          "ROARING_USE_CPM": false,
+          "ENABLE_ROARING_TESTS": true,
+          "ENABLE_ROARING_BENCHMARKS": false,
+          "ROARING_BUILD_LTO": false,
+          "ROARING_DISABLE_X64": false,
+          "ROARING_DISABLE_AVX": false,
+          "ROARING_DISABLE_NEON": false,
+          "ROARING_DISABLE_AVX512": false
+        }
+      },
+      "originalSignedPayloadDisposition": "Original signed DuckLake payload hashes remain historical observations; this source-built component has a separate compiled descriptor and actual native build receipt."
+    },
+    {
+      "name": "httpfs",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-httpfs",
+        "revision": "c3f215ab360f04dc3d3d5305fa81849c0121f111",
+        "sourceNARHash": "sha256-Yo/f+9aDU3qZw1aGv0ABXjl40QoeUhGIXe2dlN91PHs=",
+        "patchSHA256": "8cd118810041889bb478c0d4764fe9711d9fb731b0d667f9dcdf306fc1b67ba8"
+      },
+      "nativeDependencyLock": "nix/http-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:dbf9eca1180f163a24aa928b3cc27afac2ce788546bc2ae066944e79f8b336d1",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Engine-vendored httplib/mbedtls source-specific identity and complete native vulnerability scan remain unresolved; selected source and archive receipts are build composition evidence.",
+      "originalSignedPayloadDisposition": "Original extension payload hashes are historical observed official binaries, not identities or provenance of this rebuilt component."
+    },
+    {
+      "name": "quack",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-quack",
+        "revision": "40de7badae4193c29d9c0834473fb76acc6c51e6",
+        "sourceNARHash": "sha256-E33EiV/SYD6l1kHiCNgkt/d15FT8hNM53pNPQgsMEqA=",
+        "patchSHA256": "b5710037910ed1b2a4d3573f89d6120ac1afe3c4c0b3ab93b5deada280d95d21"
+      },
+      "nativeDependencyLock": "nix/http-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:dbf9eca1180f163a24aa928b3cc27afac2ce788546bc2ae066944e79f8b336d1",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Engine-vendored httplib/mbedtls source-specific identity and complete native vulnerability scan remain unresolved; selected source and archive receipts are build composition evidence.",
+      "originalSignedPayloadDisposition": "Original extension payload hashes are historical observed official binaries, not identities or provenance of this rebuilt component."
+    },
+    {
+      "name": "postgres",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-postgres",
+        "revision": "8f813f9b9c9e52a9074a050a0be60f49160a6baa",
+        "sourceNARHash": "sha256-aldLku7QXSC6bNAm5sbjwAw24E1Ly/S6p0hkLBB9T00=",
+        "patchSHA256": "36592b3350ad04069103335d62c84ffbcf20a1452ffa08a636a87e1c9a98668a"
+      },
+      "nativeDependencyLock": "nix/database-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:0d46534db82fe7b73e088e7daa17d727a48874b845db22d7673bf3725b5e123d",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; exhaustive engine/header/member closure and complete native vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "mysql",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-mysql",
+        "revision": "37006e53a58ddc31eeb96ff95c21f3196e27fcf2",
+        "sourceNARHash": "sha256-WkAklbtNRGvnGAlakp0U2lI+V+owrZqiQTgZ/NAnknI=",
+        "patchSHA256": "2e7ef2e68a8e4bb27e701944b675954287e532b4e1241e80bbb698caa707f68d"
+      },
+      "nativeDependencyLock": "nix/database-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:0d46534db82fe7b73e088e7daa17d727a48874b845db22d7673bf3725b5e123d",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; exhaustive engine/header/member closure and complete native vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "excel",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-excel",
+        "revision": "f4c72b5ef04a03b3a78a95b5a2ee94ba93e3178d",
+        "sourceNARHash": "sha256-hyHTiTfRR+hXJ7hZKt/h/Hu1zNgEYEbMozIv6WZbnfA=",
+        "patchSHA256": "5b553c13545a468d38de5603d39e97630b0eb667311edf220f791d4418155981"
+      },
+      "nativeDependencyLock": "nix/excel-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:20f4d69e10de2afd01ff7d533c3c37c4db612790c6f019bd45c8b3ac020f7ed9",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "avro",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-avro",
+        "revision": "f9d590297485f0318f480372c70bdd852826e258",
+        "sourceNARHash": "sha256-1JiLOHgnqd7Oao3S8W2/erlqi8fgvpbHXSURhigBQSM=",
+        "patchSHA256": "3161665ca9dc5bce49c8418f2648308f1e0ea0a6fbda16c51bc181c2c57e817c"
+      },
+      "nativeDependencyLock": "nix/avro-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:ec030207b7daef63badc5cd21a176c1e3f08b33216c3c04f72c3046b08e31e52",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "delta",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-delta",
+        "revision": "45c40878601b54b4188b09e08732fe0d576ad222",
+        "sourceNARHash": "sha256-IXeDlb4yQ6koXTT1b7yUkN9xRsAMet9x4qFlBmLpwXw=",
+        "patchSHA256": "0532eb99785888fad7f491c1ec519630f45c193d18c1868191de474e65fa5d64",
+        "headerTransformFiles": {
+          "scripts/ffi/generate_delta_kernel_ffi_header": "a520fc8269a7d7cb6e8652f09c277248219109d18ddfcd1e47787b37b62a5739",
+          "scripts/ffi/prefix.inc": "52cc84ebe22822100c98a6e2edd0499762dd27de36830458da6f3a2e58932fe0",
+          "scripts/ffi/suffix.inc": "5d1717f8855cd0697eef6545ffeee143996497e60a2c9c6479f74084f778a77a"
+        }
+      },
+      "nativeDependencyLock": "nix/delta-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:6575f8fb88fcee4407b8ea5bf7ad9b9ce8de0480dbeb69a003b3f365ee2c55a3",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "azure",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-azure",
+        "revision": "563589b2f24290a4dcdd4247eaedf2b544f9dbcd",
+        "sourceNARHash": "sha256-4gnj1OCdyhFosaCPVmiyFx9nSCSemNRxIC+nmVwtHjs=",
+        "patchSHA256": "304f93c4133a471e3c12aca726fd0eaef2c5f913ba7fed8d96fd2f02951ea87e"
+      },
+      "nativeDependencyLock": "nix/azure-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:c4c2f1e57c8d863efd45a3d50fdfcad18e0936f564f717c62fc8f5cf98ae9513",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "vortex",
+      "wrapper": {
+        "repository": "https://github.com/vortex-data/duckdb-vortex",
+        "revision": "275ac230e1d9afd08926b6989ec2467f92fae6e3",
+        "sourceNARHash": "sha256-/deOIpEGSdD5nJQ2w/YifNGknezld1Yv3FkFcB9ZlOk=",
+        "patchSHA256": "30edbd3866a695f8f287ded003d99e609b9e98598a3a61c203727963418ff2b5"
+      },
+      "nativeDependencyLock": "nix/vortex-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:9ebe41827182c32ca8963df83c4cdaa4a85a7797d36d8f67587d736b3e65298e",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    },
+    {
+      "name": "iceberg",
+      "wrapper": {
+        "repository": "https://github.com/duckdb/duckdb-iceberg",
+        "revision": "757264559e745be697e9306e144e8889eb1dc024",
+        "sourceNARHash": "sha256-oLEwhFmVTlnF8gsedQVi4ARNIPKjaLkcDUUwM+hTUlU=",
+        "patchSHA256": "b056a81a4a90a10e70399a2fae1eafed3002dda35feb33721ffe7d0e4a6252af"
+      },
+      "nativeDependencyLock": "nix/iceberg-source-lock.json",
+      "nativeDependencyLockSHA256": "sha256:d7fd6ff5305ba029f9043abc75c0142f8ba2f0f01f01bd867d111d6d459e980a",
+      "installation": "STATICALLY_LINKED",
+      "validationStatus": "engine-build-and-two-architecture-publisher-proof-pending",
+      "remainingEvidence": "Selected source and archive receipts prove build composition only; complete native closure and vulnerability assessment remain unresolved.",
+      "originalSignedPayloadDisposition": "Original signed payload hashes remain historical observations, not identities or provenance of the rebuilt component."
+    }
+  ]
 }

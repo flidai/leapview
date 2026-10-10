@@ -30,6 +30,7 @@ var (
 // Every field participates in the canonical identity; no caller may substitute
 // a platform, DuckDB runtime, or LeapView support profile at admission time.
 type Identity struct {
+	Builtin          bool   `json:"builtin,omitempty"`
 	DuckDBVersion    string `json:"duckdbVersion"`
 	ExtensionVersion string `json:"extensionVersion"`
 	GOOS             string `json:"goos"`
@@ -126,6 +127,7 @@ func validateDigest(value string) error {
 // AdmittedExtension is immutable evidence returned to a runtime.  Path is
 // target-owned and absolute; it is never read from a project artifact or SQL.
 type AdmittedExtension struct {
+	Builtin          bool   `json:"builtin,omitempty"`
 	Name             string `json:"name"`
 	Identity         string `json:"identity"`
 	Version          string `json:"version"`
@@ -158,6 +160,7 @@ type Preparation interface {
 // Evidence is non-secret candidate provenance for one admitted extension.
 // It contains no origins' credentials or artifact bytes.
 type Evidence struct {
+	Builtin          bool   `json:"builtin,omitempty"`
 	Name             string `json:"name"`
 	Identity         string `json:"identity"`
 	DuckDBVersion    string `json:"duckdbVersion"`
@@ -173,5 +176,5 @@ type Evidence struct {
 }
 
 func (a AdmittedExtension) Evidence() Evidence {
-	return Evidence{Name: a.Name, Identity: a.Identity, DuckDBVersion: a.DuckDBVersion, ExtensionVersion: a.ExtensionVersion, GOOS: a.GOOS, GOARCH: a.GOARCH, Platform: a.Platform, SupportProfile: a.SupportProfile, Digest: a.Digest, Origin: a.Origin, Provenance: a.Provenance, Signature: a.Signature}
+	return Evidence{Builtin: a.Builtin, Name: a.Name, Identity: a.Identity, DuckDBVersion: a.DuckDBVersion, ExtensionVersion: a.ExtensionVersion, GOOS: a.GOOS, GOARCH: a.GOARCH, Platform: a.Platform, SupportProfile: a.SupportProfile, Digest: a.Digest, Origin: a.Origin, Provenance: a.Provenance, Signature: a.Signature}
 }

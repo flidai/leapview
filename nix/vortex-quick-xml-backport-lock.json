@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "advisories": [
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195"
+  ],
+  "upstream": [
+    {
+      "commit": "07f3db8343cf152f5bc3483ef5b3164582489bea",
+      "url": "https://github.com/tafia/quick-xml/commit/07f3db8343cf152f5bc3483ef5b3164582489bea.patch",
+      "path": "duplicate-attributes-upstream.patch",
+      "sha256": "be8a35f0efe8195c54bc65ebe93de54141e3b076f86699a3ea690afac51d925b"
+    },
+    {
+      "commit": "7ca25266e94987210daa864889ab15c9332c8a2a",
+      "url": "https://github.com/tafia/quick-xml/commit/7ca25266e94987210daa864889ab15c9332c8a2a.patch",
+      "path": "namespace-bounds-upstream.patch",
+      "sha256": "2183db8287969f6a0f936d93aa2edfb5ede412bb789b53cd8082fba64ef0967f"
+    }
+  ],
+  "backports": [
+    {
+      "version": "0.39.4",
+      "path": "0.39.2-backport.patch",
+      "sha256": "489b61236a475659bde2ae82b2d8d47c226544acdaeb65ce4d7e18dca18ffbdf",
+      "files": [
+        {
+          "path": "src/events/attributes.rs",
+          "originalSHA256": "e1ba389c2b3cc4f5bd134f6d80a08732a2e20d4f1dadbe6fb938ca6a362abe50",
+          "patchedSHA256": "eacc850600fb63caef1dcb07a71e685c9434c46337dfa2bde577f719d0f2bb7a"
+        },
+        {
+          "path": "src/name.rs",
+          "originalSHA256": "8e404bccc40c2563872a49fb4d3447e4062ac76730e116ef1629a89a9cc78735",
+          "patchedSHA256": "3e8b538627d9366596609bb4fabb90b3a61f5bc5bb1dfcc5960ef44426f712b5"
+        },
+        {
+          "path": "src/reader/ns_reader.rs",
+          "originalSHA256": "cb7ada7cd6552900d9426a802b466b710fd27c1fe9cf52f47cd32b431299b429",
+          "patchedSHA256": "8f92c8af3f15a6f7c4cf4646ae5ff1017cb1fea8c1f63d8b8137c2ce2b526a31"
+        }
+      ],
+      "crateSHA256": "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
+    }
+  ]
+}

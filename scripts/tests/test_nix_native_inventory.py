@@ -12,6 +12,58 @@ import nix_native_inventory as native
 
 
 class NativeInventoryTests(unittest.TestCase):
+    def test_rebuilt_client_inventory_matches_selected_recipes(self):
+        policy = json.loads(native.POLICY_PATH.read_text())
+        replacements = {entry['name']: entry for entry in policy['sourceBuiltReplacements']}
+        for family in ('http', 'database'):
+            lock = native.ROOT / ('nix/' + family + '-source-lock.json')
+            selected = json.loads(lock.read_text())
+            for name, wrapper in selected['wrappers'].items():
+                with self.subTest(extension=name):
+                    entry = replacements[name]
+                    self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+                    self.assertEqual({key: entry['wrapper'][key] for key in wrapper}, wrapper)
+
+    def test_rebuilt_avro_inventory_matches_exact_custom_fork_policy(self):
+        lock = native.ROOT / 'nix/avro-source-lock.json'
+        selected = json.loads(lock.read_text())
+        policy = json.loads(native.POLICY_PATH.read_text())
+        entry = next(e for e in policy['sourceBuiltReplacements'] if e['name'] == 'avro')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(selected['libraries']['avro']['revision'], '8af400279c445a81b8552a7670d8c1ebd92ba34a')
+
+    def test_rebuilt_delta_inventory_binds_selected_kernel_and_xml_backport(self):
+        lock = native.ROOT / 'nix/delta-source-lock.json'
+        selected = json.loads(lock.read_text())
+        policy = json.loads(native.POLICY_PATH.read_text())
+        entry = next(e for e in policy['sourceBuiltReplacements'] if e['name'] == 'delta')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(selected['kernel']['cargoLockSHA256'], hashlib.sha256((native.ROOT / 'nix/delta-Cargo.lock').read_bytes()).hexdigest())
+        self.assertTrue(selected['patchedFiles'])
+
+    def test_rebuilt_azure_inventory_matches_selected_sdk_policy(self):
+        lock = native.ROOT / 'nix/azure-source-lock.json'
+        selected = json.loads(lock.read_text())
+        entry = next(e for e in json.loads(native.POLICY_PATH.read_text())['sourceBuiltReplacements'] if e['name'] == 'azure')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(set(selected['libraries']), {'core', 'identity', 'storage-common', 'storage-blobs', 'storage-files-datalake', 'libxml2'})
+
+    def test_vortex_selected_ffi_engine_and_xml_identity(self):
+        lock = native.ROOT / 'nix/vortex-source-lock.json'
+        selected = json.loads(lock.read_text())
+        policy = json.loads(native.POLICY_PATH.read_text())
+        entry = next(e for e in policy['sourceBuiltReplacements'] if e['name'] == 'vortex')
+        self.assertEqual(entry['nativeDependencyLockSHA256'], native.digest(lock.read_bytes()))
+        self.assertEqual({key: entry['wrapper'][key] for key in selected['wrapper']}, selected['wrapper'])
+        self.assertEqual(selected['engine']['revision'], policy['duckdbSourceRevision'])
+        self.assertEqual(selected['rust']['cargoLockSHA256'], hashlib.sha256((native.ROOT / 'nix/vortex-Cargo.lock').read_bytes()).hexdigest())
+        self.assertEqual(selected['features'], [])
+        self.assertEqual(len(selected['bridgeSources']), 17)
+        self.assertTrue(all(name.startswith('quick-xml-0.39.4/') for name in selected['patchedFiles']))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

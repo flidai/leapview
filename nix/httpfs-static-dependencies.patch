@@ -1,0 +1,7 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -36,2 +36,2 @@
+-  target_link_libraries(httpfs_loadable_extension ${CURL_LIBRARIES})
+-  target_link_libraries(httpfs_extension ${CURL_LIBRARIES})
++  target_link_libraries(httpfs_loadable_extension ${CURL_LIBRARIES} ${HTTPFS_STATIC_LIBRARIES})
++  target_link_libraries(httpfs_extension ${CURL_LIBRARIES} ${HTTPFS_STATIC_LIBRARIES})

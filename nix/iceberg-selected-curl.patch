@@ -1,0 +1,7 @@
+--- a/cmake/external_dependencies.cmake
++++ b/cmake/external_dependencies.cmake
+@@ -58,0 +59,4 @@
++            if(NOT DEFINED ICEBERG_HTTP_STATIC_LIBRARIES)
++                message(FATAL_ERROR "selected static HTTP closure required")
++            endif()
++            set(CURL_LIBRARIES -Wl,--start-group ${ICEBERG_HTTP_STATIC_LIBRARIES} -Wl,--end-group)

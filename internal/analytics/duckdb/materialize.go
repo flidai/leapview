@@ -101,6 +101,11 @@ func validateAdmittedExtension(requested string, admitted AdmittedExtension) err
 	if strings.TrimSpace(admitted.Identity) == "" || strings.TrimSpace(admitted.Version) == "" || strings.TrimSpace(admitted.Platform) == "" {
 		return fmt.Errorf("extension %s admission is missing immutable identity, version, or platform", requested)
 	}
+	if admitted.Builtin {
+		if err := extensiondomain.ValidateBuiltinIdentity(extensiondomain.Identity{Builtin: true, Name: admitted.Name, DuckDBVersion: admitted.DuckDBVersion, ExtensionVersion: admitted.ExtensionVersion, GOOS: admitted.GOOS, GOARCH: admitted.GOARCH, Platform: admitted.Platform, Digest: admitted.Digest, SupportProfile: admitted.SupportProfile}); err != nil {
+			return err
+		}
+	}
 	digest := strings.TrimSpace(admitted.Digest)
 	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
 		return fmt.Errorf("extension %s admission digest must be sha256:<64 hex characters>", requested)
@@ -122,6 +127,15 @@ func validateAdmittedExtension(requested string, admitted AdmittedExtension) err
 
 func loadExtensionStatement(path string) string {
 	return "LOAD '" + strings.ReplaceAll(filepath.ToSlash(path), "'", "''") + "'"
+}
+
+func loadAdmittedExtensionStatement(admitted AdmittedExtension) string {
+	if admitted.Builtin {
+		// validateAdmittedExtension restricts this to the compiled registry;
+		// activate it separately in every session without loading a file.
+		return "LOAD " + extensiondomain.ArtifactFilenameStem(admitted.Name)
+	}
+	return loadExtensionStatement(admitted.Path)
 }
 
 func refreshSourceModel(model *semanticmodel.Model, sourceName string, source semanticmodel.Source) *semanticmodel.Model {

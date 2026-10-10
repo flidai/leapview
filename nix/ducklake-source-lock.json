@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "ducklake": {
+    "repository": "https://github.com/duckdb/ducklake",
+    "revision": "d318a545571d7d46eb751fa2aa5f6f4389285d3c",
+    "sourceNARHash": "sha256-qq+U3+X2cGtw91/WnhJJG2WyWQflkJMuBvGjQ0si2DY="
+  },
+  "croaring": {
+    "repository": "https://github.com/RoaringBitmap/CRoaring",
+    "version": "5.2.2",
+    "revision": "6ef0aaad28eb6298db5a7022695b290a8fe47e66",
+    "sourceNARHash": "sha256-ZipK1pNdxNaEAVkFygH6pwOHXvQWfGKVk1S6onKpvPE=",
+    "pkgConfigPatchSHA256": "39a8fef1dd74a0b5281fe9a6a5459a4e4d0d950ea608d7481bb734d92e93b8df",
+    "patchedFiles": {
+      "CMakeLists.txt": "1a1f8ff32e848560d77ce642afba6ac2e89839f31c799b1d377bf0ae203dfcbb",
+      "include/roaring/roaring_version.h": "ac6a2170d73532ce5e456730498ac52f1bb7e436b41b48acc64b99a99355870c",
+      "roaring.pc.in": "f336168b27ddca63a27fa0c0eaa5a6e84f4cf38f8128d839e656c0d80050c51f"
+    },
+    "cmake": {
+      "BUILD_SHARED_LIBS": false,
+      "ROARING_BUILD_STATIC": true,
+      "CMAKE_POSITION_INDEPENDENT_CODE": true,
+      "ROARING_USE_CPM": false,
+      "ENABLE_ROARING_TESTS": true,
+      "ENABLE_ROARING_BENCHMARKS": false,
+      "ROARING_BUILD_LTO": false,
+      "ROARING_DISABLE_X64": false,
+      "ROARING_DISABLE_AVX": false,
+      "ROARING_DISABLE_NEON": false,
+      "ROARING_DISABLE_AVX512": false
+    }
+  }
+}

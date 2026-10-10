@@ -1,0 +1,49 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -15,10 +15,13 @@
+ # Dependencies from VCPKG
+ find_package(EXPAT REQUIRED)
+ find_package(ZLIB REQUIRED)
+-find_package(minizip-ng CONFIG REQUIRED)
++# Bind the selected static archive directly, without ambient optional codecs.
++find_path(MINIZIP_INCLUDE_DIR minizip-ng/mz.h REQUIRED)
++find_library(MINIZIP_LIBRARY NAMES minizip-ng REQUIRED)
+
+ include_directories(src/excel/numformat/include)
+ include_directories(src/excel/include)
++include_directories(${MINIZIP_INCLUDE_DIR})
+ add_subdirectory(src/excel/numformat)
+
+ set(EXTENSION_SOURCES src/excel/excel_extension.cpp src/excel/xlsx/zip_file.cpp
+@@ -30,10 +33,10 @@
+ build_loadable_extension(${TARGET_NAME} ${PARAMETERS} ${EXTENSION_SOURCES}
+                          ${NUMFORMAT_OBJECT_FILES})
+
+-target_link_libraries(${EXTENSION_NAME} EXPAT::EXPAT MINIZIP::minizip-ng
++target_link_libraries(${EXTENSION_NAME} EXPAT::EXPAT ${MINIZIP_LIBRARY}
+                       ZLIB::ZLIB)
+ target_link_libraries(${LOADABLE_EXTENSION_NAME} EXPAT::EXPAT
+-                      MINIZIP::minizip-ng ZLIB::ZLIB)
++                      ${MINIZIP_LIBRARY} ZLIB::ZLIB)
+
+ install(
+   TARGETS ${EXTENSION_NAME}
+--- a/src/excel/include/excel_extension.hpp
++++ b/src/excel/include/excel_extension.hpp
+@@ -20,3 +20,4 @@
++	std::string Version() const override;
+ };
+
+ } // namespace duckdb
+--- a/src/excel/excel_extension.cpp
++++ b/src/excel/excel_extension.cpp
+@@ -93,5 +93,9 @@
+ }
+
++std::string ExcelExtension::Version() const {
++	return EXT_VERSION_EXCEL;
++}
++
+ } // namespace duckdb
+
+ extern "C" {

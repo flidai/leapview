@@ -1,0 +1,28 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,0 +5,3 @@
++if(NOT DEFINED SQLITE_SELECTED_LIBRARY OR NOT EXISTS "${SQLITE_SELECTED_LIBRARY}")
++  message(FATAL_ERROR "SQLite requires the selected shared static archive")
++endif()
+@@ -11,0 +15,2 @@
++target_link_libraries(${EXTENSION_NAME} ${SQLITE_SELECTED_LIBRARY})
++
+@@ -13,0 +19 @@
++target_link_libraries(${TARGET_NAME}_loadable_extension ${SQLITE_SELECTED_LIBRARY})
+--- a/src/sqlite/CMakeLists.txt
++++ b/src/sqlite/CMakeLists.txt
+@@ -1,11 +1,2 @@
+-add_library(
+-  sqlite_lib OBJECT
+-  sqlite3.c)
+-set(ALL_OBJECT_FILES
+-    ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:sqlite_lib>
+-    PARENT_SCOPE)
+-
+-target_compile_definitions(
+-  sqlite_lib
+-  PUBLIC SQLITE_ENABLE_FTS5 SQLITE_ENABLE_FTS4 SQLITE_ENABLE_FTS3_PARENTHESIS
+-         SQLITE_ENABLE_RTREE)
+\ No newline at end of file
++# SQLite is compiled once by the selected native producer.
++# PROJ, GDAL and sqlite_scanner bind that same static archive.

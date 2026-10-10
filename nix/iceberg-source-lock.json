@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 1,
+  "wrapper": {
+    "revision": "757264559e745be697e9306e144e8889eb1dc024",
+    "sourceNARHash": "sha256-oLEwhFmVTlnF8gsedQVi4ARNIPKjaLkcDUUwM+hTUlU=",
+    "patchSHA256": "b056a81a4a90a10e70399a2fae1eafed3002dda35feb33721ffe7d0e4a6252af"
+  },
+  "libraries": {
+    "aws-c-auth": {
+      "dependencies": [
+        "aws-c-cal",
+        "aws-c-common",
+        "aws-c-compression",
+        "aws-c-http",
+        "aws-c-io",
+        "s2n-tls",
+        "aws-c-sdkutils"
+      ],
+      "sourceNARHash": "sha256-8oQTTqBuEzhBUWqXHVYrGtaX44SmB2sJQZchiweHekM=",
+      "version": "0.9.1",
+      "selectedFiles": {
+        "CMakeLists.txt": "47a5663c6cf866358a6344eed78343666b4fabdde1c6f66f5458ef4630de5a00"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-cal": {
+      "dependencies": [
+        "aws-c-common",
+        "openssl"
+      ],
+      "sourceNARHash": "sha256-ufMoB71xebxO/Cu/xVQ3BMrcCgIlkG+MXH2Ru2i6uXo=",
+      "version": "0.9.2",
+      "selectedFiles": {
+        "CMakeLists.txt": "34c0d9cc06e1126171a0ea663d2d180aad49998e3dd7d44f75c648bd2dd6dde1"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-common": {
+      "dependencies": [],
+      "sourceNARHash": "sha256-hKCIPZlLPyH7D3Derk2onyqTzWGUtCx+f2+EKtAKlwA=",
+      "version": "0.12.4",
+      "selectedFiles": {
+        "CMakeLists.txt": "e328be735bbb0643929e2454c6beac798c2595508e1c24851a4808b23848732c"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-compression": {
+      "dependencies": [
+        "aws-c-common"
+      ],
+      "sourceNARHash": "sha256-gpru+hnppgLHhcPfVBOaMdcT6e8wUjZmY7Caaa/KAW4=",
+      "version": "0.3.1",
+      "selectedFiles": {
+        "CMakeLists.txt": "9ef202c4ec459ef43ac8e0806ecb2d68503cae036825c7dff0fccdec6269581d"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-event-stream": {
+      "dependencies": [
+        "aws-c-cal",
+        "aws-c-common",
+        "aws-c-io",
+        "aws-checksums",
+        "s2n-tls"
+      ],
+      "sourceNARHash": "sha256-jMtLJjKC7TuNZ0c0Nc3+KRh226RBl0omkiKNXXBltoc=",
+      "version": "0.7.0",
+      "selectedFiles": {
+        "CMakeLists.txt": "c7612587f9e56aae6a3a171fa350f608867b7504104320506aea295476e33fa9"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-http": {
+      "dependencies": [
+        "aws-c-cal",
+        "aws-c-common",
+        "aws-c-compression",
+        "aws-c-io",
+        "s2n-tls"
+      ],
+      "sourceNARHash": "sha256-SCdZfGIIHU6f0OArygZm0yY0wE6Hdx/JWvHZcK1DQOw=",
+      "version": "0.11.0",
+      "selectedFiles": {
+        "CMakeLists.txt": "b6f99cbbb495e46c4fb8ad83566187e569e119ee55f0f481a3320796fbfb3c05"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-io": {
+      "dependencies": [
+        "aws-c-cal",
+        "aws-c-common",
+        "s2n-tls"
+      ],
+      "sourceNARHash": "sha256-0vzuSvJ/4you0YYnizjctKP5AcLm5sJieDOSCHwm1HM=",
+      "version": "0.27.2",
+      "selectedFiles": {
+        "CMakeLists.txt": "89b53330baf4512e4aedf60a80d2e3cfead4eadd7b9428b46d0d26e9369e1642"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-mqtt": {
+      "dependencies": [
+        "aws-c-cal",
+        "aws-c-common",
+        "aws-c-compression",
+        "aws-c-http",
+        "aws-c-io",
+        "s2n-tls"
+      ],
+      "sourceNARHash": "sha256-Nf8c5iVl+NOPZFjsAPCMOGq2e7D8e7PafuMQh6t0DYw=",
+      "version": "0.13.3",
+      "selectedFiles": {
+        "CMakeLists.txt": "585bc8b0a884a4c94ca9d4f323049263619d2314403501a179c8a24f12106032"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-s3": {
+      "dependencies": [
+        "aws-c-auth",
+        "aws-c-cal",
+        "aws-c-common",
+        "aws-c-compression",
+        "aws-c-http",
+        "aws-c-io",
+        "aws-checksums",
+        "s2n-tls"
+      ],
+      "sourceNARHash": "sha256-8yUwgiZ50BiItapeg0zIc5vr0+OFHvzIRrwWH4lQFBM=",
+      "version": "0.8.7",
+      "selectedFiles": {
+        "CMakeLists.txt": "b1741bb77f7e89dcd2f3a1283e851c27e3abcc13a486fb5f4e0f6e06eb4c97da"
+      },
+      "patchSHA256": []
+    },
+    "aws-c-sdkutils": {
+      "dependencies": [
+        "aws-c-common"
+      ],
+      "sourceNARHash": "sha256-zc8E5ESZxXBJ6WA/V5i2Us61UcNf9wXa2k63NWqGRtI=",
+      "version": "0.2.4",
+      "selectedFiles": {
+        "CMakeLists.txt": "14e1025a4e699fc3bd92746a804160ec5ea2dc393bc71bf77f9eafb04c5ebe21"
+      },
+      "patchSHA256": []
+    },
+    "aws-checksums": {
+      "dependencies": [
+        "aws-c-common"
+      ],
+      "sourceNARHash": "sha256-dYDTDWZJJ0JlvkMfLS376uUt5QzSmbV0UNRC4aq35TY=",
+      "version": "0.2.7",
+      "selectedFiles": {
+        "CMakeLists.txt": "0fd60da8b153183d0271aa792bff17397b269e16619c56fbca16ade5113db33a"
+      },
+      "patchSHA256": []
+    },
+    "aws-crt-cpp": {
+      "dependencies": [
+        "aws-c-auth",
+        "aws-c-cal",
+        "aws-c-common",
+        "aws-c-compression",
+        "aws-c-event-stream",
+        "aws-c-http",
+        "aws-c-io",
+        "aws-c-mqtt",
+        "aws-c-s3",
+        "aws-checksums",
+        "s2n-tls"
+      ],
+      "sourceNARHash": "sha256-jKmIsWAzxnfsNgHavR6crhIQXVJq/PbQgaj4KVGrMP0=",
+      "version": "0.34.3",
+      "selectedFiles": {
+        "CMakeLists.txt": "2570c8a2748aacf548e514ec1c0ed3cfd218f6e30da21da3d528737dbd9f15fc"
+      },
+      "patchSHA256": []
+    },
+    "aws-sdk-cpp": {
+      "dependencies": [
+        "curl",
+        "openssl",
+        "zlib",
+        "aws-crt-cpp"
+      ],
+      "sourceNARHash": "sha256-RJKR0xw3HTNItaLGyYCjibmfK3UBDA4hfAZzQ0xYg9U=",
+      "version": "1.11.647",
+      "selectedFiles": {
+        "CMakeLists.txt": "550c5b33cac3709b1c3ae8228a70f1a22fcf5dfe95dc855729da5f453724df59"
+      },
+      "patchSHA256": []
+    },
+    "s2n-tls": {
+      "dependencies": [
+        "openssl",
+        "openssl"
+      ],
+      "sourceNARHash": "sha256-Ib0f8dQiajTghfmPmeQe2Mkymc+AMDcZBWLgxgxnxv4=",
+      "version": "1.7.8",
+      "selectedFiles": {
+        "CMakeLists.txt": "91b33bf9579771be4e539032e809eace83aac671f4380a83cba11357fa775c17"
+      },
+      "patchSHA256": []
+    }
+  },
+  "sdkAPIs": [
+    "sso",
+    "sts"
+  ],
+  "features": {
+    "BUILD_SHARED_LIBS": false,
+    "CMAKE_POSITION_INDEPENDENT_CODE": true,
+    "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+    "FETCHCONTENT_FULLY_DISCONNECTED": true
+  },
+  "scope": "selected static AWS composition; exhaustive native closure and security admission remain separate",
+  "sdkDependencyPatchSHA256": "4f44ba44147428c9b89fed85670e356c0f858d6be27bfb652551c21920caf7f0"
+}

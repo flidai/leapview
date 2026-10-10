@@ -1,0 +1,14 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -13 +13 @@
+-include_directories(src/include duckdb/third_party/httplib duckdb/extension/autocomplete/include)
++include_directories(src/include ${DUCKDB_MODULE_BASE_DIR}/third_party/httplib ${DUCKDB_MODULE_BASE_DIR}/extension/autocomplete/include)
+--- a/src/quack_extension.cpp
++++ b/src/quack_extension.cpp
+@@ -217,4 +217,4 @@
+ std::string QuackExtension::Version() const {
+-#ifdef EXT_VERSION_RPC
+-	return EXT_VERSION_RPC;
++#ifdef EXT_VERSION_QUACK
++	return EXT_VERSION_QUACK;
+ #else

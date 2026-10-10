@@ -100,6 +100,12 @@ func TestNativeMySQLSourceReadDenialAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNativeConnectorRow(t, db, model, source)
+	// Exercise the connector's selected TLS backend, not only password lookup
+	// and archive membership. The pinned server generates its fixture TLS key.
+	var status, cipher string
+	if err := db.QueryRowContext(ctx, "SELECT * FROM mysql_query('conn_local', 'SHOW SESSION STATUS LIKE ''Ssl_cipher''')").Scan(&status, &cipher); err != nil || status != "Ssl_cipher" || cipher == "" {
+		t.Fatalf("native MySQL did not negotiate TLS: status=%q cipher=%q error=%v", status, cipher, err)
+	}
 	if _, err := db.ExecContext(ctx, "INSERT INTO conn_local.fixture_rows VALUES (2, 'denied')"); err == nil {
 		t.Fatal("target-owned MySQL source attachment allowed a write")
 	}

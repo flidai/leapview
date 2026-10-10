@@ -96,6 +96,10 @@ func New(t testing.TB, names ...string) Fixture {
 	root := t.TempDir()
 	paths := make(map[string]extension.AdmittedExtension, len(names))
 	for _, name := range names {
+		if compiled, ok := compiledFixture(t, name, version, platform, root); ok {
+			paths[name] = compiled
+			continue
+		}
 		source := findExtension(name, version, platform)
 		if source == "" {
 			installExtension(t, name, root)
@@ -139,7 +143,7 @@ func New(t testing.TB, names ...string) Fixture {
 		manifest := manifestDocument{Version: 1, DuckDBVersion: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, SupportProfile: "test-fixture", Origins: []manifestOrigin{{ID: "reviewed-local-test-fixture", Path: root, Reviewed: true}}}
 		for _, name := range sortedNames(paths) {
 			value := paths[name]
-			identity := extension.Identity{DuckDBVersion: version, ExtensionVersion: "test-fixture", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: value.Digest, SupportProfile: "test-fixture"}
+			identity := extension.Identity{Builtin: value.Builtin, DuckDBVersion: version, ExtensionVersion: value.ExtensionVersion, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: value.Digest, SupportProfile: "test-fixture"}
 			manifest.Artifacts = append(manifest.Artifacts, manifestArtifact{Identity: identity, Origins: []string{"reviewed-local-test-fixture"}, Provenance: value.Provenance, Signature: value.Signature})
 		}
 		payload, err := json.Marshal(manifest)

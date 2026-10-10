@@ -56,6 +56,17 @@ func TestLoadExtensionStatementUsesExactQuotedArtifactPath(t *testing.T) {
 	}
 }
 
+func TestLoadAdmittedBuiltinUsesCanonicalEngineRegistration(t *testing.T) {
+	for name, want := range map[string]string{"lance": "LOAD lance", "sqlite": "LOAD sqlite_scanner"} {
+		t.Run(name, func(t *testing.T) {
+			admitted := AdmittedExtension{Builtin: true, Name: name, Path: "/descriptor/" + name + ".duckdb_extension"}
+			if got := loadAdmittedExtensionStatement(admitted); got != want {
+				t.Fatalf("compiled extension load = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestResolveSourcePlanUsesCompiledEffectiveOptionsVerbatim(t *testing.T) {
 	location := testPathLocation("csv", "orders.csv")
 	variant := location.Value.(*projectcontracts.CSVPathSourceLocation)

@@ -1,0 +1,95 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -17,72 +17,12 @@
+     message(FATAL_ERROR "DUCKDB_VERSION must be set by DuckDB's CMake build")
+ endif()
+ 
+-option(USE_SHARED_VORTEX OFF)
+-set(VORTEX_RUST_TARGET_NAME "vortex_duckdb")
+-if (USE_SHARED_VORTEX)
+-    set(VORTEX_LIB_TYPE "cdylib")
+-    set(VORTEX_LIB_NAME "${VORTEX_RUST_TARGET_NAME}-shared")
+-else()
+-    set(VORTEX_LIB_TYPE "staticlib")
+-    set(VORTEX_LIB_NAME "${VORTEX_RUST_TARGET_NAME}-static")
++# The selected offline Rust derivation owns FFI compilation and generated ABI headers.
++if(NOT DEFINED VORTEX_FFI_LIBRARY OR NOT DEFINED VORTEX_FFI_INCLUDE_DIR)
++    message(FATAL_ERROR "controlled Vortex static FFI library and headers required")
+ endif()
+-message("Using vortex lib type '${VORTEX_LIB_TYPE}'")
+-
+-include(FetchContent)
+-FetchContent_Declare(
+-    Corrosion
+-    GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
+-    GIT_TAG v0.5.2
+-)
+-FetchContent_MakeAvailable(Corrosion)
+-
+-if(APPLE)
+-    find_library(SECURITY_FRAMEWORK Security)
+-    find_library(CORE_FOUNDATION_FRAMEWORK CoreFoundation)
+-endif()
+-
+-# Install clang and libclang for Linux Docker builds. macOS has both of these pre-installed.
+-if(EXISTS "/.dockerenv")
+-    find_program(YUM_EXEC yum)
+-    if(YUM_EXEC AND NOT INSTALL_SUCCESS)
+-        execute_process(
+-            COMMAND yum install -y clang-devel clang
+-            RESULT_VARIABLE YUM_RESULT
+-        )
+-        if(YUM_RESULT EQUAL 0)
+-            set(INSTALL_SUCCESS TRUE)
+-        endif()
+-    endif()
+-
+-    find_program(APK_EXEC apk)
+-    if(APK_EXEC AND NOT INSTALL_SUCCESS)
+-        execute_process(
+-            COMMAND apk add --no-cache clang-dev clang
+-            RESULT_VARIABLE APK_RESULT
+-        )
+-        if(APK_RESULT EQUAL 0)
+-            set(INSTALL_SUCCESS TRUE)
+-        endif()
+-    endif()
+-endif()
+-
+-corrosion_import_crate(
+-    MANIFEST_PATH vortex/Cargo.toml
+-    CRATES vortex-duckdb
+-    CRATE_TYPES ${VORTEX_LIB_TYPE}
+-    FLAGS --crate-type=${VORTEX_LIB_TYPE}
+-)
+-
+-# Forward the DuckDB version passed via CMake as an env var.
+-message("Forwarding DUCKDB_VERSION=${DUCKDB_VERSION} to Cargo")
+-message("Forwarding DUCKDB_SOURCE_DIR=${DUCKDB_MODULE_BASE_DIR} to Cargo")
+-corrosion_set_env_vars(
+-    ${VORTEX_RUST_TARGET_NAME}
+-    "DUCKDB_VERSION=${DUCKDB_VERSION}"
+-    "DUCKDB_SOURCE_DIR=${DUCKDB_MODULE_BASE_DIR}"
+-)
+-
+-include_directories(src/include vortex/vortex-duckdb/include vortex/vortex-duckdb/cpp/include)
++set(VORTEX_LIB_NAME "${VORTEX_FFI_LIBRARY}")
++include_directories(src/include "${VORTEX_FFI_INCLUDE_DIR}")
+ 
+ set(EXTENSION_NAME ${TARGET_NAME}_extension)
+ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
+--- a/src/vortex_extension.cpp
++++ b/src/vortex_extension.cpp
+@@ -47,7 +47,11 @@
+ 
+ //! Returns the version of the Vortex extension.
+ std::string VortexExtension::Version() const {
+-	return vortex_extension_version_rust();
++#ifdef EXT_VERSION_VORTEX
++	return EXT_VERSION_VORTEX;
++#else
++	return "";
++#endif
+ }
+ 
+ #ifndef DUCKDB_EXTENSION_MAIN

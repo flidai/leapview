@@ -10,18 +10,20 @@
   purpose,
 }:
 let
+  caRoot = import ./ca-root.nix { inherit pkgs; };
   loaderDir = pkgs.stdenv.hostPlatform.libDir;
   loader = builtins.baseNameOf pkgs.stdenv.cc.bintools.dynamicLinker;
   runtime = pkgs.runCommand "leapview-image-root" { } ''
     mkdir -p "$out/app" "$out/bin" "$out/sbin" "$out/${loaderDir}" "$out/etc" "$out/usr/bin" "$out/usr/local/bin" "$out/usr/local/libexec" "$out/usr/local/share/leapview" "$out/var/lib/leapview/home" "$out/tmp"
     cp ${portable}/bin/leapview "$out/usr/local/bin/leapview"
     cp ${portable}/bin/leapviewctl "$out/usr/local/libexec/leapviewctl"
+    cp -R ${portable}/share/leapview/native-build "$out/usr/local/share/leapview/native-build"
     ln -s ${patchedRuntime.glibc}/lib/${loader} "$out/${loaderDir}/${loader}"
     ln -s ${patchedRuntime.busybox}/bin "$out/busybox"
     ln -s ${patchedRuntime.busybox}/bin/sh "$out/bin/sh"
     ln -s ${patchedRuntime.busybox}/bin/env "$out/usr/bin/env"
     ln -s ${patchedRuntime.busybox}/bin/nologin "$out/sbin/nologin"
-    ln -s ${pkgs.cacert}/etc/ssl "$out/etc/ssl"
+    cp -R ${caRoot}/etc/ssl "$out/etc/ssl"
     printf 'root:x:0:0:root:/root:/bin/sh\nleapview:x:999:999::/var/lib/leapview:/sbin/nologin\n' > "$out/etc/passwd"
     printf 'root:x:0:\nleapview:x:999:\n' > "$out/etc/group"
     cp -R ${application}/share/leapview/{static,schemas,dashboards,evaluation} "$out/app/"
