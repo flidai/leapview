@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import uuid
 from urllib.parse import unquote
 
@@ -24,13 +25,13 @@ import nix_candidate_manifest as candidate
 
 SYFT_VERSION = '1.52.0'
 HOST_FIXTURES = (
-    {'id': 'debian12', 'image': ('debian:bookworm-slim@sha256:'
+    {'id': 'debian12', 'image': ('public.ecr.aws/docker/library/debian:bookworm-slim@sha256:'
                                  '3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251'),
      'osID': 'debian', 'versionID': '12'},
-    {'id': 'ubuntu2404', 'image': ('ubuntu:24.04@sha256:'
+    {'id': 'ubuntu2404', 'image': ('public.ecr.aws/docker/library/ubuntu:24.04@sha256:'
                                   '534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55'),
      'osID': 'ubuntu', 'versionID': '24.04'},
-    {'id': 'debian13', 'image': ('debian:trixie-slim@sha256:'
+    {'id': 'debian13', 'image': ('public.ecr.aws/docker/library/debian:trixie-slim@sha256:'
                                  'a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a'),
      'osID': 'debian', 'versionID': '13'},
 )
@@ -114,9 +115,9 @@ def _read_json(path, limit=candidate.MAX_JSON_BYTES):
     return candidate.read_json(_lstat_regular(path, limit), limit)
 
 
-def _run(args, *, timeout, env=None, stdout=subprocess.PIPE):
+def _run(args, *, timeout, env=None, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL):
     options = {'check': True, 'timeout': timeout, 'stdout': stdout,
-               'stderr': subprocess.DEVNULL, 'env': env}
+               'stderr': stderr, 'env': env}
     if len(args) >= 4 and args[0] == 'syft' and args[1] != 'version':
         options['preexec_fn'] = _file_size_limit(candidate.MAX_REPORT_BYTES)
     try:
@@ -309,8 +310,16 @@ def _run_host(binary, arch, output_directory):
         raise ValueError('host qualification must run on the candidate native architecture')
     hosts = []
     for fixture in HOST_FIXTURES:
-        _run(['docker', 'pull', '--platform', 'linux/' + arch, fixture['image']], timeout=300,
-             env=_runtime_env(), stdout=subprocess.DEVNULL)
+        for attempt in range(3):
+            try:
+                _run(['docker', 'pull', '--platform', 'linux/' + arch, fixture['image']], timeout=300,
+                     env=_runtime_env(), stdout=subprocess.DEVNULL, stderr=sys.stderr)
+                break
+            except ValueError:
+                if attempt == 2:
+                    raise
+                # Public registries can throttle sequential pulls on shared runner IPs.
+                time.sleep(5 * (attempt + 1))
         name = 'leapview-cli-probe-' + uuid.uuid4().hex
         output = _run_container(_host_command(None, arch, fixture, name, ('/etc/os-release',)), name,
                                 timeout=45, limit=MAX_RUNTIME_BYTES)

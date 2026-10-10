@@ -1,0 +1,39 @@
+{
+  "pretrial": {
+    "PREREGISTRATION.md": "710f4844d1ae04ed07a21a8ac706f759ebf3f88529886dcd619cec574c659550",
+    "reference.md": "ee16e0b8ec92fd4b48770dddb52b6f55de2adde7bfe47252e8b711f75e78020f",
+    "oracle/create.yaml": "b82fce744d2fdf2159590c603c48f3dabc39029f0183169ac0ab674e8a0491b9",
+    "oracle/grain.yaml": "ae46fa447049c8f68e41951a089682ee655b1d58a24d0a662711929c26884802",
+    "oracle/reuse.yaml": "2bb3e013cd7f8858353297253902288d249072ff3f7e407d83a4d542130c9c99"
+  },
+  "seedSources": {
+    "runs/explicit-create/dashboards/evaluation.yaml": "6f427d456e8d6c90989c2c99d8474550523fcf4566e00411c2fc004d370cbc95",
+    "runs/explicit-grain/dashboards/evaluation.yaml": "b82fce744d2fdf2159590c603c48f3dabc39029f0183169ac0ab674e8a0491b9",
+    "runs/explicit-reuse/dashboards/evaluation.yaml": "a0bd73ebf4a0a06418605bec736b4380e7ba5a2c40907a6aebf9ff450f8a91fd",
+    "runs/fragments-create/dashboards/evaluation.yaml": "742222bef2511c77a81b86464b67d290e96b7c65d093de3b70db25d33cd43576",
+    "runs/fragments-create/dashboards/pages.yaml": "c68d397aca8fac0a8b055fb4f15b843ed27822fa21f52f1458124313409bfba2",
+    "runs/fragments-create/dashboards/visuals.yaml": "082ff305dcee162cd0792d9bedbcba1cc30ae93d5a202d26c8977d988ffc45e9",
+    "runs/fragments-grain/dashboards/evaluation.yaml": "742222bef2511c77a81b86464b67d290e96b7c65d093de3b70db25d33cd43576",
+    "runs/fragments-grain/dashboards/pages.yaml": "4af4c679b8cba710d1ba3b0cf3d735e070b23ed15a03174f4198f4f42888c9e7",
+    "runs/fragments-grain/dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+    "runs/fragments-reuse/dashboards/evaluation.yaml": "742222bef2511c77a81b86464b67d290e96b7c65d093de3b70db25d33cd43576",
+    "runs/fragments-reuse/dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+    "runs/fragments-reuse/dashboards/visuals.yaml": "689f0d706ac9c3464561e0595a13f72f4b55ddc12500828dd499e1832c52d123",
+    "runs/omitted-create/dashboards/evaluation.yaml": "e298fdf7d56fda0b90eaed2a9e715f65059f396e553365eb67c1c44f01c1b46b",
+    "runs/omitted-grain/dashboards/evaluation.yaml": "9f1dce28ad620a538806b60e2b16fb31fd6fecf7adff13670fd3e2a26c485be2",
+    "runs/omitted-reuse/dashboards/evaluation.yaml": "0e46e725069503442b8bffb9c971c431feff2363aeda5ec5947c7256246b16cc"
+  },
+  "dispatchOrder": [
+    "omitted-reuse",
+    "omitted-create",
+    "omitted-grain",
+    "explicit-reuse",
+    "fragments-reuse",
+    "explicit-grain",
+    "fragments-create",
+    "explicit-create",
+    "fragments-grain"
+  ],
+  "model": "Inherited session model and effort; fork_turns none; no overrides",
+  "repairs": 0
+}

@@ -19,6 +19,15 @@ class VisualArtifact extends LitElement {
       min-height: 0;
     }
 
+    :host([type='table']),
+    :host([type='matrix']),
+    :host([type='pivot']) {
+      height: auto;
+      --lv-visual-height: auto;
+      --lv-table-max-body-height: min(52svh, 560px);
+    }
+
+
     *,
     *::before,
     *::after {
@@ -64,6 +73,20 @@ class VisualArtifact extends LitElement {
     .explorer-action svg {
       width: var(--base-size-16);
       height: var(--base-size-16);
+    }
+
+    .artifact.table {
+      height: auto;
+      --lv-visual-height: auto;
+    }
+
+    .artifact.table lv-visualization-host {
+      height: var(--lv-table-content-height, auto);
+      flex: 0 0 auto;
+    }
+
+    .artifact.table .limit-notice {
+      flex: 0 0 auto;
     }
 
     .limit-notice { margin: 0; padding: 6px 10px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }

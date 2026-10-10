@@ -1,0 +1,1957 @@
+{
+  "formatVersion": 1,
+  "kind": "portable-first-attempt-dashboard-evidence",
+  "denominator": 90,
+  "authoredFileCount": 108,
+  "originalGradedReportSHA256": "4925d829374c5320a325572a7f2bf10bb864f58e72dffcbe2ae0026219fc4005",
+  "originalPreregistrationSHA256": "6c9082a266be9ed6331b6394912541d76b2e7929f0b1b7826159ef201ff9ff92",
+  "originalQualificationSHA256": "984944e2f8fa7e7e72fa3c9b7bb3cf77fc42abcafbe02556928afbdcc378b5a3",
+  "sourceFiles": [
+    {
+      "trial": "monthly-create-A-1",
+      "task": "monthly-create",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/monthly-create-A-1/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+    },
+    {
+      "trial": "monthly-create-A-2",
+      "task": "monthly-create",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/monthly-create-A-2/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+    },
+    {
+      "trial": "monthly-create-A-3",
+      "task": "monthly-create",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/monthly-create-A-3/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+    },
+    {
+      "trial": "monthly-create-B-1",
+      "task": "monthly-create",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/monthly-create-B-1/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+    },
+    {
+      "trial": "monthly-create-B-2",
+      "task": "monthly-create",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/monthly-create-B-2/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+    },
+    {
+      "trial": "monthly-create-B-3",
+      "task": "monthly-create",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/monthly-create-B-3/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+    },
+    {
+      "trial": "monthly-create-C-1",
+      "task": "monthly-create",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/monthly-create-C-1/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+    },
+    {
+      "trial": "monthly-create-C-2",
+      "task": "monthly-create",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/monthly-create-C-2/dashboards/evaluation.yaml",
+      "bytes": 1497,
+      "sha256": "44237f126a70fc2313d817899db29583c9e8c42534954ebc9c17016ddfbe2219",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "44237f126a70fc2313d817899db29583c9e8c42534954ebc9c17016ddfbe2219"
+    },
+    {
+      "trial": "monthly-create-C-3",
+      "task": "monthly-create",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/monthly-create-C-3/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+    },
+    {
+      "trial": "ranked-chart-A-1",
+      "task": "ranked-chart",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/ranked-chart-A-1/dashboards/evaluation.yaml",
+      "bytes": 1668,
+      "sha256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+    },
+    {
+      "trial": "ranked-chart-A-2",
+      "task": "ranked-chart",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/ranked-chart-A-2/dashboards/evaluation.yaml",
+      "bytes": 1668,
+      "sha256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+    },
+    {
+      "trial": "ranked-chart-A-3",
+      "task": "ranked-chart",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/ranked-chart-A-3/dashboards/evaluation.yaml",
+      "bytes": 1668,
+      "sha256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424"
+    },
+    {
+      "trial": "ranked-chart-B-1",
+      "task": "ranked-chart",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/ranked-chart-B-1/dashboards/evaluation.yaml",
+      "bytes": 1801,
+      "sha256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659"
+    },
+    {
+      "trial": "ranked-chart-B-2",
+      "task": "ranked-chart",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/ranked-chart-B-2/dashboards/evaluation.yaml",
+      "bytes": 1801,
+      "sha256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659"
+    },
+    {
+      "trial": "ranked-chart-B-3",
+      "task": "ranked-chart",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/ranked-chart-B-3/dashboards/evaluation.yaml",
+      "bytes": 1801,
+      "sha256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659"
+    },
+    {
+      "trial": "ranked-chart-C-1",
+      "task": "ranked-chart",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/ranked-chart-C-1/dashboards/evaluation.yaml",
+      "bytes": 2021,
+      "sha256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69"
+    },
+    {
+      "trial": "ranked-chart-C-2",
+      "task": "ranked-chart",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/ranked-chart-C-2/dashboards/evaluation.yaml",
+      "bytes": 2021,
+      "sha256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69"
+    },
+    {
+      "trial": "ranked-chart-C-3",
+      "task": "ranked-chart",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/ranked-chart-C-3/dashboards/evaluation.yaml",
+      "bytes": 2021,
+      "sha256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69"
+    },
+    {
+      "trial": "grain-alias-sort-A-1",
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/grain-alias-sort-A-1/dashboards/evaluation.yaml",
+      "bytes": 1208,
+      "sha256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+    },
+    {
+      "trial": "grain-alias-sort-A-2",
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/grain-alias-sort-A-2/dashboards/evaluation.yaml",
+      "bytes": 1208,
+      "sha256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+    },
+    {
+      "trial": "grain-alias-sort-A-3",
+      "task": "grain-alias-sort",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/grain-alias-sort-A-3/dashboards/evaluation.yaml",
+      "bytes": 1208,
+      "sha256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6"
+    },
+    {
+      "trial": "grain-alias-sort-B-1",
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/grain-alias-sort-B-1/dashboards/evaluation.yaml",
+      "bytes": 1312,
+      "sha256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9"
+    },
+    {
+      "trial": "grain-alias-sort-B-2",
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/grain-alias-sort-B-2/dashboards/evaluation.yaml",
+      "bytes": 1312,
+      "sha256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9"
+    },
+    {
+      "trial": "grain-alias-sort-B-3",
+      "task": "grain-alias-sort",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/grain-alias-sort-B-3/dashboards/evaluation.yaml",
+      "bytes": 1312,
+      "sha256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9"
+    },
+    {
+      "trial": "grain-alias-sort-C-1",
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/grain-alias-sort-C-1/dashboards/evaluation.yaml",
+      "bytes": 1444,
+      "sha256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7"
+    },
+    {
+      "trial": "grain-alias-sort-C-2",
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/grain-alias-sort-C-2/dashboards/evaluation.yaml",
+      "bytes": 1444,
+      "sha256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7"
+    },
+    {
+      "trial": "grain-alias-sort-C-3",
+      "task": "grain-alias-sort",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/grain-alias-sort-C-3/dashboards/evaluation.yaml",
+      "bytes": 1444,
+      "sha256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7"
+    },
+    {
+      "trial": "scoped-dependent-filter-A-1",
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/scoped-dependent-filter-A-1/dashboards/evaluation.yaml",
+      "bytes": 2312,
+      "sha256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+    },
+    {
+      "trial": "scoped-dependent-filter-A-2",
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/scoped-dependent-filter-A-2/dashboards/evaluation.yaml",
+      "bytes": 2312,
+      "sha256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+    },
+    {
+      "trial": "scoped-dependent-filter-A-3",
+      "task": "scoped-dependent-filter",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/scoped-dependent-filter-A-3/dashboards/evaluation.yaml",
+      "bytes": 2312,
+      "sha256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4"
+    },
+    {
+      "trial": "scoped-dependent-filter-B-1",
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/scoped-dependent-filter-B-1/dashboards/evaluation.yaml",
+      "bytes": 2598,
+      "sha256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903"
+    },
+    {
+      "trial": "scoped-dependent-filter-B-2",
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/scoped-dependent-filter-B-2/dashboards/evaluation.yaml",
+      "bytes": 2598,
+      "sha256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903"
+    },
+    {
+      "trial": "scoped-dependent-filter-B-3",
+      "task": "scoped-dependent-filter",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/scoped-dependent-filter-B-3/dashboards/evaluation.yaml",
+      "bytes": 2598,
+      "sha256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903"
+    },
+    {
+      "trial": "scoped-dependent-filter-C-1",
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/scoped-dependent-filter-C-1/dashboards/evaluation.yaml",
+      "bytes": 2826,
+      "sha256": "739410feab5117008ef2673db8b08f0e498d0440fb495ad82a106031da9fbbbd",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "739410feab5117008ef2673db8b08f0e498d0440fb495ad82a106031da9fbbbd"
+    },
+    {
+      "trial": "scoped-dependent-filter-C-2",
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/scoped-dependent-filter-C-2/dashboards/evaluation.yaml",
+      "bytes": 2766,
+      "sha256": "125a249eabc90b76232c2ce43e609267231049bdf87afa6f823786db4e9012d1",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "125a249eabc90b76232c2ce43e609267231049bdf87afa6f823786db4e9012d1"
+    },
+    {
+      "trial": "scoped-dependent-filter-C-3",
+      "task": "scoped-dependent-filter",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/scoped-dependent-filter-C-3/dashboards/evaluation.yaml",
+      "bytes": 2768,
+      "sha256": "0f6d8756bd1702d74f9d0ecc8b5c054960bf97bfdc3ba74ba2ebe7a43bdd6b9b",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "0f6d8756bd1702d74f9d0ecc8b5c054960bf97bfdc3ba74ba2ebe7a43bdd6b9b"
+    },
+    {
+      "trial": "second-page-reuse-A-1",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-A-1/dashboards/evaluation.yaml",
+      "bytes": 349,
+      "sha256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+    },
+    {
+      "trial": "second-page-reuse-A-1",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-A-1/dashboards/pages.yaml",
+      "bytes": 543,
+      "sha256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681"
+    },
+    {
+      "trial": "second-page-reuse-A-1",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-A-1/dashboards/visuals.yaml",
+      "bytes": 513,
+      "sha256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00"
+    },
+    {
+      "trial": "second-page-reuse-A-2",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-A-2/dashboards/evaluation.yaml",
+      "bytes": 349,
+      "sha256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+    },
+    {
+      "trial": "second-page-reuse-A-2",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-A-2/dashboards/pages.yaml",
+      "bytes": 543,
+      "sha256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681"
+    },
+    {
+      "trial": "second-page-reuse-A-2",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-A-2/dashboards/visuals.yaml",
+      "bytes": 513,
+      "sha256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00"
+    },
+    {
+      "trial": "second-page-reuse-A-3",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-A-3/dashboards/evaluation.yaml",
+      "bytes": 349,
+      "sha256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73"
+    },
+    {
+      "trial": "second-page-reuse-A-3",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-A-3/dashboards/pages.yaml",
+      "bytes": 543,
+      "sha256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681"
+    },
+    {
+      "trial": "second-page-reuse-A-3",
+      "task": "second-page-reuse",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-A-3/dashboards/visuals.yaml",
+      "bytes": 513,
+      "sha256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00"
+    },
+    {
+      "trial": "second-page-reuse-B-1",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-B-1/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d"
+    },
+    {
+      "trial": "second-page-reuse-B-1",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-B-1/dashboards/pages.yaml",
+      "bytes": 651,
+      "sha256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a"
+    },
+    {
+      "trial": "second-page-reuse-B-1",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-B-1/dashboards/visuals.yaml",
+      "bytes": 535,
+      "sha256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f"
+    },
+    {
+      "trial": "second-page-reuse-B-2",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-B-2/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d"
+    },
+    {
+      "trial": "second-page-reuse-B-2",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-B-2/dashboards/pages.yaml",
+      "bytes": 651,
+      "sha256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a"
+    },
+    {
+      "trial": "second-page-reuse-B-2",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-B-2/dashboards/visuals.yaml",
+      "bytes": 535,
+      "sha256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f"
+    },
+    {
+      "trial": "second-page-reuse-B-3",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-B-3/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d"
+    },
+    {
+      "trial": "second-page-reuse-B-3",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-B-3/dashboards/pages.yaml",
+      "bytes": 651,
+      "sha256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a"
+    },
+    {
+      "trial": "second-page-reuse-B-3",
+      "task": "second-page-reuse",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-B-3/dashboards/visuals.yaml",
+      "bytes": 535,
+      "sha256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f"
+    },
+    {
+      "trial": "second-page-reuse-C-1",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-C-1/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f"
+    },
+    {
+      "trial": "second-page-reuse-C-1",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-C-1/dashboards/pages.yaml",
+      "bytes": 764,
+      "sha256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949"
+    },
+    {
+      "trial": "second-page-reuse-C-1",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/second-page-reuse-C-1/dashboards/visuals.yaml",
+      "bytes": 583,
+      "sha256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5"
+    },
+    {
+      "trial": "second-page-reuse-C-2",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-C-2/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f"
+    },
+    {
+      "trial": "second-page-reuse-C-2",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-C-2/dashboards/pages.yaml",
+      "bytes": 764,
+      "sha256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949"
+    },
+    {
+      "trial": "second-page-reuse-C-2",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/second-page-reuse-C-2/dashboards/visuals.yaml",
+      "bytes": 583,
+      "sha256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5"
+    },
+    {
+      "trial": "second-page-reuse-C-3",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-C-3/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f"
+    },
+    {
+      "trial": "second-page-reuse-C-3",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-C-3/dashboards/pages.yaml",
+      "bytes": 764,
+      "sha256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+      "originalInventoryPath": "project/dashboards/pages.yaml",
+      "originalInventorySHA256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949"
+    },
+    {
+      "trial": "second-page-reuse-C-3",
+      "task": "second-page-reuse",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/second-page-reuse-C-3/dashboards/visuals.yaml",
+      "bytes": 583,
+      "sha256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+      "originalInventoryPath": "project/dashboards/visuals.yaml",
+      "originalInventorySHA256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5"
+    },
+    {
+      "trial": "move-resize-A-1",
+      "task": "move-resize",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/move-resize-A-1/dashboards/evaluation.yaml",
+      "bytes": 1209,
+      "sha256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+    },
+    {
+      "trial": "move-resize-A-2",
+      "task": "move-resize",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/move-resize-A-2/dashboards/evaluation.yaml",
+      "bytes": 1209,
+      "sha256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+    },
+    {
+      "trial": "move-resize-A-3",
+      "task": "move-resize",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/move-resize-A-3/dashboards/evaluation.yaml",
+      "bytes": 1209,
+      "sha256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee"
+    },
+    {
+      "trial": "move-resize-B-1",
+      "task": "move-resize",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/move-resize-B-1/dashboards/evaluation.yaml",
+      "bytes": 1313,
+      "sha256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf"
+    },
+    {
+      "trial": "move-resize-B-2",
+      "task": "move-resize",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/move-resize-B-2/dashboards/evaluation.yaml",
+      "bytes": 1313,
+      "sha256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf"
+    },
+    {
+      "trial": "move-resize-B-3",
+      "task": "move-resize",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/move-resize-B-3/dashboards/evaluation.yaml",
+      "bytes": 1313,
+      "sha256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf"
+    },
+    {
+      "trial": "move-resize-C-1",
+      "task": "move-resize",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/move-resize-C-1/dashboards/evaluation.yaml",
+      "bytes": 1381,
+      "sha256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a"
+    },
+    {
+      "trial": "move-resize-C-2",
+      "task": "move-resize",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/move-resize-C-2/dashboards/evaluation.yaml",
+      "bytes": 1381,
+      "sha256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a"
+    },
+    {
+      "trial": "move-resize-C-3",
+      "task": "move-resize",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/move-resize-C-3/dashboards/evaluation.yaml",
+      "bytes": 1381,
+      "sha256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a"
+    },
+    {
+      "trial": "reordered-definition-edit-A-1",
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/reordered-definition-edit-A-1/dashboards/evaluation.yaml",
+      "bytes": 1959,
+      "sha256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+    },
+    {
+      "trial": "reordered-definition-edit-A-2",
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/reordered-definition-edit-A-2/dashboards/evaluation.yaml",
+      "bytes": 1959,
+      "sha256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+    },
+    {
+      "trial": "reordered-definition-edit-A-3",
+      "task": "reordered-definition-edit",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/reordered-definition-edit-A-3/dashboards/evaluation.yaml",
+      "bytes": 1959,
+      "sha256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7"
+    },
+    {
+      "trial": "reordered-definition-edit-B-1",
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/reordered-definition-edit-B-1/dashboards/evaluation.yaml",
+      "bytes": 2150,
+      "sha256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f"
+    },
+    {
+      "trial": "reordered-definition-edit-B-2",
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/reordered-definition-edit-B-2/dashboards/evaluation.yaml",
+      "bytes": 2150,
+      "sha256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f"
+    },
+    {
+      "trial": "reordered-definition-edit-B-3",
+      "task": "reordered-definition-edit",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/reordered-definition-edit-B-3/dashboards/evaluation.yaml",
+      "bytes": 2150,
+      "sha256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f"
+    },
+    {
+      "trial": "reordered-definition-edit-C-1",
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/reordered-definition-edit-C-1/dashboards/evaluation.yaml",
+      "bytes": 2403,
+      "sha256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71"
+    },
+    {
+      "trial": "reordered-definition-edit-C-2",
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/reordered-definition-edit-C-2/dashboards/evaluation.yaml",
+      "bytes": 2403,
+      "sha256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71"
+    },
+    {
+      "trial": "reordered-definition-edit-C-3",
+      "task": "reordered-definition-edit",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/reordered-definition-edit-C-3/dashboards/evaluation.yaml",
+      "bytes": 2403,
+      "sha256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71"
+    },
+    {
+      "trial": "combo-bindings-A-1",
+      "task": "combo-bindings",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/combo-bindings-A-1/dashboards/evaluation.yaml",
+      "bytes": 1380,
+      "sha256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+    },
+    {
+      "trial": "combo-bindings-A-2",
+      "task": "combo-bindings",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/combo-bindings-A-2/dashboards/evaluation.yaml",
+      "bytes": 1380,
+      "sha256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+    },
+    {
+      "trial": "combo-bindings-A-3",
+      "task": "combo-bindings",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/combo-bindings-A-3/dashboards/evaluation.yaml",
+      "bytes": 1380,
+      "sha256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458"
+    },
+    {
+      "trial": "combo-bindings-B-1",
+      "task": "combo-bindings",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/combo-bindings-B-1/dashboards/evaluation.yaml",
+      "bytes": 1534,
+      "sha256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943"
+    },
+    {
+      "trial": "combo-bindings-B-2",
+      "task": "combo-bindings",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/combo-bindings-B-2/dashboards/evaluation.yaml",
+      "bytes": 1534,
+      "sha256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943"
+    },
+    {
+      "trial": "combo-bindings-B-3",
+      "task": "combo-bindings",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/combo-bindings-B-3/dashboards/evaluation.yaml",
+      "bytes": 1534,
+      "sha256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943"
+    },
+    {
+      "trial": "combo-bindings-C-1",
+      "task": "combo-bindings",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/combo-bindings-C-1/dashboards/evaluation.yaml",
+      "bytes": 1646,
+      "sha256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8"
+    },
+    {
+      "trial": "combo-bindings-C-2",
+      "task": "combo-bindings",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/combo-bindings-C-2/dashboards/evaluation.yaml",
+      "bytes": 1646,
+      "sha256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8"
+    },
+    {
+      "trial": "combo-bindings-C-3",
+      "task": "combo-bindings",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/combo-bindings-C-3/dashboards/evaluation.yaml",
+      "bytes": 1646,
+      "sha256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8"
+    },
+    {
+      "trial": "records-query-A-1",
+      "task": "records-query",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/records-query-A-1/dashboards/evaluation.yaml",
+      "bytes": 1755,
+      "sha256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+    },
+    {
+      "trial": "records-query-A-2",
+      "task": "records-query",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/records-query-A-2/dashboards/evaluation.yaml",
+      "bytes": 1755,
+      "sha256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+    },
+    {
+      "trial": "records-query-A-3",
+      "task": "records-query",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/records-query-A-3/dashboards/evaluation.yaml",
+      "bytes": 1755,
+      "sha256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d"
+    },
+    {
+      "trial": "records-query-B-1",
+      "task": "records-query",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/records-query-B-1/dashboards/evaluation.yaml",
+      "bytes": 1923,
+      "sha256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c"
+    },
+    {
+      "trial": "records-query-B-2",
+      "task": "records-query",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/records-query-B-2/dashboards/evaluation.yaml",
+      "bytes": 1923,
+      "sha256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c"
+    },
+    {
+      "trial": "records-query-B-3",
+      "task": "records-query",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/records-query-B-3/dashboards/evaluation.yaml",
+      "bytes": 1923,
+      "sha256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c"
+    },
+    {
+      "trial": "records-query-C-1",
+      "task": "records-query",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/records-query-C-1/dashboards/evaluation.yaml",
+      "bytes": 2122,
+      "sha256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079"
+    },
+    {
+      "trial": "records-query-C-2",
+      "task": "records-query",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/records-query-C-2/dashboards/evaluation.yaml",
+      "bytes": 2122,
+      "sha256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079"
+    },
+    {
+      "trial": "records-query-C-3",
+      "task": "records-query",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/records-query-C-3/dashboards/evaluation.yaml",
+      "bytes": 2122,
+      "sha256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079"
+    },
+    {
+      "trial": "repair-preserving-neighbors-A-1",
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "replicate": 1,
+      "path": "sources/repair-preserving-neighbors-A-1/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+    },
+    {
+      "trial": "repair-preserving-neighbors-A-2",
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "replicate": 2,
+      "path": "sources/repair-preserving-neighbors-A-2/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+    },
+    {
+      "trial": "repair-preserving-neighbors-A-3",
+      "task": "repair-preserving-neighbors",
+      "candidate": "A",
+      "replicate": 3,
+      "path": "sources/repair-preserving-neighbors-A-3/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a"
+    },
+    {
+      "trial": "repair-preserving-neighbors-B-1",
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "replicate": 1,
+      "path": "sources/repair-preserving-neighbors-B-1/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+    },
+    {
+      "trial": "repair-preserving-neighbors-B-2",
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "replicate": 2,
+      "path": "sources/repair-preserving-neighbors-B-2/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+    },
+    {
+      "trial": "repair-preserving-neighbors-B-3",
+      "task": "repair-preserving-neighbors",
+      "candidate": "B",
+      "replicate": 3,
+      "path": "sources/repair-preserving-neighbors-B-3/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b"
+    },
+    {
+      "trial": "repair-preserving-neighbors-C-1",
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "replicate": 1,
+      "path": "sources/repair-preserving-neighbors-C-1/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+    },
+    {
+      "trial": "repair-preserving-neighbors-C-2",
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "replicate": 2,
+      "path": "sources/repair-preserving-neighbors-C-2/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+    },
+    {
+      "trial": "repair-preserving-neighbors-C-3",
+      "task": "repair-preserving-neighbors",
+      "candidate": "C",
+      "replicate": 3,
+      "path": "sources/repair-preserving-neighbors-C-3/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "originalInventoryPath": "project/dashboards/evaluation.yaml",
+      "originalInventorySHA256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "graded-results.json",
+      "bytes": 140875,
+      "sha256": "4925d829374c5320a325572a7f2bf10bb864f58e72dffcbe2ae0026219fc4005",
+      "role": "untouched original graded report"
+    },
+    {
+      "path": "preregistration.json",
+      "bytes": 89957,
+      "sha256": "6c9082a266be9ed6331b6394912541d76b2e7929f0b1b7826159ef201ff9ff92",
+      "role": "untouched replacement cohort manifest"
+    },
+    {
+      "path": "prototype-qualification.json",
+      "bytes": 53818,
+      "sha256": "984944e2f8fa7e7e72fa3c9b7bb3cf77fc42abcafbe02556928afbdcc378b5a3",
+      "role": "untouched 93-case compiler qualification; zero agent trials"
+    },
+    {
+      "path": "execution-identity.json",
+      "bytes": 130938,
+      "sha256": "a623737e4904c09824ad8abc855d3c98f37c309ae3f17534ed2846fcb26731ae",
+      "role": "untouched CLI/config identity, shuffle order and execution manifest"
+    },
+    {
+      "path": "aborted-cohort.json",
+      "bytes": 3816,
+      "sha256": "197677dacbdb3701d6269df5cb2dcc36f3047707439a5a0348633ce15df2e34c",
+      "role": "entire excluded 11-attempt infrastructure cohort summary"
+    },
+    {
+      "path": "dispatch/controller-at-qualification.ts.txt",
+      "bytes": 8869,
+      "sha256": "b98ef40fcbc52bd02ef1dfa7e5304153fa9db1ada6a3ec3f9233c634775f92bf",
+      "role": "preserved qualification or dispatch implementation"
+    },
+    {
+      "path": "dispatch/controller-at-dispatch.ts.txt",
+      "bytes": 9801,
+      "sha256": "fa51a61dbd4a506dac819a0d1eaad2559048a660f153121d5b17119d50deaf68",
+      "role": "preserved qualification or dispatch implementation"
+    },
+    {
+      "path": "dispatch/runner-at-dispatch.py.txt",
+      "bytes": 27994,
+      "sha256": "b09b20c9707ee6035bf811dbba5c5bb012007a762815823f23ee44f889c424d6",
+      "role": "preserved qualification or dispatch implementation"
+    },
+    {
+      "path": "dispatch/runner-tests-at-dispatch.py.txt",
+      "bytes": 19029,
+      "sha256": "c6c97e124cb0d42bb8eb97f53faf584c8f6798788fe87ceafcf45a9697dfe37b",
+      "role": "preserved qualification or dispatch implementation"
+    },
+    {
+      "path": "dispatch/prototypes.ts.txt",
+      "bytes": 22890,
+      "sha256": "15177001f622550b308bd5ad3e09b1fe0370e33cb4b00dfdbd949f489f935120",
+      "role": "exact prototype lowering or grading implementation"
+    },
+    {
+      "path": "dispatch/prototypes-cli.ts.txt",
+      "bytes": 1495,
+      "sha256": "4eed190a5c239f6cec383254345d6456d86bd1e1fa0244ccd9c4bbce3937ac1a",
+      "role": "exact prototype lowering or grading implementation"
+    },
+    {
+      "path": "dispatch/grade-trials.ts.txt",
+      "bytes": 33257,
+      "sha256": "03b20c1b0834af69eed0015207caa5898d967c65efe0a6f2d462bc8df01958ae",
+      "role": "exact prototype lowering or grading implementation"
+    },
+    {
+      "path": "sources/monthly-create-A-1/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-A-2/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-A-3/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-B-1/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-B-2/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-B-3/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-C-1/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-C-2/dashboards/evaluation.yaml",
+      "bytes": 1497,
+      "sha256": "44237f126a70fc2313d817899db29583c9e8c42534954ebc9c17016ddfbe2219",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/monthly-create-C-3/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-A-1/dashboards/evaluation.yaml",
+      "bytes": 1668,
+      "sha256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-A-2/dashboards/evaluation.yaml",
+      "bytes": 1668,
+      "sha256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-A-3/dashboards/evaluation.yaml",
+      "bytes": 1668,
+      "sha256": "00d6e69e677db7b187a7d8f59ed911abf2d2336d1b438b35f74866a683481424",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-B-1/dashboards/evaluation.yaml",
+      "bytes": 1801,
+      "sha256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-B-2/dashboards/evaluation.yaml",
+      "bytes": 1801,
+      "sha256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-B-3/dashboards/evaluation.yaml",
+      "bytes": 1801,
+      "sha256": "661e48e5ca9fcc5bed4ba644d280625f8def07e8c8f7eb3d6e79eae055484659",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-C-1/dashboards/evaluation.yaml",
+      "bytes": 2021,
+      "sha256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-C-2/dashboards/evaluation.yaml",
+      "bytes": 2021,
+      "sha256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/ranked-chart-C-3/dashboards/evaluation.yaml",
+      "bytes": 2021,
+      "sha256": "7b424724b49efc74ba79fd806ea39755f3913ca11ed3c08a7c3ca5d5ebf52a69",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-A-1/dashboards/evaluation.yaml",
+      "bytes": 1208,
+      "sha256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-A-2/dashboards/evaluation.yaml",
+      "bytes": 1208,
+      "sha256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-A-3/dashboards/evaluation.yaml",
+      "bytes": 1208,
+      "sha256": "1d52a350679fa54427f10f9512e6979395f38104c51976bf105a3fb6ea9b3ef6",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-B-1/dashboards/evaluation.yaml",
+      "bytes": 1312,
+      "sha256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-B-2/dashboards/evaluation.yaml",
+      "bytes": 1312,
+      "sha256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-B-3/dashboards/evaluation.yaml",
+      "bytes": 1312,
+      "sha256": "e4454a4f9b829fe6ba4ba14cca5c6658984142569261d9b8175bd59f5df07fa9",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-C-1/dashboards/evaluation.yaml",
+      "bytes": 1444,
+      "sha256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-C-2/dashboards/evaluation.yaml",
+      "bytes": 1444,
+      "sha256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/grain-alias-sort-C-3/dashboards/evaluation.yaml",
+      "bytes": 1444,
+      "sha256": "c6866e5ae0c2408fbcf47258fbb8a4d32eb89b2268c3eb4c1140cc54bed529c7",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-A-1/dashboards/evaluation.yaml",
+      "bytes": 2312,
+      "sha256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-A-2/dashboards/evaluation.yaml",
+      "bytes": 2312,
+      "sha256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-A-3/dashboards/evaluation.yaml",
+      "bytes": 2312,
+      "sha256": "cf7dc7dea857d7c16476d0f609be5a5f0907bb62212195d94464c1660258e0f4",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-B-1/dashboards/evaluation.yaml",
+      "bytes": 2598,
+      "sha256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-B-2/dashboards/evaluation.yaml",
+      "bytes": 2598,
+      "sha256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-B-3/dashboards/evaluation.yaml",
+      "bytes": 2598,
+      "sha256": "b39feb7e3ae26c5a4946a9647a814917b93c3f659f064d992ff339b5a4079903",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-C-1/dashboards/evaluation.yaml",
+      "bytes": 2826,
+      "sha256": "739410feab5117008ef2673db8b08f0e498d0440fb495ad82a106031da9fbbbd",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-C-2/dashboards/evaluation.yaml",
+      "bytes": 2766,
+      "sha256": "125a249eabc90b76232c2ce43e609267231049bdf87afa6f823786db4e9012d1",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/scoped-dependent-filter-C-3/dashboards/evaluation.yaml",
+      "bytes": 2768,
+      "sha256": "0f6d8756bd1702d74f9d0ecc8b5c054960bf97bfdc3ba74ba2ebe7a43bdd6b9b",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-1/dashboards/evaluation.yaml",
+      "bytes": 349,
+      "sha256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-1/dashboards/pages.yaml",
+      "bytes": 543,
+      "sha256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-1/dashboards/visuals.yaml",
+      "bytes": 513,
+      "sha256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-2/dashboards/evaluation.yaml",
+      "bytes": 349,
+      "sha256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-2/dashboards/pages.yaml",
+      "bytes": 543,
+      "sha256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-2/dashboards/visuals.yaml",
+      "bytes": 513,
+      "sha256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-3/dashboards/evaluation.yaml",
+      "bytes": 349,
+      "sha256": "34d477c116511da1350eca8930cc61aa62454ebac6f7400dac1dbc5e55afff73",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-3/dashboards/pages.yaml",
+      "bytes": 543,
+      "sha256": "25f46cbb7855e2f0d0442263d0f3ff29caaa4ad6121f6e9de8f2f4ac1e683681",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-A-3/dashboards/visuals.yaml",
+      "bytes": 513,
+      "sha256": "21f0bd4537190eb5486581e284e8d954710fc2d2a89de43de0656fcf75dd1b00",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-1/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-1/dashboards/pages.yaml",
+      "bytes": 651,
+      "sha256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-1/dashboards/visuals.yaml",
+      "bytes": 535,
+      "sha256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-2/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-2/dashboards/pages.yaml",
+      "bytes": 651,
+      "sha256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-2/dashboards/visuals.yaml",
+      "bytes": 535,
+      "sha256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-3/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "a370f6a3a997151a6d23ebbf23ba53ae0de3945624315f043954c43c40acd73d",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-3/dashboards/pages.yaml",
+      "bytes": 651,
+      "sha256": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-B-3/dashboards/visuals.yaml",
+      "bytes": 535,
+      "sha256": "c9dc071fb0ef9545cac7112267f2855b2cea80e3ce45540b395eaaae10f9653f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-1/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-1/dashboards/pages.yaml",
+      "bytes": 764,
+      "sha256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-1/dashboards/visuals.yaml",
+      "bytes": 583,
+      "sha256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-2/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-2/dashboards/pages.yaml",
+      "bytes": 764,
+      "sha256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-2/dashboards/visuals.yaml",
+      "bytes": 583,
+      "sha256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-3/dashboards/evaluation.yaml",
+      "bytes": 369,
+      "sha256": "332855b45783ea0abb4924a732ed1cf13a3decdafd510749fae8dee7f0e4bf9f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-3/dashboards/pages.yaml",
+      "bytes": 764,
+      "sha256": "91d86ff4b1c542f3145582c52c5719fe37151d57c2b1b66e744fc7c6c9c53949",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/second-page-reuse-C-3/dashboards/visuals.yaml",
+      "bytes": 583,
+      "sha256": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-A-1/dashboards/evaluation.yaml",
+      "bytes": 1209,
+      "sha256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-A-2/dashboards/evaluation.yaml",
+      "bytes": 1209,
+      "sha256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-A-3/dashboards/evaluation.yaml",
+      "bytes": 1209,
+      "sha256": "773eed1e03d42ef40188b93c024882dcc3755cb43c3b00734f89e4f9b6a69eee",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-B-1/dashboards/evaluation.yaml",
+      "bytes": 1313,
+      "sha256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-B-2/dashboards/evaluation.yaml",
+      "bytes": 1313,
+      "sha256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-B-3/dashboards/evaluation.yaml",
+      "bytes": 1313,
+      "sha256": "beedddda70ebe44774a7c2dd387733ef0a2ac98cd1fc1138dfadee9c66b0f1bf",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-C-1/dashboards/evaluation.yaml",
+      "bytes": 1381,
+      "sha256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-C-2/dashboards/evaluation.yaml",
+      "bytes": 1381,
+      "sha256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/move-resize-C-3/dashboards/evaluation.yaml",
+      "bytes": 1381,
+      "sha256": "cb1682659eee0819b219ec5a540b1b62396c73dec5be1222cca595bc0be6879a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-A-1/dashboards/evaluation.yaml",
+      "bytes": 1959,
+      "sha256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-A-2/dashboards/evaluation.yaml",
+      "bytes": 1959,
+      "sha256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-A-3/dashboards/evaluation.yaml",
+      "bytes": 1959,
+      "sha256": "607f2eb79ed2efdc92ea1fd4752a809aa7f6952dcdd521f29e6cad6a925fc2b7",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-B-1/dashboards/evaluation.yaml",
+      "bytes": 2150,
+      "sha256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-B-2/dashboards/evaluation.yaml",
+      "bytes": 2150,
+      "sha256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-B-3/dashboards/evaluation.yaml",
+      "bytes": 2150,
+      "sha256": "eed9d46d192c6957f7a091658dd5dd518545fb89956e6d8b4f5bea9e5666b75f",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-C-1/dashboards/evaluation.yaml",
+      "bytes": 2403,
+      "sha256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-C-2/dashboards/evaluation.yaml",
+      "bytes": 2403,
+      "sha256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/reordered-definition-edit-C-3/dashboards/evaluation.yaml",
+      "bytes": 2403,
+      "sha256": "80c0705365c284a547dc2caec636c0132187f34424dc1103ac6c3ae7afb9de71",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-A-1/dashboards/evaluation.yaml",
+      "bytes": 1380,
+      "sha256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-A-2/dashboards/evaluation.yaml",
+      "bytes": 1380,
+      "sha256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-A-3/dashboards/evaluation.yaml",
+      "bytes": 1380,
+      "sha256": "e85df028b731fb5243eff51d044e33786bc1d875c1c646c5771b37bf996ab458",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-B-1/dashboards/evaluation.yaml",
+      "bytes": 1534,
+      "sha256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-B-2/dashboards/evaluation.yaml",
+      "bytes": 1534,
+      "sha256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-B-3/dashboards/evaluation.yaml",
+      "bytes": 1534,
+      "sha256": "bdbdf1a1806a3c82dabc4bd409df87a94859c5708e5a92fdc4274e9fc8219943",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-C-1/dashboards/evaluation.yaml",
+      "bytes": 1646,
+      "sha256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-C-2/dashboards/evaluation.yaml",
+      "bytes": 1646,
+      "sha256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/combo-bindings-C-3/dashboards/evaluation.yaml",
+      "bytes": 1646,
+      "sha256": "b025d5b00411e295c8ddfa34bffff49efdabaf0958d7982bae1dfb562eda1de8",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-A-1/dashboards/evaluation.yaml",
+      "bytes": 1755,
+      "sha256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-A-2/dashboards/evaluation.yaml",
+      "bytes": 1755,
+      "sha256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-A-3/dashboards/evaluation.yaml",
+      "bytes": 1755,
+      "sha256": "49032b67ea0d2f43afa5815d35682717ef7a5977efac8c356893c5d16b3a137d",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-B-1/dashboards/evaluation.yaml",
+      "bytes": 1923,
+      "sha256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-B-2/dashboards/evaluation.yaml",
+      "bytes": 1923,
+      "sha256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-B-3/dashboards/evaluation.yaml",
+      "bytes": 1923,
+      "sha256": "7f6f73e9d67b762c9abdd17834c35bc5bd1670f1102488aec7ff64aa4916749c",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-C-1/dashboards/evaluation.yaml",
+      "bytes": 2122,
+      "sha256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-C-2/dashboards/evaluation.yaml",
+      "bytes": 2122,
+      "sha256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/records-query-C-3/dashboards/evaluation.yaml",
+      "bytes": 2122,
+      "sha256": "cc8f9d8d4eb97625c7051eeebcc42fe12e632f8c53bff5dcb6304866123a4079",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-A-1/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-A-2/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-A-3/dashboards/evaluation.yaml",
+      "bytes": 1211,
+      "sha256": "44de8918611c84309c7eb832a5d710ee6990e4520e9192dd36198270582ee26a",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-B-1/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-B-2/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-B-3/dashboards/evaluation.yaml",
+      "bytes": 1315,
+      "sha256": "88ea5cc8c270118f9c8370205da449ef3fcd1aa909bed450a7ee62c3fa5db31b",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-C-1/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-C-2/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "sources/repair-preserving-neighbors-C-3/dashboards/evaluation.yaml",
+      "bytes": 1447,
+      "sha256": "28019389773f8d505463b7233a6d546cd1c3db3988a93b1b08438627423bb393",
+      "role": "frozen first-attempt authored dashboard source"
+    },
+    {
+      "path": "resource-summary.json",
+      "bytes": 16429,
+      "sha256": "3a423b42e8ccec2eb3079ba5f9c9688151c0f2d304a97bf27311bcff4e305e46",
+      "role": "derived descriptive statistics"
+    },
+    {
+      "path": "README.md",
+      "bytes": 13377,
+      "sha256": "fe6066ba15f18b944a78b6a66a9e42454bde89fd3f7625c0de211e97c5129290",
+      "role": "bounded engineering interpretation"
+    },
+    {
+      "path": "graded-results-final.json",
+      "bytes": 140875,
+      "sha256": "c5b93e09842a73d269ab97041fe20d17703928a86b4ed927d3bc461407271df2",
+      "role": "untouched final score with complete C row-object preservation"
+    },
+    {
+      "path": "dispatch/grade-trials-final.ts.txt",
+      "bytes": 33520,
+      "sha256": "8ece0ab104dde0c44e7b0fe48d24989beaff7435a4792005f67c7657998bbdb7",
+      "role": "exact final grading implementation"
+    }
+  ],
+  "scope": "portable authored sources and bounded controls; full references/traces remain in complete artifact bundle",
+  "selfHashExcluded": true,
+  "finalGradedReportSHA256": "c5b93e09842a73d269ab97041fe20d17703928a86b4ed927d3bc461407271df2",
+  "scoreVersions": {
+    "initial": "graded-results.json",
+    "initialGrader": "dispatch/grade-trials.ts.txt",
+    "final": "graded-results-final.json",
+    "finalGrader": "dispatch/grade-trials-final.ts.txt",
+    "sameFirstAttemptSources": true,
+    "additionalAgentTrials": 0,
+    "resourceValuesUnchanged": true
+  }
+}

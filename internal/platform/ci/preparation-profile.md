@@ -69,7 +69,7 @@ independent. Task's local checksum/up-to-date state does not cross runners.
    historical cohort). All 27 logs still contain **215–395 `go: downloading`
    records**, including after cache hits. The counts include tool dependencies
    and are not unique-module counts or network durations. Root-module and nested
-   APIGen dependencies, SQLC's pinned tool module and the Go 1.26.7 SQLC toolchain
+   APIGen dependencies, SQLC's pinned tool module and the Go 1.26.9 SQLC toolchain
    are distinct from the Go 1.26.8 application compiler.
 2. **Generated contracts and executable compilation:** every prepared runner
    generates SQLC, API/signals, schemas, documentation and browser contracts.

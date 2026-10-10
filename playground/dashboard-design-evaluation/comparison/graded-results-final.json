@@ -1,0 +1,5066 @@
+{
+  "kind": "frozen-dashboard-design-trial-grades",
+  "denominator": 90,
+  "manifestSHA256": "6c9082a266be9ed6331b6394912541d76b2e7929f0b1b7826159ef201ff9ff92",
+  "binarySHA256": "d74124679be1e1dab9899502b43e91f4f601efb072eee95fb5531b4e766c7a11",
+  "qualification": {
+    "qualified": true,
+    "agentTrials": 0,
+    "records": 93
+  },
+  "corpusSHA256": "bb1534d4914ab734a18d7ab6cbfe3bfd8fd89b61a5a9663c5bf6b52721f2ba96",
+  "graderImplementationSHA256": "8ece0ab104dde0c44e7b0fe48d24989beaff7435a4792005f67c7657998bbdb7",
+  "globalIssues": [],
+  "preparationProvenance": [
+    {
+      "path": "controller.ts",
+      "qualifiedSHA256": "b98ef40fcbc52bd02ef1dfa7e5304153fa9db1ada6a3ec3f9233c634775f92bf",
+      "currentSHA256": "e51ffaf5a5241461c93e41d058c875a20e7f4ad61319c093ed6d3d243a72219e",
+      "mismatch": true,
+      "disclosure": "Root disclosed predispatch preparation-only corpus/prompt policy changes; raw preregistered manifest and exact frozen inputs govern, qualification remains unchanged."
+    },
+    {
+      "archive": "/tmp/pr938-design-trials-v2/controller-at-qualification.ts",
+      "expectedSHA256": "b98ef40fcbc52bd02ef1dfa7e5304153fa9db1ada6a3ec3f9233c634775f92bf",
+      "actualSHA256": "b98ef40fcbc52bd02ef1dfa7e5304153fa9db1ada6a3ec3f9233c634775f92bf",
+      "matches": true
+    },
+    {
+      "archive": "/tmp/pr938-design-trials-v2/runner-at-dispatch.py",
+      "expectedSHA256": "b09b20c9707ee6035bf811dbba5c5bb012007a762815823f23ee44f889c424d6",
+      "actualSHA256": "b09b20c9707ee6035bf811dbba5c5bb012007a762815823f23ee44f889c424d6",
+      "matches": true
+    },
+    {
+      "archive": "/tmp/pr938-design-trials-v2/controller-at-dispatch.ts",
+      "SHA256": "fa51a61dbd4a506dac819a0d1eaad2559048a660f153121d5b17119d50deaf68",
+      "role": "disclosed controller preparation source at dispatch"
+    }
+  ],
+  "summary": {
+    "A": {
+      "denominator": 30,
+      "successes": 30,
+      "failures": 0,
+      "failureTypes": {},
+      "resources": {
+        "inputTokens": 3783606,
+        "cachedInputTokens": 3175808,
+        "outputTokens": 15646,
+        "reasoningOutputTokens": 1382,
+        "elapsedSeconds": 742.7306110546924,
+        "toolCalls": 134,
+        "sourceBytes": 45954,
+        "editedBytes": 20139
+      }
+    },
+    "B": {
+      "denominator": 30,
+      "successes": 30,
+      "failures": 0,
+      "failureTypes": {},
+      "resources": {
+        "inputTokens": 3439688,
+        "cachedInputTokens": 2843520,
+        "outputTokens": 14567,
+        "reasoningOutputTokens": 998,
+        "elapsedSeconds": 691.8437853022479,
+        "toolCalls": 120,
+        "sourceBytes": 50448,
+        "editedBytes": 22320
+      }
+    },
+    "C": {
+      "denominator": 30,
+      "successes": 30,
+      "failures": 0,
+      "failureTypes": {},
+      "resources": {
+        "inputTokens": 3593979,
+        "cachedInputTokens": 2980864,
+        "outputTokens": 15070,
+        "reasoningOutputTokens": 1386,
+        "elapsedSeconds": 719.4106368161738,
+        "toolCalls": 121,
+        "sourceBytes": 55291,
+        "editedBytes": 24819
+      }
+    }
+  },
+  "pairedTaskMatrix": [
+    {
+      "task": "monthly-create",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "monthly-create",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "monthly-create",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "ranked-chart",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "ranked-chart",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "ranked-chart",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "grain-alias-sort",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "grain-alias-sort",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "grain-alias-sort",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "scoped-dependent-filter",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "second-page-reuse",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "second-page-reuse",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "second-page-reuse",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "move-resize",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "move-resize",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "move-resize",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "reordered-definition-edit",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "reordered-definition-edit",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "reordered-definition-edit",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "combo-bindings",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "combo-bindings",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "combo-bindings",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "records-query",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "records-query",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "records-query",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "replicate": 1,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "replicate": 2,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    },
+    {
+      "task": "repair-preserving-neighbors",
+      "replicate": 3,
+      "arms": {
+        "A": {
+          "success": true,
+          "failures": []
+        },
+        "B": {
+          "success": true,
+          "failures": []
+        },
+        "C": {
+          "success": true,
+          "failures": []
+        }
+      }
+    }
+  ],
+  "records": [
+    {
+      "id": "monthly-create-A-1",
+      "task_id": "monthly-create",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1211,
+      "editedBytes": 1017,
+      "elapsedSeconds": 45.330391951836646,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 160362,
+        "cached_input_tokens": 140288,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 816,
+        "reasoning_output_tokens": 47
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1f-2762-7253-b7ad-7bfc5a51d79b",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      }
+    },
+    {
+      "id": "monthly-create-A-2",
+      "task_id": "monthly-create",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1211,
+      "editedBytes": 1017,
+      "elapsedSeconds": 28.576847933698446,
+      "toolCalls": 8,
+      "usage": {
+        "input_tokens": 129301,
+        "cached_input_tokens": 109440,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 844,
+        "reasoning_output_tokens": 56
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-bbba-7450-acbf-e3f2235e1039",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      }
+    },
+    {
+      "id": "monthly-create-A-3",
+      "task_id": "monthly-create",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1211,
+      "editedBytes": 1017,
+      "elapsedSeconds": 29.620848302729428,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 165077,
+        "cached_input_tokens": 140928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 782,
+        "reasoning_output_tokens": 57
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-dbb6-79c3-9d15-545b6f6005e0",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      }
+    },
+    {
+      "id": "monthly-create-B-1",
+      "task_id": "monthly-create",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1315,
+      "editedBytes": 1111,
+      "elapsedSeconds": 32.18827187269926,
+      "toolCalls": 7,
+      "usage": {
+        "input_tokens": 128624,
+        "cached_input_tokens": 91776,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 831,
+        "reasoning_output_tokens": 120
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-1d76-7ee0-8075-e3e614db90ee",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      }
+    },
+    {
+      "id": "monthly-create-B-2",
+      "task_id": "monthly-create",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1315,
+      "editedBytes": 1111,
+      "elapsedSeconds": 31.666576692368835,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 140892,
+        "cached_input_tokens": 123008,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 949,
+        "reasoning_output_tokens": 99
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-aa9e-75b1-8bbb-b292bb7ccb92",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      }
+    },
+    {
+      "id": "monthly-create-B-3",
+      "task_id": "monthly-create",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1315,
+      "editedBytes": 1111,
+      "elapsedSeconds": 31.742232110816985,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 157315,
+        "cached_input_tokens": 135680,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 765,
+        "reasoning_output_tokens": 78
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-0a46-76e3-b4b0-361fc331739f",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      }
+    },
+    {
+      "id": "monthly-create-C-1",
+      "task_id": "monthly-create",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1447,
+      "editedBytes": 1258,
+      "elapsedSeconds": 28.36665667174384,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 124818,
+        "cached_input_tokens": 94080,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 882,
+        "reasoning_output_tokens": 83
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-6294-72f2-9229-d6a1e4d48a3e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      }
+    },
+    {
+      "id": "monthly-create-C-2",
+      "task_id": "monthly-create",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1497,
+      "editedBytes": 1308,
+      "elapsedSeconds": 36.313835967332125,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 146132,
+        "cached_input_tokens": 127616,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 878,
+        "reasoning_output_tokens": 97
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1c-29c9-75c2-9445-6d594563caf5",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      }
+    },
+    {
+      "id": "monthly-create-C-3",
+      "task_id": "monthly-create",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1447,
+      "editedBytes": 1258,
+      "elapsedSeconds": 31.70727132121101,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 127228,
+        "cached_input_tokens": 105856,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 875,
+        "reasoning_output_tokens": 118
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-dc74-71b2-b805-c100d2101186",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "monthly-create",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      }
+    },
+    {
+      "id": "ranked-chart-A-1",
+      "task_id": "ranked-chart",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1668,
+      "editedBytes": 1229,
+      "elapsedSeconds": 33.24163550790399,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 129026,
+        "cached_input_tokens": 111104,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 599,
+        "reasoning_output_tokens": 17
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-3ba2-7740-8a1d-60cc615235ca",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1668,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "73748bc3c6267ccb976ccd8cf7f787832329e62ae1c527e3d1adbdbca73bb38e"
+      }
+    },
+    {
+      "id": "ranked-chart-A-2",
+      "task_id": "ranked-chart",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1668,
+      "editedBytes": 1229,
+      "elapsedSeconds": 20.446993628051132,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 95046,
+        "cached_input_tokens": 79360,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 499,
+        "reasoning_output_tokens": 59
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-5dd7-73e1-a601-bf55f6ae110a",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1668,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "73748bc3c6267ccb976ccd8cf7f787832329e62ae1c527e3d1adbdbca73bb38e"
+      }
+    },
+    {
+      "id": "ranked-chart-A-3",
+      "task_id": "ranked-chart",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1668,
+      "editedBytes": 1229,
+      "elapsedSeconds": 36.6137809897773,
+      "toolCalls": 6,
+      "usage": {
+        "input_tokens": 182718,
+        "cached_input_tokens": 157696,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 721,
+        "reasoning_output_tokens": 55
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-3bc3-74d0-ae13-32c556a96d55",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1668,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "73748bc3c6267ccb976ccd8cf7f787832329e62ae1c527e3d1adbdbca73bb38e"
+      }
+    },
+    {
+      "id": "ranked-chart-B-1",
+      "task_id": "ranked-chart",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1801,
+      "editedBytes": 1398,
+      "elapsedSeconds": 23.05224357265979,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 126035,
+        "cached_input_tokens": 108288,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 571,
+        "reasoning_output_tokens": 44
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-a1f0-77a2-a8cb-7200354780d3",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "b3aacf7f1c9fc5e5cd573f66be61ea6e852ac7cd33e19ba19c5e004d95322b2a"
+      }
+    },
+    {
+      "id": "ranked-chart-B-2",
+      "task_id": "ranked-chart",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1801,
+      "editedBytes": 1398,
+      "elapsedSeconds": 23.20394222997129,
+      "toolCalls": 6,
+      "usage": {
+        "input_tokens": 130114,
+        "cached_input_tokens": 110848,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 593,
+        "reasoning_output_tokens": 12
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-39c9-7411-8ac2-b70673b4536c",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "b3aacf7f1c9fc5e5cd573f66be61ea6e852ac7cd33e19ba19c5e004d95322b2a"
+      }
+    },
+    {
+      "id": "ranked-chart-B-3",
+      "task_id": "ranked-chart",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1801,
+      "editedBytes": 1398,
+      "elapsedSeconds": 35.54603205109015,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 145641,
+        "cached_input_tokens": 127104,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 635,
+        "reasoning_output_tokens": 36
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-a046-71c2-a81d-24830315aaa1",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "b3aacf7f1c9fc5e5cd573f66be61ea6e852ac7cd33e19ba19c5e004d95322b2a"
+      }
+    },
+    {
+      "id": "ranked-chart-C-1",
+      "task_id": "ranked-chart",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2021,
+      "editedBytes": 1646,
+      "elapsedSeconds": 21.639720014762133,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 102607,
+        "cached_input_tokens": 83072,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 615,
+        "reasoning_output_tokens": 45
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-812c-75d0-9d62-9357f2e6fe76",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "41bc95273423414287620b80abb2579dce6a06ec7c861568e53e9e3e3b392414"
+      }
+    },
+    {
+      "id": "ranked-chart-C-2",
+      "task_id": "ranked-chart",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2021,
+      "editedBytes": 1646,
+      "elapsedSeconds": 26.777820845600218,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 139507,
+        "cached_input_tokens": 122112,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 667,
+        "reasoning_output_tokens": 79
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-6db6-71e2-bdd7-aa6a03dec379",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "41bc95273423414287620b80abb2579dce6a06ec7c861568e53e9e3e3b392414"
+      }
+    },
+    {
+      "id": "ranked-chart-C-3",
+      "task_id": "ranked-chart",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2021,
+      "editedBytes": 1646,
+      "elapsedSeconds": 33.56321423500776,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 154715,
+        "cached_input_tokens": 133888,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 702,
+        "reasoning_output_tokens": 86
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f20-1dfe-7bc0-940b-de0349d1662e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "ranked-chart",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1878,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "41bc95273423414287620b80abb2579dce6a06ec7c861568e53e9e3e3b392414"
+      }
+    },
+    {
+      "id": "grain-alias-sort-A-1",
+      "task_id": "grain-alias-sort",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1208,
+      "editedBytes": 213,
+      "elapsedSeconds": 20.703690683003515,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 100789,
+        "cached_input_tokens": 83328,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 335,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-a027-75a1-8bfb-154a2eaf5a1f",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1208,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8452d6b3c804a2a6181da75559df21b88b732d4c09a4337731739e53e6c9b055"
+      }
+    },
+    {
+      "id": "grain-alias-sort-A-2",
+      "task_id": "grain-alias-sort",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1208,
+      "editedBytes": 213,
+      "elapsedSeconds": 18.711585444863886,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 100882,
+        "cached_input_tokens": 83456,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 342,
+        "reasoning_output_tokens": 23
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-6192-7d72-baa1-86695a83b338",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1208,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8452d6b3c804a2a6181da75559df21b88b732d4c09a4337731739e53e6c9b055"
+      }
+    },
+    {
+      "id": "grain-alias-sort-A-3",
+      "task_id": "grain-alias-sort",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1208,
+      "editedBytes": 213,
+      "elapsedSeconds": 23.388932149857283,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 113245,
+        "cached_input_tokens": 93440,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 385,
+        "reasoning_output_tokens": 43
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-9bd0-7c73-85ab-ca935725c12e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1208,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8452d6b3c804a2a6181da75559df21b88b732d4c09a4337731739e53e6c9b055"
+      }
+    },
+    {
+      "id": "grain-alias-sort-B-1",
+      "task_id": "grain-alias-sort",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1312,
+      "editedBytes": 359,
+      "elapsedSeconds": 17.517954441253096,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 100813,
+        "cached_input_tokens": 83456,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 298,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-764d-7732-96e7-30dc00fe00e1",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "e781bb575206ec88a136d9ec2401c5941d00e4fd8d79b791f95f476b9c23aac7"
+      }
+    },
+    {
+      "id": "grain-alias-sort-B-2",
+      "task_id": "grain-alias-sort",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1312,
+      "editedBytes": 359,
+      "elapsedSeconds": 23.380889234133065,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 111607,
+        "cached_input_tokens": 93056,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 403,
+        "reasoning_output_tokens": 61
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-78c3-7aa2-8d97-3cd3c6ec7c6a",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "e781bb575206ec88a136d9ec2401c5941d00e4fd8d79b791f95f476b9c23aac7"
+      }
+    },
+    {
+      "id": "grain-alias-sort-B-3",
+      "task_id": "grain-alias-sort",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1312,
+      "editedBytes": 359,
+      "elapsedSeconds": 16.42172332201153,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 100026,
+        "cached_input_tokens": 79488,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 338,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-458d-7032-b6d1-90313fdc76ec",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "e781bb575206ec88a136d9ec2401c5941d00e4fd8d79b791f95f476b9c23aac7"
+      }
+    },
+    {
+      "id": "grain-alias-sort-C-1",
+      "task_id": "grain-alias-sort",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1444,
+      "editedBytes": 245,
+      "elapsedSeconds": 25.85438275197521,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 116654,
+        "cached_input_tokens": 99328,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 360,
+        "reasoning_output_tokens": 24
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1c-c40e-7ff1-b6c2-869e1f4fe8f1",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "f5c5b2743915d255dfc9a32978a1bf1f73093a5f554e397a7a18ec6ec929c210"
+      }
+    },
+    {
+      "id": "grain-alias-sort-C-2",
+      "task_id": "grain-alias-sort",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1444,
+      "editedBytes": 245,
+      "elapsedSeconds": 18.7666143248789,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 116785,
+        "cached_input_tokens": 95616,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 368,
+        "reasoning_output_tokens": 21
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1f-cc54-7da2-b468-25f97a64f413",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "f5c5b2743915d255dfc9a32978a1bf1f73093a5f554e397a7a18ec6ec929c210"
+      }
+    },
+    {
+      "id": "grain-alias-sort-C-3",
+      "task_id": "grain-alias-sort",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1444,
+      "editedBytes": 245,
+      "elapsedSeconds": 25.744213987141848,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 143748,
+        "cached_input_tokens": 126464,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 414,
+        "reasoning_output_tokens": 33
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-fd1e-7f30-b0f5-5877002b227d",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "grain-alias-sort",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1348,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "f5c5b2743915d255dfc9a32978a1bf1f73093a5f554e397a7a18ec6ec929c210"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-A-1",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2312,
+      "editedBytes": 2819,
+      "elapsedSeconds": 32.20657700300217,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 158163,
+        "cached_input_tokens": 136320,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1030,
+        "reasoning_output_tokens": 138
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-227d-72b3-a30a-981556a02042",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2312,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "eac274726244b2a79b68a6c7526b7f95b5ec24022878117cc17ed56c5eaf8b80"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-A-2",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2312,
+      "editedBytes": 2819,
+      "elapsedSeconds": 36.71641017636284,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 166811,
+        "cached_input_tokens": 145664,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 962,
+        "reasoning_output_tokens": 225
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-f206-7e32-a7fc-d0fc8ebd10eb",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2312,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "eac274726244b2a79b68a6c7526b7f95b5ec24022878117cc17ed56c5eaf8b80"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-A-3",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2312,
+      "editedBytes": 2819,
+      "elapsedSeconds": 40.153270880226046,
+      "toolCalls": 6,
+      "usage": {
+        "input_tokens": 191466,
+        "cached_input_tokens": 170752,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1234,
+        "reasoning_output_tokens": 82
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-c214-7820-98d6-c78e63472859",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2312,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "eac274726244b2a79b68a6c7526b7f95b5ec24022878117cc17ed56c5eaf8b80"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-B-1",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2598,
+      "editedBytes": 3139,
+      "elapsedSeconds": 28.42688497202471,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 128173,
+        "cached_input_tokens": 106496,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 896,
+        "reasoning_output_tokens": 67
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1c-cb53-7370-8cfa-a479dca2335e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8be0756f64834455e66dddfd2838e5a2a0c71aab6008b3176a3e54aa8e6227ea"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-B-2",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2598,
+      "editedBytes": 3139,
+      "elapsedSeconds": 33.2233326677233,
+      "toolCalls": 6,
+      "usage": {
+        "input_tokens": 179801,
+        "cached_input_tokens": 159232,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 889,
+        "reasoning_output_tokens": 86
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1c-83d3-7a91-9681-d8ae2567b6b4",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8be0756f64834455e66dddfd2838e5a2a0c71aab6008b3176a3e54aa8e6227ea"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-B-3",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2598,
+      "editedBytes": 3139,
+      "elapsedSeconds": 26.26410228200257,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 133979,
+        "cached_input_tokens": 113536,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 792,
+        "reasoning_output_tokens": 55
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-3259-7442-988d-18f3d0fcfd95",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8be0756f64834455e66dddfd2838e5a2a0c71aab6008b3176a3e54aa8e6227ea"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-C-1",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2826,
+      "editedBytes": 3468,
+      "elapsedSeconds": 33.95626603718847,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 160628,
+        "cached_input_tokens": 122112,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 896,
+        "reasoning_output_tokens": 130
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-f221-71e1-9464-56881b1320b3",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "99a99cc922779cab3a5434e00f1a99cde9df82f70e99562339be1d2d45daeb72"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-C-2",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2766,
+      "editedBytes": 3352,
+      "elapsedSeconds": 45.799984832294285,
+      "toolCalls": 7,
+      "usage": {
+        "input_tokens": 208578,
+        "cached_input_tokens": 187008,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1163,
+        "reasoning_output_tokens": 258
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-9a1f-7b52-8e4e-8237ae5b9432",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "99a99cc922779cab3a5434e00f1a99cde9df82f70e99562339be1d2d45daeb72"
+      }
+    },
+    {
+      "id": "scoped-dependent-filter-C-3",
+      "task_id": "scoped-dependent-filter",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2768,
+      "editedBytes": 3354,
+      "elapsedSeconds": 35.297956090886146,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 160863,
+        "cached_input_tokens": 140544,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 919,
+        "reasoning_output_tokens": 118
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-ede7-75e0-b55a-2f4acd6dfcb0",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "scoped-dependent-filter",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2634,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "99a99cc922779cab3a5434e00f1a99cde9df82f70e99562339be1d2d45daeb72"
+      }
+    },
+    {
+      "id": "second-page-reuse-A-1",
+      "task_id": "second-page-reuse",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1405,
+      "editedBytes": 194,
+      "elapsedSeconds": 23.619121694006026,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 175024,
+        "cached_input_tokens": 152192,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 496,
+        "reasoning_output_tokens": 74
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-3c78-78d3-b4e6-2229adccea0a",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1405,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "55c569ab0dc45674591cc22797c1a2b122896d0739903d8c30a45ab2d6b38630"
+      }
+    },
+    {
+      "id": "second-page-reuse-A-2",
+      "task_id": "second-page-reuse",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1405,
+      "editedBytes": 194,
+      "elapsedSeconds": 20.511553656775504,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 126908,
+        "cached_input_tokens": 106880,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 422,
+        "reasoning_output_tokens": 57
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-8683-7fa3-9b34-44c26c5001c5",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1405,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "55c569ab0dc45674591cc22797c1a2b122896d0739903d8c30a45ab2d6b38630"
+      }
+    },
+    {
+      "id": "second-page-reuse-A-3",
+      "task_id": "second-page-reuse",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1405,
+      "editedBytes": 194,
+      "elapsedSeconds": 26.752461845055223,
+      "toolCalls": 8,
+      "usage": {
+        "input_tokens": 188711,
+        "cached_input_tokens": 162432,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 506,
+        "reasoning_output_tokens": 53
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1a-86dd-7b52-9a5c-11b8caf20e62",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1405,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "55c569ab0dc45674591cc22797c1a2b122896d0739903d8c30a45ab2d6b38630"
+      }
+    },
+    {
+      "id": "second-page-reuse-B-1",
+      "task_id": "second-page-reuse",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1555,
+      "editedBytes": 232,
+      "elapsedSeconds": 20.937871205154806,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 113697,
+        "cached_input_tokens": 93440,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 411,
+        "reasoning_output_tokens": 41
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-f843-7693-9b15-e51ff37b759d",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "520d24cc0a0e5a5784c37da4b5a35f084b7ec40f17c170b8e67463a4617a63e6"
+      }
+    },
+    {
+      "id": "second-page-reuse-B-2",
+      "task_id": "second-page-reuse",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1555,
+      "editedBytes": 232,
+      "elapsedSeconds": 30.71933542424813,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 105902,
+        "cached_input_tokens": 84864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 383,
+        "reasoning_output_tokens": 26
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-63d6-7870-804e-d59cad8af7fe",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "520d24cc0a0e5a5784c37da4b5a35f084b7ec40f17c170b8e67463a4617a63e6"
+      }
+    },
+    {
+      "id": "second-page-reuse-B-3",
+      "task_id": "second-page-reuse",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1555,
+      "editedBytes": 232,
+      "elapsedSeconds": 24.820824848022312,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 112150,
+        "cached_input_tokens": 89344,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 336,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-92b6-7ae2-ab46-d01bd36c8db6",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "520d24cc0a0e5a5784c37da4b5a35f084b7ec40f17c170b8e67463a4617a63e6"
+      }
+    },
+    {
+      "id": "second-page-reuse-C-1",
+      "task_id": "second-page-reuse",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1716,
+      "editedBytes": 269,
+      "elapsedSeconds": 16.08351399889216,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 96446,
+        "cached_input_tokens": 80256,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 352,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-ae03-7843-938a-8f32f3d7a75b",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "d14e574d7bb0d1efb03ec1460df4ca3678a532b7cd09bf1fd8ff2a260f155b65"
+      }
+    },
+    {
+      "id": "second-page-reuse-C-2",
+      "task_id": "second-page-reuse",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1716,
+      "editedBytes": 269,
+      "elapsedSeconds": 37.74462419003248,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 113063,
+        "cached_input_tokens": 89344,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 369,
+        "reasoning_output_tokens": 33
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1f-619f-7fa1-8679-8febc6abaff6",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "d14e574d7bb0d1efb03ec1460df4ca3678a532b7cd09bf1fd8ff2a260f155b65"
+      }
+    },
+    {
+      "id": "second-page-reuse-C-3",
+      "task_id": "second-page-reuse",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1716,
+      "editedBytes": 269,
+      "elapsedSeconds": 18.182882379274815,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 107954,
+        "cached_input_tokens": 83328,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 371,
+        "reasoning_output_tokens": 35
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-890b-7e73-9173-4667373ab7dd",
+      "changedSourceFiles": [
+        "project/dashboards/pages.yaml"
+      ],
+      "canonical": {
+        "id": "second-page-reuse",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1587,
+        "files": [
+          "dashboards/evaluation.yaml",
+          "dashboards/pages.yaml",
+          "dashboards/visuals.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "d14e574d7bb0d1efb03ec1460df4ca3678a532b7cd09bf1fd8ff2a260f155b65"
+      }
+    },
+    {
+      "id": "move-resize-A-1",
+      "task_id": "move-resize",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1209,
+      "editedBytes": 324,
+      "elapsedSeconds": 19.64701515296474,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 110765,
+        "cached_input_tokens": 79872,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 501,
+        "reasoning_output_tokens": 30
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-ddbd-7d22-80d1-2a87495083f9",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1209,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "207898f0f7e045ccac27c1eff1b2180515898d89c57551af836e915a630bc5e5"
+      }
+    },
+    {
+      "id": "move-resize-A-2",
+      "task_id": "move-resize",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1209,
+      "editedBytes": 324,
+      "elapsedSeconds": 17.768592703156173,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 96425,
+        "cached_input_tokens": 80128,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 463,
+        "reasoning_output_tokens": 27
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-f22f-7eb3-9061-559aaa5f79d8",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1209,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "207898f0f7e045ccac27c1eff1b2180515898d89c57551af836e915a630bc5e5"
+      }
+    },
+    {
+      "id": "move-resize-A-3",
+      "task_id": "move-resize",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1209,
+      "editedBytes": 324,
+      "elapsedSeconds": 20.925390993710607,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 100633,
+        "cached_input_tokens": 83200,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 434,
+        "reasoning_output_tokens": 18
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1c-7a68-7230-b2a7-801ab7b1cdca",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1209,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "207898f0f7e045ccac27c1eff1b2180515898d89c57551af836e915a630bc5e5"
+      }
+    },
+    {
+      "id": "move-resize-B-1",
+      "task_id": "move-resize",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1313,
+      "editedBytes": 388,
+      "elapsedSeconds": 17.755737549159676,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 97833,
+        "cached_input_tokens": 80896,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 463,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-ae34-7f72-9473-7c077c3b5aa0",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8170e4a265179273546b4b704d2d3fbe189599d3a467b916dc12d0f531014d14"
+      }
+    },
+    {
+      "id": "move-resize-B-2",
+      "task_id": "move-resize",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1313,
+      "editedBytes": 388,
+      "elapsedSeconds": 21.3248013779521,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 121369,
+        "cached_input_tokens": 103168,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 503,
+        "reasoning_output_tokens": 18
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-d89f-7bc3-bfb9-64fd13371631",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8170e4a265179273546b4b704d2d3fbe189599d3a467b916dc12d0f531014d14"
+      }
+    },
+    {
+      "id": "move-resize-B-3",
+      "task_id": "move-resize",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1313,
+      "editedBytes": 388,
+      "elapsedSeconds": 17.545953993219882,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 97017,
+        "cached_input_tokens": 80512,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 424,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-f7bb-75d2-a1e2-a1ee9ebf173f",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "8170e4a265179273546b4b704d2d3fbe189599d3a467b916dc12d0f531014d14"
+      }
+    },
+    {
+      "id": "move-resize-C-1",
+      "task_id": "move-resize",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1381,
+      "editedBytes": 402,
+      "elapsedSeconds": 15.795008391141891,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 94252,
+        "cached_input_tokens": 65920,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 394,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-4591-75d0-96b1-a5f1bdffa9bd",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "be3f2f9d1e6ecf404891261dc9fb0d6e0de7861195c82d1af13e5fe81eed547c"
+      }
+    },
+    {
+      "id": "move-resize-C-2",
+      "task_id": "move-resize",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1381,
+      "editedBytes": 402,
+      "elapsedSeconds": 21.759857506025583,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 97214,
+        "cached_input_tokens": 81536,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 396,
+        "reasoning_output_tokens": 28
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f15-db72-7e02-84bb-120bba92a500",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "be3f2f9d1e6ecf404891261dc9fb0d6e0de7861195c82d1af13e5fe81eed547c"
+      }
+    },
+    {
+      "id": "move-resize-C-3",
+      "task_id": "move-resize",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1381,
+      "editedBytes": 402,
+      "elapsedSeconds": 17.182725741993636,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 94570,
+        "cached_input_tokens": 79232,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 360,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f20-a154-7df1-9968-d296b7c19b3c",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "move-resize",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1349,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "be3f2f9d1e6ecf404891261dc9fb0d6e0de7861195c82d1af13e5fe81eed547c"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-A-1",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1959,
+      "editedBytes": 545,
+      "elapsedSeconds": 39.484583247918636,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 122614,
+        "cached_input_tokens": 106368,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 363,
+        "reasoning_output_tokens": 11
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1f-2cf1-7941-bc57-aba2a89981a9",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1959,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9110ee84094dd0f28141789f24e82a1dbe90aecf0443160e1fb652a6e65669d7"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-A-2",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1959,
+      "editedBytes": 545,
+      "elapsedSeconds": 23.215498281177133,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 127408,
+        "cached_input_tokens": 110208,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 400,
+        "reasoning_output_tokens": 23
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1f-f28d-7ea3-8d3f-356f1e1608d3",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1959,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9110ee84094dd0f28141789f24e82a1dbe90aecf0443160e1fb652a6e65669d7"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-A-3",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1959,
+      "editedBytes": 545,
+      "elapsedSeconds": 19.525560471694916,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 97735,
+        "cached_input_tokens": 80896,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 393,
+        "reasoning_output_tokens": 27
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-d162-77d0-ad64-196ec7e9de3e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1959,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9110ee84094dd0f28141789f24e82a1dbe90aecf0443160e1fb652a6e65669d7"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-B-1",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2150,
+      "editedBytes": 389,
+      "elapsedSeconds": 21.28798203682527,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 100089,
+        "cached_input_tokens": 79488,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 307,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f15-db6c-7223-9a05-f7912d918ebb",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "24cd628e9a883046ef3009e92057cd8cae9bc041129ac429ac17c931f129bf89"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-B-2",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2150,
+      "editedBytes": 389,
+      "elapsedSeconds": 20.53232329385355,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 100894,
+        "cached_input_tokens": 83456,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 361,
+        "reasoning_output_tokens": 19
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-4180-7ee1-8aab-b5d9e46dbb4d",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "24cd628e9a883046ef3009e92057cd8cae9bc041129ac429ac17c931f129bf89"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-B-3",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2150,
+      "editedBytes": 389,
+      "elapsedSeconds": 20.96525161806494,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 109554,
+        "cached_input_tokens": 94336,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 417,
+        "reasoning_output_tokens": 54
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-d6a6-7cc3-863d-ffca9aa43e0b",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "24cd628e9a883046ef3009e92057cd8cae9bc041129ac429ac17c931f129bf89"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-C-1",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2403,
+      "editedBytes": 621,
+      "elapsedSeconds": 19.74715867312625,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 130001,
+        "cached_input_tokens": 112000,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 376,
+        "reasoning_output_tokens": 12
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-3cc8-7f72-93b6-669ad3e12818",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "60c68713b598ed617d043e7efb06088aba65def2554b310cf231501be54fe698"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-C-2",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2403,
+      "editedBytes": 621,
+      "elapsedSeconds": 27.609712089877576,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 130105,
+        "cached_input_tokens": 112000,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 390,
+        "reasoning_output_tokens": 34
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f20-18a3-7851-850a-fc009dbb5249",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "60c68713b598ed617d043e7efb06088aba65def2554b310cf231501be54fe698"
+      }
+    },
+    {
+      "id": "reordered-definition-edit-C-3",
+      "task_id": "reordered-definition-edit",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2403,
+      "editedBytes": 621,
+      "elapsedSeconds": 18.273626209702343,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 124230,
+        "cached_input_tokens": 104960,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 433,
+        "reasoning_output_tokens": 49
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f16-f4d7-7c42-89ed-84ef88631b7e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "reordered-definition-edit",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 2215,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "60c68713b598ed617d043e7efb06088aba65def2554b310cf231501be54fe698"
+      }
+    },
+    {
+      "id": "combo-bindings-A-1",
+      "task_id": "combo-bindings",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1380,
+      "editedBytes": 148,
+      "elapsedSeconds": 20.13695195596665,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 95531,
+        "cached_input_tokens": 79360,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 413,
+        "reasoning_output_tokens": 56
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-2656-7ed1-bb80-47b36ba7347e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1380,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9ff360daa3ad84ad95476ba358f2cfbaa012b838404ba0c0e90333970f9e502d"
+      }
+    },
+    {
+      "id": "combo-bindings-A-2",
+      "task_id": "combo-bindings",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1380,
+      "editedBytes": 148,
+      "elapsedSeconds": 19.720597945619375,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 99721,
+        "cached_input_tokens": 79104,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 369,
+        "reasoning_output_tokens": 34
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f20-8801-77b1-aa2b-fb2af55cceb4",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1380,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9ff360daa3ad84ad95476ba358f2cfbaa012b838404ba0c0e90333970f9e502d"
+      }
+    },
+    {
+      "id": "combo-bindings-A-3",
+      "task_id": "combo-bindings",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1380,
+      "editedBytes": 148,
+      "elapsedSeconds": 16.33960129134357,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 94729,
+        "cached_input_tokens": 76800,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 334,
+        "reasoning_output_tokens": 38
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-2d08-7222-bb58-6ff28b48f66a",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1380,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "9ff360daa3ad84ad95476ba358f2cfbaa012b838404ba0c0e90333970f9e502d"
+      }
+    },
+    {
+      "id": "combo-bindings-B-1",
+      "task_id": "combo-bindings",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1534,
+      "editedBytes": 172,
+      "elapsedSeconds": 18.1051222179085,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 97010,
+        "cached_input_tokens": 80384,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 358,
+        "reasoning_output_tokens": 33
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-1bb9-73f2-a991-c5fa5071a98e",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "5d7dc14f282560a47c4807857d682a9f809cef6233b210f1400f0261ed722446"
+      }
+    },
+    {
+      "id": "combo-bindings-B-2",
+      "task_id": "combo-bindings",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1534,
+      "editedBytes": 172,
+      "elapsedSeconds": 16.06981811579317,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 98119,
+        "cached_input_tokens": 78464,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 314,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f20-9741-7770-b977-6b9fc57d8f75",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "5d7dc14f282560a47c4807857d682a9f809cef6233b210f1400f0261ed722446"
+      }
+    },
+    {
+      "id": "combo-bindings-B-3",
+      "task_id": "combo-bindings",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1534,
+      "editedBytes": 172,
+      "elapsedSeconds": 24.889195394236594,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 100361,
+        "cached_input_tokens": 79616,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 420,
+        "reasoning_output_tokens": 50
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-a02a-7673-959c-b11ccf454781",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "5d7dc14f282560a47c4807857d682a9f809cef6233b210f1400f0261ed722446"
+      }
+    },
+    {
+      "id": "combo-bindings-C-1",
+      "task_id": "combo-bindings",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1646,
+      "editedBytes": 172,
+      "elapsedSeconds": 17.305340871214867,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 95649,
+        "cached_input_tokens": 79616,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 373,
+        "reasoning_output_tokens": 25
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-1f24-7262-95a6-6ce116c2a6d4",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "163833a4cdea34bc87224da8fd292f9d1a579883fa716e9c6f032cf868392822"
+      }
+    },
+    {
+      "id": "combo-bindings-C-2",
+      "task_id": "combo-bindings",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1646,
+      "editedBytes": 172,
+      "elapsedSeconds": 19.062680246308446,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 123660,
+        "cached_input_tokens": 107136,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 372,
+        "reasoning_output_tokens": 34
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-d779-7401-8466-f97cadc80aa8",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "163833a4cdea34bc87224da8fd292f9d1a579883fa716e9c6f032cf868392822"
+      }
+    },
+    {
+      "id": "combo-bindings-C-3",
+      "task_id": "combo-bindings",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1646,
+      "editedBytes": 172,
+      "elapsedSeconds": 15.32356446608901,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 96124,
+        "cached_input_tokens": 64768,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 312,
+        "reasoning_output_tokens": 14
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-839e-7b53-b29f-776781869e76",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "combo-bindings",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1550,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "163833a4cdea34bc87224da8fd292f9d1a579883fa716e9c6f032cf868392822"
+      }
+    },
+    {
+      "id": "records-query-A-1",
+      "task_id": "records-query",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1755,
+      "editedBytes": 193,
+      "elapsedSeconds": 16.80024098418653,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 97953,
+        "cached_input_tokens": 80896,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 340,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-4d53-7e43-a206-997f2515504b",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1755,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "4b0c26ad313cf5ef3a285fb4ca981dfb5e40c5d85ba8680e35d76f463e7c844d"
+      }
+    },
+    {
+      "id": "records-query-A-2",
+      "task_id": "records-query",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1755,
+      "editedBytes": 193,
+      "elapsedSeconds": 14.151054719928652,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 98163,
+        "cached_input_tokens": 64768,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 316,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f19-d215-71f3-b936-2732b21d657c",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1755,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "4b0c26ad313cf5ef3a285fb4ca981dfb5e40c5d85ba8680e35d76f463e7c844d"
+      }
+    },
+    {
+      "id": "records-query-A-3",
+      "task_id": "records-query",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1755,
+      "editedBytes": 193,
+      "elapsedSeconds": 15.274987997952849,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 107038,
+        "cached_input_tokens": 83072,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 305,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-bb27-71e1-93b5-6e8472896ab0",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1755,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "4b0c26ad313cf5ef3a285fb4ca981dfb5e40c5d85ba8680e35d76f463e7c844d"
+      }
+    },
+    {
+      "id": "records-query-B-1",
+      "task_id": "records-query",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1923,
+      "editedBytes": 221,
+      "elapsedSeconds": 23.469047108199447,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 102694,
+        "cached_input_tokens": 84224,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 367,
+        "reasoning_output_tokens": 39
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-f45e-7311-abdc-1810859e4419",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "ba6a77146209d4870f5f350b49f2ddcb8f8ca6edd7b2d833aa213636c9b2850e"
+      }
+    },
+    {
+      "id": "records-query-B-2",
+      "task_id": "records-query",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1923,
+      "editedBytes": 221,
+      "elapsedSeconds": 19.9220379749313,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 98335,
+        "cached_input_tokens": 81152,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 362,
+        "reasoning_output_tokens": 38
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-d656-79d1-b8f3-e14238ff0fda",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "ba6a77146209d4870f5f350b49f2ddcb8f8ca6edd7b2d833aa213636c9b2850e"
+      }
+    },
+    {
+      "id": "records-query-B-3",
+      "task_id": "records-query",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1923,
+      "editedBytes": 221,
+      "elapsedSeconds": 16.440095827914774,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 97593,
+        "cached_input_tokens": 78336,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 301,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-4dab-7ce0-8687-da6633c01a7b",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "ba6a77146209d4870f5f350b49f2ddcb8f8ca6edd7b2d833aa213636c9b2850e"
+      }
+    },
+    {
+      "id": "records-query-C-1",
+      "task_id": "records-query",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2122,
+      "editedBytes": 221,
+      "elapsedSeconds": 20.41198354307562,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 101755,
+        "cached_input_tokens": 83840,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 336,
+        "reasoning_output_tokens": 30
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f18-f45d-75e2-8e9c-1ecc4a55d22b",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6cd79933c8ff4ebd2c10c17605045167091ac3ea8833a1d22ddec159c46e90fe"
+      }
+    },
+    {
+      "id": "records-query-C-2",
+      "task_id": "records-query",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2122,
+      "editedBytes": 221,
+      "elapsedSeconds": 17.682315001264215,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 96420,
+        "cached_input_tokens": 80128,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 303,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-ac62-74c3-ab09-997d9c63123c",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6cd79933c8ff4ebd2c10c17605045167091ac3ea8833a1d22ddec159c46e90fe"
+      }
+    },
+    {
+      "id": "records-query-C-3",
+      "task_id": "records-query",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 2122,
+      "editedBytes": 221,
+      "elapsedSeconds": 21.694078854750842,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 102430,
+        "cached_input_tokens": 84224,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 314,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1d-0edf-7771-b2e4-8ce39e1e10ba",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "records-query",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1979,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6cd79933c8ff4ebd2c10c17605045167091ac3ea8833a1d22ddec159c46e90fe"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-A-1",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "A",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1211,
+      "editedBytes": 31,
+      "elapsedSeconds": 26.702661876101047,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 143333,
+        "cached_input_tokens": 122368,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 391,
+        "reasoning_output_tokens": 75
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f15-db6e-72d3-b65d-452556bee669",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-A-2",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "A",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1211,
+      "editedBytes": 31,
+      "elapsedSeconds": 18.805789350997657,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 96573,
+        "cached_input_tokens": 80256,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 307,
+        "reasoning_output_tokens": 18
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1b-61dc-7a83-84f9-6581d60c9ff9",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-A-3",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "A",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1211,
+      "editedBytes": 31,
+      "elapsedSeconds": 17.63798223482445,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 111456,
+        "cached_input_tokens": 95232,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 344,
+        "reasoning_output_tokens": 39
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1c-3d6a-7cd1-a40e-c4fbc6f3a719",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1211,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b7ae6cc38d4f276715398f46515b24124d3a53492cf9407f8ff69e8d7d2aaf4"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-B-1",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "B",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1315,
+      "editedBytes": 31,
+      "elapsedSeconds": 18.95946318190545,
+      "toolCalls": 4,
+      "usage": {
+        "input_tokens": 111735,
+        "cached_input_tokens": 95488,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 317,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-4caa-7320-aa66-d46f0703f252",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-B-2",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "B",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1315,
+      "editedBytes": 31,
+      "elapsedSeconds": 17.056116726249456,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 96179,
+        "cached_input_tokens": 66816,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 293,
+        "reasoning_output_tokens": 22
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f20-d653-7ed1-a082-f30327e89cde",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-B-3",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "B",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1315,
+      "editedBytes": 31,
+      "elapsedSeconds": 18.408621959853917,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 96137,
+        "cached_input_tokens": 77568,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 270,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f17-95dc-73d3-81d2-15f23bd383a4",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "6b88a2af48540b4dea0896735db8cd566259fdfb60cf13e711a915102f89ecf0"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-C-1",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "C",
+      "replicate": 1,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1447,
+      "editedBytes": 31,
+      "elapsedSeconds": 16.541680205613375,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 95223,
+        "cached_input_tokens": 79488,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 273,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1e-96ca-7343-a79e-9d8648739755",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-C-2",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "C",
+      "replicate": 2,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1447,
+      "editedBytes": 31,
+      "elapsedSeconds": 17.205628614872694,
+      "toolCalls": 3,
+      "usage": {
+        "input_tokens": 96280,
+        "cached_input_tokens": 77696,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 267,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f1f-da11-7093-a3c3-4d46fa965f53",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      }
+    },
+    {
+      "id": "repair-preserving-neighbors-C-3",
+      "task_id": "repair-preserving-neighbors",
+      "arm_id": "C",
+      "replicate": 3,
+      "success": true,
+      "prototypeAccepted": true,
+      "prototypeAssessed": true,
+      "canonicalAssessed": true,
+      "parseAndSchema": true,
+      "compiler": true,
+      "intent": true,
+      "preservation": true,
+      "integrity": true,
+      "process": true,
+      "failures": [],
+      "sourceBytes": 1447,
+      "editedBytes": 31,
+      "elapsedSeconds": 18.01631875289604,
+      "toolCalls": 5,
+      "usage": {
+        "input_tokens": 96340,
+        "cached_input_tokens": 77696,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 340,
+        "reasoning_output_tokens": 0
+      },
+      "queryExecutionScored": false,
+      "controlledTerminalShutdown": true,
+      "cliExitCode": 0,
+      "threadId": "01a11f20-4d83-75b0-8af5-2b35ce852487",
+      "changedSourceFiles": [
+        "project/dashboards/evaluation.yaml"
+      ],
+      "canonical": {
+        "id": "repair-preserving-neighbors",
+        "parseAndSchema": true,
+        "compiler": true,
+        "intent": true,
+        "representation": false,
+        "pass": true,
+        "sourceBytes": 1351,
+        "files": [
+          "dashboards/evaluation.yaml"
+        ],
+        "changedFiles": null,
+        "sourceHash": "0254518a4344d6e69ee9337bcf4b450ee112c40656a53a040057e70e11d67fc2"
+      }
+    }
+  ],
+  "resourceMetric": "editedBytes is replaced middle-span bytes after common prefix/suffix removal, not keystrokes",
+  "queryExecutionScored": false,
+  "userdataUsed": false,
+  "physicalBlindnessClaimed": false
+}

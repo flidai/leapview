@@ -1,0 +1,34 @@
+pages:
+  - id: overview
+    title: Overview
+    components:
+      - id: revenue-trend
+        type: visual
+        visual: revenue-by-month
+      - id: revenue-kpi
+        type: visual
+        visual: total-revenue
+    rows:
+      - id: row-revenue-trend
+        height: 8
+        items:
+          - component: revenue-trend
+            columnSpan: 12
+      - id: row-revenue-kpi
+        height: 3
+        gapBefore: 1
+        items:
+          - component: revenue-kpi
+            columnSpan: 3
+  - id: detail
+    title: Detail
+    components:
+      - id: revenue-detail
+        type: visual
+        visual: revenue-by-month
+    rows:
+      - id: row-revenue-detail
+        height: 8
+        items:
+          - component: revenue-detail
+            columnSpan: 12

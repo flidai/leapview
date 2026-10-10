@@ -17,7 +17,8 @@ import (
 // TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder
 // proves that generation admission acquires the physical fence/quarantine
 // scope before the target lease and canonical delivery attempt, then queues on
-// the gated attempt. Once the gate is released, admission commits first and
+// the gated attempt. Reconciliation must join the lock queue behind admission
+// before the gate is released. Admission then commits first and
 // reconciliation returns an exact committed replay; no second lifecycle
 // ledger participates in the ordering. The committed seal also materializes
 // one live retention row through the application wiring.
@@ -101,17 +102,17 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 	defer waitCancel()
 	probeTicker := time.NewTicker(10 * time.Millisecond)
 	defer probeTicker.Stop()
+	var admissionPID int
 	for {
-		var queuedOnGate bool
 		if err := p.QueryRow(waitCtx, `
-			SELECT EXISTS (
-				SELECT 1 FROM pg_stat_activity
+			SELECT COALESCE((
+				SELECT pid FROM pg_stat_activity
 				WHERE datname = current_database()
 				  AND $1::integer = ANY(pg_blocking_pids(pid))
-			)`, int(gateTx.Conn().PgConn().PID())).Scan(&queuedOnGate); err != nil {
+			), 0)`, int(gateTx.Conn().PgConn().PID())).Scan(&admissionPID); err != nil {
 			t.Fatalf("observe admission waiting on the delivery attempt: %v", err)
 		}
-		if queuedOnGate {
+		if admissionPID != 0 {
 			break
 		}
 		select {
@@ -160,9 +161,33 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 		reconciliationDone <- reconciliationOutcome{result: result, err: runErr}
 	}()
 
-	// Admission is already queued on the canonical attempt lock. Reconciliation
-	// must either queue behind it or read its committed result after the gate
-	// is released; scheduling its goroutine cannot change the winner.
+	// Observe the second waiter before releasing the gate. Merely starting
+	// reconciliation does not put it in the lock queue: if its SELECT arrives
+	// during gate rollback, it can acquire the unlocked tuple before the
+	// already-waiting admission resumes. The test requires admission first,
+	// so prove reconciliation is blocked by that exact backend.
+	for {
+		var queuedBehindAdmission bool
+		if err := p.QueryRow(waitCtx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stat_activity
+				WHERE datname = current_database()
+				  AND $1::integer = ANY(pg_blocking_pids(pid))
+			)`, admissionPID).Scan(&queuedBehindAdmission); err != nil {
+			t.Fatalf("observe reconciliation waiting behind admission: %v", err)
+		}
+		if queuedBehindAdmission {
+			break
+		}
+		select {
+		case outcome := <-reconciliationDone:
+			t.Fatalf("reconciliation finished before queueing behind admission: %#v, %v", outcome.result, outcome.err)
+		case <-waitCtx.Done():
+			t.Fatal("reconciliation did not queue behind admission")
+		case <-probeTicker.C:
+		}
+	}
+
 	if err := gateTx.Rollback(runCtx); err != nil {
 		t.Fatal(err)
 	}

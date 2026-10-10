@@ -11,6 +11,8 @@ let server: Awaited<ReturnType<typeof startTestPlayground>>
 let page: Page
 let errors: string[]
 let unexpectedRequests: string[]
+let assetRequests: Map<string, string>
+let consoleErrors: string[]
 const assetFailureLimit = 20
 let assetFailures: string[]
 let omittedAssetFailures: number
@@ -30,16 +32,22 @@ afterAll(async () => { await browser?.close(); await server?.stop(true) })
 beforeEach(async () => {
   errors = []
   unexpectedRequests = []
+  assetRequests = new Map()
+  consoleErrors = []
   assetFailures = []
   omittedAssetFailures = 0
   page = await browser.newPage({ baseURL: server.url.href, viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   page.setDefaultTimeout(7000)
   page.on('pageerror', error => errors.push(error.message))
   page.on('request', request => {
+    assetRequests.set(request.url(), 'pending')
     const url = new URL(request.url())
     if (url.protocol === 'blob:' || url.protocol === 'data:') return
     if (url.origin !== server.url.origin || !['/', '/index.html', '/__playground/events'].includes(url.pathname) && !url.pathname.startsWith('/assets/') && !url.pathname.startsWith('/static/')) unexpectedRequests.push(request.url())
   })
+  page.on('requestfinished', request => { assetRequests.set(request.url(), 'finished') })
+  page.on('requestfailed', request => { assetRequests.set(request.url(), request.failure()?.errorText || 'failed') })
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
   page.on('requestfailed', recordFailedAsset)
 })
@@ -54,8 +62,23 @@ afterEach(async () => {
 })
 
 async function open(route: string) {
-  await page.goto(`${server.url}#${route}`)
-  await browserExpect(page.locator('playground-app')).toBeVisible()
+  try {
+    await page.goto(`${server.url}#${route}`)
+    await browserExpect(page.locator('playground-app')).toBeVisible()
+  } catch (error) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const state = await Promise.race([
+        page.evaluate(() => {
+          const app = document.querySelector('playground-app') as any
+          return { readyState: document.readyState, defined: Boolean(customElements.get('playground-app')), shadow: Boolean(app?.shadowRoot), route: app?.route, loading: app?.loadError, ready: app?.exampleReady, viewport: app?.shadowRoot?.querySelector('.viewport')?.textContent?.slice(0, 500) }
+        }).catch(error => ({ diagnosticError: String(error) })),
+        new Promise(resolve => { timer = setTimeout(() => resolve({ diagnosticError: 'Browser did not answer startup diagnostics' }), 1000) }),
+      ])
+      console.error('Playground startup failure', JSON.stringify({ route, url: page.url(), state, requests: [...assetRequests].filter(([, status]) => status !== 'finished'), consoleErrors }))
+    } finally { clearTimeout(timer) }
+    throw error
+  }
 }
 
 async function delayControlsModule() {
@@ -221,6 +244,45 @@ test('a failed example module leaves navigation usable and reload can recover', 
   await open('controls/select')
   await page.reload()
   await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+})
+
+test('a failed example offers explicit reload recovery and preserves theme and width', async () => {
+  const moduleURL = '**/assets/chunks/controls-*.js'
+  await page.route(moduleURL, route => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'throw new Error("Fixture module unavailable")' }))
+  await open('controls/select')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Fixture module unavailable')
+  await page.getByLabel('Preview width', { exact: true }).selectOption('360')
+  await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click()
+  const reload = page.getByRole('button', { name: 'Reload example', exact: true })
+  await browserExpect(reload).toBeVisible()
+  await page.unroute(moduleURL)
+  await reload.click()
+  await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+  await browserExpect(page.getByLabel('Preview width', { exact: true })).toHaveValue('360')
+  await browserExpect(page.locator('html')).toHaveAttribute('data-color-mode', 'dark')
+})
+
+test('failed initial loading preserves authored YAML from a shared link during explicit recovery', async () => {
+  const moduleURL = '**/assets/chunks/dashboard-contract-*.js'
+  const source = 'kind: Dashboard\n# My in-progress YAML must survive a failed load.\n'
+  const url = new URL(server.url)
+  url.searchParams.set('state', JSON.stringify({ version: 1, route: 'recipes/dashboard-contract', width: '360', height: '420', theme: 'light', preview: false, example: { version: 'before', scenario: 'zero-span', source } }))
+  url.hash = 'recipes/dashboard-contract'
+  await page.route(moduleURL, route => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'throw new Error("Fixture module unavailable")' }))
+  await page.goto(url.href)
+  await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Fixture module unavailable')
+  await page.getByLabel('Preview width', { exact: true }).selectOption('768')
+  await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click()
+  await page.unroute(moduleURL)
+  await page.getByRole('button', { name: 'Reload example', exact: true }).click()
+  const example = page.locator('playground-dashboard-contract')
+  await browserExpect(example).toBeVisible()
+  await browserExpect(page.getByRole('button', { name: 'Copy link', exact: true })).toBeEnabled()
+  expect(await example.evaluate((element: any) => element.getExampleCode())).toBe(source)
+  await browserExpect(example.getByLabel('Document scenario', { exact: true })).toHaveValue('zero-span')
+  await browserExpect(example.getByLabel('Schema version', { exact: true })).toHaveValue('before')
+  await browserExpect(page.getByLabel('Preview width', { exact: true })).toHaveValue('768')
+  await browserExpect(page.locator('html')).toHaveAttribute('data-color-mode', 'dark')
 })
 
 test('failed lazy asset diagnostics retain the browser transport reason', async () => {
@@ -463,15 +525,22 @@ test('static server refuses backend methods and repository traversal', async () 
 test('table sorting, selection and scroll windows work while expanded', async () => {
   await open('charts/table')
   await page.getByLabel('Data fixture', { exact: true }).selectOption('dense')
-  const table = page.locator('lv-report-table')
+  const host = page.locator('lv-visualization-host:not([data-visual-focus-preview])')
+  const table = host.locator('lv-report-table')
   await browserExpect(table.getByRole('button', { name: 'Revenue', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Expand table', exact: true }).click()
   await browserExpect(page.getByRole('dialog')).toBeVisible()
+  await page.locator('lv-visualization-host[data-visual-focus-preview]').waitFor()
   await table.getByRole('button', { name: 'Revenue', exact: true }).click()
-  await browserExpect.poll(async () => page.locator('lv-visualization-host').evaluate((element: any) => element.envelope.dataState.sort[0].field.field)).toBe('value')
+  await browserExpect.poll(async () => host.evaluate((element: any) => element.envelope.dataState.sort[0].field.field)).toBe('value')
+  const revenueHeader = table.getByRole('columnheader').filter({ has: page.getByRole('button', { name: 'Revenue', exact: true }) })
+  await browserExpect(revenueHeader).toHaveAttribute('aria-sort', 'descending')
+  await table.getByRole('button', { name: 'Revenue', exact: true }).click()
+  await browserExpect(revenueHeader).toHaveAttribute('aria-sort', 'ascending')
+  await browserExpect(table.locator('[role="columnheader"][aria-sort]:not([aria-sort="none"])')).toHaveCount(1)
   await table.locator('.table-scrollport').evaluate(element => { element.scrollTop = 17000 })
   await browserExpect.poll(async () => table.locator('.row[aria-selected]').count()).toBeGreaterThan(0)
-  await browserExpect.poll(async () => page.locator('lv-visualization-host').evaluate((element: any) => Math.max(...Object.values(element.envelope.dataState.blocks).map((block: any) => block.start)))).toBeGreaterThan(400)
+  await browserExpect.poll(async () => host.evaluate((element: any) => Math.max(...Object.values(element.envelope.dataState.blocks).map((block: any) => block.start)))).toBeGreaterThan(400)
   // Mounted rows include overscan behind the sticky header; choose a real visible cell.
   const visibleCellHandle = await table.evaluateHandle(element => {
     const root = element.shadowRoot!
@@ -492,7 +561,7 @@ test('table sorting, selection and scroll windows work while expanded', async ()
   if (!visibleCell) throw new Error('No unobscured table cell is visible after scrolling')
   await visibleCell.click()
   await visibleCellHandle.dispose()
-  await browserExpect.poll(async () => page.locator('lv-visualization-host').evaluate((element: any) => element.envelope.selection.length)).toBeGreaterThan(0)
+  await browserExpect.poll(async () => host.evaluate((element: any) => element.envelope.selection.length)).toBeGreaterThan(0)
   await page.keyboard.press('Escape')
   await browserExpect(page.getByRole('dialog')).toBeHidden()
   await browserExpect(page.locator('.preview lv-visualization-host')).toBeVisible()
@@ -748,10 +817,11 @@ for (const type of ['bar', 'table']) {
     await expand.click()
     const dialog = page.getByRole('dialog')
     const close = page.getByRole('button', { name: 'Close visual modal', exact: true })
-    const options = page.getByLabel('Visual options', { exact: true })
+    const focusedHost = page.locator('lv-visual-modal > lv-visualization-host[slot="focus-visual"]')
+    const options = focusedHost.getByLabel('Visual options', { exact: true })
     await browserExpect(dialog).toBeVisible()
     await browserExpect(close).toBeVisible()
-    await page.locator('lv-visualization-host').evaluate(async (element: any) => { await element.ensureMounted() })
+    await focusedHost.evaluate(async (element: any) => { await element.ensureMounted() })
     await browserExpect(close).toBeFocused()
     await page.keyboard.press('Tab')
     await browserExpect(exit).not.toBeFocused()
@@ -929,4 +999,80 @@ test('fixture summary follows chart options and route changes without including 
   await browserExpect(coverage.locator('dt')).toHaveText(['Disabled', 'Error'])
   await browserExpect(coverage).not.toContainText('Refresh schedule')
   await browserExpect(coverage).not.toContainText('Daily')
+})
+
+
+test('dashboard YAML compares scalar bounds and edits through the production editor', async () => {
+ await open('recipes/dashboard-contract')
+ const example = page.locator('playground-dashboard-contract')
+ await example.getByText('Compare with other schema', {exact:true}).click()
+ const baseline = example.getByRole('region', { name: 'Baseline schema validation' })
+ const tightened = example.getByRole('region', { name: 'Tightened schema validation' })
+ await browserExpect(baseline.locator('.status')).toHaveText('Accepted')
+ await browserExpect(tightened.locator('.status')).toHaveText('Accepted')
+ await example.getByLabel('Document scenario').selectOption('zero-span')
+ await browserExpect(baseline.locator('.status')).toHaveText('Accepted')
+ await browserExpect(tightened.locator('.status')).toHaveText('Rejected')
+ await browserExpect(tightened).toContainText('/spec/pages/0/components/0/placement/columnSpan')
+ await example.getByLabel('Schema version').selectOption('before')
+ await browserExpect(example.locator('.selected')).toHaveAttribute('aria-label', 'Baseline schema validation')
+ await example.getByLabel('Schema version').selectOption('after')
+ await example.getByLabel('Document scenario').selectOption('corrected-monthly')
+ const source = await example.evaluate((element: any) => element.getExampleCode())
+ const textbox = example.getByRole('textbox', { name: 'Dashboard YAML source', exact: true })
+ await browserExpect(textbox).toBeVisible()
+ await textbox.focus()
+ await textbox.press('ControlOrMeta+A')
+ await page.keyboard.insertText(source.replace('columnSpan: 12', 'columnSpan: 0'))
+ await browserExpect(tightened.locator('.status')).toHaveText('Rejected')
+ await example.getByRole('button', { name: 'Reset YAML', exact: true }).click()
+ await browserExpect(tightened.locator('.status')).toHaveText('Accepted')
+ await browserExpect(example.locator('lv-visualization-host')).toHaveCount(0)
+})
+
+test('dashboard YAML snapshot retains bounded source and controls at a narrow width', async () => {
+ await open('recipes/dashboard-contract')
+ const example = page.locator('playground-dashboard-contract')
+ await example.getByLabel('Document scenario').selectOption('zero-span')
+ const snapshot = await example.evaluate((element: any) => element.getExampleState())
+ await example.getByLabel('Document scenario').selectOption('corrected-monthly')
+ await example.evaluate(async (element: any, value) => element.restoreExampleState(value), snapshot)
+ await browserExpect(example.getByLabel('Document scenario')).toHaveValue('zero-span')
+ await browserExpect(example.getByRole('region', { name: 'Tightened schema validation' }).locator('.status')).toHaveText('Rejected')
+ await page.setViewportSize({ width: 390, height: 900 })
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+ await example.evaluate(async (element: any) => element.restoreExampleState({version:'untrusted',scenario:'untrusted',source:'x'.repeat(20001)}))
+ await browserExpect(example.getByLabel('Schema version')).toHaveValue('after')
+ await browserExpect(example.getByLabel('Document scenario')).toHaveValue('corrected-monthly')
+ await browserExpect(example.getByRole('region', { name: 'Tightened schema validation' }).locator('.status')).toHaveText('Accepted')
+})
+
+test('dashboard YAML recovers from cyclic aliases without a render error', async () => {
+ await open('recipes/dashboard-contract')
+ const example = page.locator('playground-dashboard-contract')
+ await example.evaluate(async (element: any) => element.restoreExampleState({source:'spec:\n  visuals:\n    - id: test\n      query:\n        dimensions: &cycle [*cycle]\n'}))
+ await browserExpect(example.getByRole('region', {name:'Tightened schema validation'}).locator('.status')).toHaveText('Rejected')
+ await example.getByRole('button', {name:'Reset YAML',exact:true}).click()
+ await browserExpect(example.getByRole('region', {name:'Tightened schema validation'}).locator('.status')).toHaveText('Accepted')
+})
+
+test('dashboard YAML keeps the editor synchronized on repeated oversized edits', async () => {
+ await open('recipes/dashboard-contract')
+ const example = page.locator('playground-dashboard-contract')
+ const source = await example.evaluate((element: any) => element.getExampleCode())
+ const bounded = source + '#' + 'x'.repeat(20000 - source.length - 1)
+ await example.evaluate(async (element: any, value) => element.restoreExampleState({source:value}), bounded)
+ const editor = example.locator('lv-code-editor')
+ const textbox = editor.getByRole('textbox', {name:'Dashboard YAML source',exact:true})
+ await browserExpect(textbox).toBeVisible()
+ for (let attempt=0;attempt<2;attempt++) {
+  await textbox.focus()
+  await textbox.press('ControlOrMeta+End')
+  await page.keyboard.insertText('x')
+  await browserExpect.poll(() => editor.evaluate((element: any) => element.value.length)).toBe(20000)
+  expect(await editor.evaluate((element: any, value) => element.value === value,bounded)).toBe(true)
+  expect(await example.evaluate((element: any) => element.getExampleCode())).toBe(bounded)
+ }
+ await example.getByRole('button', {name:'Reset YAML',exact:true}).click()
+ await browserExpect(example.getByRole('region', {name:'Tightened schema validation'}).locator('.status')).toHaveText('Accepted')
 })

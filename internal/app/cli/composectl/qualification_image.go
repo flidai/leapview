@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const qualificationRegistryImage = "registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+const qualificationRegistryImage = "public.ecr.aws/docker/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
 
 var qualificationPushedDigestPattern = regexp.MustCompile(`digest: (sha256:[0-9a-f]{64})`)
 var qualificationImmutableImagePattern = regexp.MustCompile(`^.+@sha256:[0-9a-f]{64}$`)

@@ -384,7 +384,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	for name, script := range map[string]string{"browser": browser, "performance": performance} {
 		for _, required := range []string{
-			`getByRole('button', { name: /^State:/ })`,
+			`locator('lv-slicer').getByRole('button', { name: /^State:/ })`,
 			`getByRole('dialog', { name: 'State filter options', exact: true })`,
 		} {
 			if !strings.Contains(script, required) {
@@ -400,7 +400,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		!strings.Contains(performance, `getByRole('button', { name: 'Clear State', exact: true })`) || strings.Contains(performance, "All State") {
 		t.Error("browser qualification must exercise deterministic State multi-select values")
 	}
-	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
+	if !strings.Contains(browser, `button.cell-action[aria-label="State: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="State: ${value}"]`) {
 		t.Error("browser qualification must assert the compiled result-frame cell accessibility label")
 	}
 	if !strings.Contains(performance, `button.header-button[data-column-key="order_id"]`) {
@@ -556,7 +556,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	for _, required := range []string{
 		"ARG LEAPVIEW_IMAGE",
 		"FROM ${LEAPVIEW_IMAGE} AS candidate",
-		"FROM debian:bookworm-slim@sha256:",
+		"FROM public.ecr.aws/docker/library/debian:bookworm-slim@sha256:",
 		"dbus-daemon",
 		"gnome-keyring",
 		"COPY --from=candidate /usr/local/bin/leapview /usr/local/bin/leapview",

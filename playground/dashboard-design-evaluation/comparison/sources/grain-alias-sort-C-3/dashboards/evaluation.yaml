@@ -1,0 +1,65 @@
+apiVersion: leapview.dashboard-prototype/c1
+kind: Dashboard
+metadata:
+  id: dashboard:evaluation
+  name: evaluation
+  displayName: Design qualification
+spec:
+  semanticModel: sales
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16
+  filters: []
+  visuals:
+    - id: revenue-by-month
+      title: Revenue by month
+      type: area
+      query:
+        type: aggregate
+        dimensions:
+          - dimension: purchase_date
+            grain: week
+            alias: purchase_week
+        metrics:
+          - revenue
+        sort:
+          - field: purchase_week
+            direction: asc
+        limit: 30
+      presentation:
+        type: cartesian
+    - id: total-revenue
+      title: Total revenue
+      type: kpi
+      query:
+        type: aggregate
+        dimensions: []
+        metrics:
+          - revenue
+      presentation:
+        type: kpi
+        displayUnits: auto
+  pages:
+    - id: overview
+      title: Overview
+      components:
+        - id: revenue-trend
+          type: visual
+          visual: revenue-by-month
+        - id: revenue-kpi
+          type: visual
+          visual: total-revenue
+      rows:
+        - id: row-revenue-trend
+          height: 8
+          items:
+            - component: revenue-trend
+              columnSpan: 12
+        - id: row-revenue-kpi
+          height: 3
+          gapBefore: 1
+          items:
+            - component: revenue-kpi
+              columnSpan: 3

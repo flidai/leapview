@@ -1,6 +1,6 @@
 # Pivot
 
-Use a pivot for a compact cross-tab with one row dimension, one column dimension, and one metric.
+Use a pivot for a compact cross-tab with row dimensions, column dimensions, and metrics.
 
 {{< visual id="category_pivot" >}}
 
@@ -26,3 +26,8 @@ visuals:
 
 Conditional-format targets may name the visible row field or metric alias.
 Pivot column dimensions generate headers and are not visible target columns.
+
+Pivots support the same expandable row hierarchies as
+[matrices](/docs/visuals/matrix#expandable-row-hierarchies). Add
+`presentation.hierarchy` for dimension levels, parent-child accounts, or nested
+children. Expand/collapse changes the visible rows without rerunning the query.

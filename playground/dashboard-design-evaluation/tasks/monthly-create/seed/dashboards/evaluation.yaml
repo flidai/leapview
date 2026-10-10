@@ -1,0 +1,19 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:evaluation
+  name: evaluation
+  displayName: Design qualification
+spec:
+  semanticModel: sales
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16
+  filters: []
+  visuals: []
+  pages:
+  - id: overview
+    title: Overview
+    components: []

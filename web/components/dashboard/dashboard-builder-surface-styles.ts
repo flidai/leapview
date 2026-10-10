@@ -14,7 +14,8 @@ export const dashboardBuilderSurfaceStyles = css`
     :host {
       position: relative;
       display: block;
-      min-height: 100svh;
+      height: 100svh;
+      min-height: 0;
       color: var(--lv-fg-default);
       background: var(--lv-bg-app);
       font-family: var(--fontStack-system);
@@ -33,8 +34,8 @@ export const dashboardBuilderSurfaceStyles = css`
 
     .builder {
       display: grid;
-      height: 100svh;
-      min-height: 100svh;
+      height: 100%;
+      min-height: 0;
       grid-template-rows: auto minmax(0, 1fr);
     }
 
@@ -91,12 +92,8 @@ export const dashboardBuilderSurfaceStyles = css`
     .magic-fill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
     .magic-fill svg { color: var(--lv-fg-accent); flex-shrink: 0; }
     .magic-fill-result { margin: 0; padding: 6px 12px; border-bottom: var(--lv-border-default); color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
-    .more-menu .arrange-mobile { display: none; }
 
     @media (max-width: 640px) {
-      .arrange-toolbar { display: none; }
-      .more-menu .arrange-mobile { display: flex; }
-      .arrange-label { display: none; }
       .appearance-popover {
         position: fixed;
         top: calc(var(--control-medium-size) + var(--base-size-16));

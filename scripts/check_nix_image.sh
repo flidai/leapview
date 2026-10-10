@@ -45,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 registry_id="$(docker run --detach --name "$registry" --publish 127.0.0.1::5000 \
-  registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373)"
+  public.ecr.aws/docker/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373)"
 address="$(docker port "$registry_id" 5000/tcp)"
 candidate_reference="$address/leapview:nix"
 for attempt in {1..30}; do

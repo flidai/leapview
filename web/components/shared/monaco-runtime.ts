@@ -1,5 +1,5 @@
 import * as monaco from 'monaco-editor-core/esm/vs/editor/editor.api'
-import { shikiToMonaco } from '@shikijs/monaco'
+import { shikiToMonaco, textmateThemeToMonacoTheme } from '@shikijs/monaco'
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 import markdown from '@shikijs/langs/md'
@@ -24,7 +24,7 @@ async function initializeMonaco(): Promise<typeof monaco> {
   registerWorker()
   registerLanguages()
   highlighter = await createHighlighterCore({
-    themes: [githubLight, githubDarkWithPanelBackground()],
+    themes: [githubLight, githubDark],
     langs: [markdown, yaml, json, sql],
     engine: createJavaScriptRegexEngine(),
   })
@@ -60,8 +60,22 @@ function registerThemeListener(): void {
 }
 
 function applyTheme(): void {
+  if (!highlighter) return
   const theme = currentTheme()
-  highlighter?.setTheme(theme)
+  const definition = textmateThemeToMonacoTheme(highlighter.getTheme(theme))
+  const colors = currentThemeColors()
+  // Resolve product aliases after the actual root theme changes. A nested dark
+  // probe under a light root inherits aliases already resolved to light values.
+  monaco.editor.defineTheme(theme, {
+    ...definition,
+    colors: {
+      ...definition.colors,
+      'editor.background': colors.background,
+      'editorGutter.background': colors.background,
+      'editorLineNumber.foreground': colors.lineNumber,
+    },
+  })
+  highlighter.setTheme(theme)
   monaco.editor.setTheme(theme)
 }
 
@@ -70,34 +84,19 @@ function currentTheme(): MonacoTheme {
   return 'github-light'
 }
 
-function githubDarkWithPanelBackground(): typeof githubDark {
-  const background = darkPanelBackground()
-  return {
-    ...githubDark,
-    colors: {
-      ...githubDark.colors,
-      'editor.background': background,
-      'editorGutter.background': background,
-    },
-  }
-}
-
-function darkPanelBackground(): string {
-  const scope = document.createElement('div')
-  const probe = document.createElement('div')
-  scope.dataset.colorMode = 'dark'
-  scope.dataset.lightTheme = 'light'
-  scope.dataset.darkTheme = 'dark'
-  scope.style.position = 'absolute'
-  scope.style.inset = '0'
-  scope.style.visibility = 'hidden'
-  scope.style.pointerEvents = 'none'
-  scope.append(probe)
-  ;(document.body || document.documentElement).append(scope)
+function currentThemeColors(): { background: string; lineNumber: string } {
+  const probe = document.createElement('span')
+  probe.style.position = 'absolute'
+  probe.style.visibility = 'hidden'
+  probe.style.pointerEvents = 'none'
+  ;(document.body || document.documentElement).append(probe)
   try {
-    return cssColorToken(probe, '--lv-bg-panel')
+    return {
+      background: cssColorToken(probe, '--lv-bg-panel'),
+      lineNumber: cssColorToken(probe, '--lv-fg-muted'),
+    }
   } finally {
-    scope.remove()
+    probe.remove()
   }
 }
 

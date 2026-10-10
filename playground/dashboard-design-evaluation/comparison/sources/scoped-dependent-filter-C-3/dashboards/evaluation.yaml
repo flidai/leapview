@@ -1,0 +1,120 @@
+apiVersion: leapview.dashboard-prototype/c1
+kind: Dashboard
+metadata:
+  id: dashboard:evaluation
+  name: evaluation
+  displayName: Design qualification
+spec:
+  semanticModel: sales
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16
+  filters:
+    - id: state
+      label: State
+      dimension: state
+      control:
+        type: singleSelect
+        options:
+          type: distinct
+          dataset: sales_orders
+          limit: 20
+    - id: category
+      label: Category
+      dimension: category
+      control:
+        type: singleSelect
+        options:
+          type: distinct
+          dataset: sales_orders
+          limit: 20
+          dependsOn:
+            - state
+  visuals:
+    - id: revenue-by-month
+      title: Revenue by month
+      type: area
+      query:
+        type: aggregate
+        dimensions:
+          - dimension: purchase_date
+            grain: month
+            alias: purchase_month
+        metrics:
+          - revenue
+        sort:
+          - field: purchase_month
+            direction: asc
+        limit: 30
+      presentation:
+        type: cartesian
+    - id: total-revenue
+      title: Total revenue
+      type: kpi
+      query:
+        type: aggregate
+        dimensions: []
+        metrics:
+          - revenue
+      presentation:
+        type: kpi
+        displayUnits: auto
+  pages:
+    - id: overview
+      title: Overview
+      filterBindings:
+        - id: state-local
+          filter: state
+          targets:
+            - revenue-trend
+        - id: category-local
+          filter: category
+          targets:
+            - revenue-trend
+      components:
+        - id: revenue-trend
+          type: visual
+          visual: revenue-by-month
+        - id: revenue-kpi
+          type: visual
+          visual: total-revenue
+        - id: state-control
+          type: filter
+          filter: state
+        - id: category-control
+          type: filter
+          filter: category
+      rows:
+        - id: row-revenue-trend
+          height: 8
+          items:
+            - component: revenue-trend
+              columnSpan: 12
+        - id: row-revenue-kpi
+          height: 3
+          gapBefore: 1
+          items:
+            - component: revenue-kpi
+              columnSpan: 3
+        - id: row-filter-controls
+          height: 2
+          gapBefore: 1
+          items:
+            - component: state-control
+              columnSpan: 3
+            - component: category-control
+              columnSpan: 3
+    - id: detail
+      title: Detail
+      components:
+        - id: detail-kpi
+          type: visual
+          visual: total-revenue
+      rows:
+        - id: row-detail-kpi
+          height: 3
+          items:
+            - component: detail-kpi
+              columnSpan: 3

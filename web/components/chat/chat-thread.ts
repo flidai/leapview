@@ -13,7 +13,7 @@ import type { DataExplorerCommand } from '../../generated/signals'
 import '../shared/markdown-view'
 import '../shared/visual-artifact'
 import { readAttachedMessage } from './attachments'
-import { dashboardActionLinks } from './dashboard-action-links'
+import { dashboardActionIdentity, dashboardActionLinks } from './dashboard-action-links'
 
 type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
@@ -42,6 +42,7 @@ class ChatThread extends LitElement {
   @property({ attribute: 'conversation-id' }) conversationId = ''
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
   @property({ type: Boolean }) dashboardPreviewAvailable = false
+  @property({ type: String }) dashboardId = ''
   @property({ attribute: false }) pageArtifacts: ChatArtifactSignal[] = []
   @property({ type: String }) pageTitle = ''
   @property({ attribute: false }) selectedVisualId = ''
@@ -93,6 +94,7 @@ class ChatThread extends LitElement {
     const showWorking = this.status.running
     const visibleItems = new Set(visibleTranscript)
     const units = groupTranscript(transcript)
+    const dashboardReply = this.dashboardPreviewAvailable ? this.dashboardReplyIndex(units) : -1
 
     return html`
       <div class="thread">
@@ -102,8 +104,8 @@ class ChatThread extends LitElement {
             ${unavailable ? this.renderEmptyState('Agent unavailable', this.status.error || 'Agent is not configured.') : nothing}
             ${!unavailable && this.status.error ? html`<div class="alert" role="alert">${this.status.error}</div>` : nothing}
             ${empty && !unavailable ? this.renderEmptyState('Start a conversation') : nothing}
-            ${units.map((unit, index) => this.renderUnit(unit, visibleItems, earlierAssistantMessages, index === units.length - 1))}
-            ${this.dashboardPreviewAvailable && this.pageArtifacts.length ? html`<section class="page-visuals" aria-label="Current page visuals"><h3>${this.pageTitle || 'Current page'} visuals</h3>${this.pageArtifacts.map(artifact => this.renderArtifact(artifact))}</section>` : nothing}
+            ${units.map((unit, index) => this.renderUnit(unit, visibleItems, earlierAssistantMessages, index === units.length - 1, index === dashboardReply))}
+            ${this.dashboardPreviewAvailable && dashboardReply < 0 ? this.renderPageArtifacts() : nothing}
             ${showWorking ? html`
               <div class="working" role="status" aria-label="Working" aria-live="polite">
                 <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -167,13 +169,35 @@ class ChatThread extends LitElement {
     `
   }
 
-  private renderUnit(unit: ChatRenderUnit, visibleItems: Set<ChatTranscriptItemSignal>, earlierAssistantMessages: Set<ChatTranscriptItemSignal>, latest: boolean) {
+  private dashboardReplyIndex(units: ChatRenderUnit[]): number {
+    let latest = -1
+    let compact = -1
+    for (let index = units.length - 1; index >= 0; index--) {
+      const unit = units[index]
+      if (unit.kind !== 'agent') continue
+      if (latest < 0) latest = index
+      for (const item of unit.items) {
+        if (!dashboardActionLinks(item, this.conversationId).length) continue
+        const id = dashboardActionIdentity(item)
+        if (this.dashboardId && id === this.dashboardId) return index
+        if (!id && compact < 0) compact = index
+      }
+    }
+    return compact >= 0 ? compact : latest
+  }
+
+  private renderPageArtifacts() {
+    return this.pageArtifacts.length ? html`<section class="page-visuals" aria-label="Current page visuals"><h3>${this.pageTitle || 'Current page'} visuals</h3>${this.pageArtifacts.map(artifact => this.renderArtifact(artifact))}</section>` : nothing
+  }
+
+  private renderUnit(unit: ChatRenderUnit, visibleItems: Set<ChatTranscriptItemSignal>, earlierAssistantMessages: Set<ChatTranscriptItemSignal>, latest: boolean, dashboardReply: boolean) {
     if (unit.kind === 'user') return this.renderUserTurn(unit.item)
     const items = unit.items.filter(item => visibleItems.has(item) && (item.kind !== 'tool' || this.toolStatus(item) === 'error' || (this.toolStatus(item) === 'complete' && Boolean(item.artifact))))
     const running = this.status.running && latest && (!this.status.runId || unit.items.some(item => item.runId === this.status.runId))
     const steps = unit.items.filter(item => earlierAssistantMessages.has(item) || (running && (item.kind === 'assistant' || item.kind === 'summary')))
-    if (items.length === 0 && steps.length === 0 && !unit.items.some(item => item.kind === 'tool' && (this.toolStatus(item) === 'error' || dashboardActionLinks(item, this.conversationId).length > 0))) return nothing
-    return this.renderAgentTurn(items, steps, unit.prompt, unit.items, running)
+    const hasPageArtifacts = dashboardReply && this.pageArtifacts.length > 0
+    if (!hasPageArtifacts && items.length === 0 && steps.length === 0 && !unit.items.some(item => item.kind === 'tool' && (this.toolStatus(item) === 'error' || dashboardActionLinks(item, this.conversationId).length > 0))) return nothing
+    return this.renderAgentTurn(items, steps, unit.prompt, unit.items, running, dashboardReply)
   }
 
 	private renderUserTurn(item: ChatTranscriptItemSignal) {
@@ -204,42 +228,45 @@ class ChatThread extends LitElement {
 		`
 	}
 
-  private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
+  private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, dashboardReply: boolean) {
     const hasVisualResult = !running && items.some(item => item.kind === 'tool' && this.toolStatus(item) === 'complete' && Boolean(item.artifact))
+    const lastPreview = [...allItems].reverse().find(item => item.name === 'preview_dashboard_draft' && this.toolStatus(item) === 'complete' && !item.error)
+    const hasResult = !running && (hasVisualResult || Boolean(lastPreview && dashboardActionLinks(lastPreview, this.conversationId).length))
+    const resultIndex = Math.max(lastPreview ? allItems.indexOf(lastPreview) : -1, ...allItems.flatMap((item, index) => item.artifact && this.toolStatus(item) === 'complete' ? [index] : []))
     // A completed visual is the outcome of this turn; failed intermediate tool
     // probes should not appear in the answer or its expandable context.
-    const displayedItems = hasVisualResult ? items.filter(item => item.kind !== 'tool' || this.toolStatus(item) !== 'error') : items
+    const displayedItems = hasResult ? items.filter(item => item.kind !== 'tool' || this.toolStatus(item) !== 'error' || allItems.indexOf(item) > resultIndex) : items
     const text = displayedItems.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
-    const lastPreview = [...allItems].reverse().find(item => item.name === 'preview_dashboard_draft' && this.toolStatus(item) === 'complete' && !item.error)
-    const answer = !running && (hasVisualResult || (lastPreview && dashboardActionLinks(lastPreview, this.conversationId).length))
+    const answer = hasResult
       ? [...displayedItems].reverse().find(item => item.kind === 'assistant' || item.kind === 'summary') : undefined
     const answerText = answer?.markdown || answer?.text || ''
     // Keep the complete Markdown in the disclosure, including tables and code.
     // Its opening paragraph is a preview, hidden while the full answer is open.
     const summary = answerText.split(/\r?\n[ \t]*\r?\n/, 1)[0]
     const compactAnswer = summary && summary.length < answerText.trimEnd().length ? answer : undefined
-    const context = displayedItems.filter(item => (hasVisualResult && item !== answer && (item.kind === 'assistant' || item.kind === 'summary')) || item === compactAnswer
-      || (answer && lastPreview && item.kind === 'tool' && this.toolStatus(item) === 'error' && allItems.indexOf(item) < allItems.indexOf(lastPreview)))
+    const context = displayedItems.filter(item => (hasVisualResult && item !== answer && (item.kind === 'assistant' || item.kind === 'summary')) || item === compactAnswer)
+    const visibleSteps = hasResult ? [] : steps
     const lastAnswerOrTool = [...allItems].reverse().find(item => item.kind === 'tool' || (item.kind === 'assistant' && Boolean(item.markdown || item.text)))
     const noFinalAnswer = !running && !this.status.error && !allItems.some(item => item.kind === 'error' || (item.kind === 'tool' && Boolean(item.artifact) && this.toolStatus(item) === 'complete'))
       && allItems.some(item => item.kind === 'tool' && this.toolStatus(item) === 'error')
       && lastAnswerOrTool?.kind === 'tool'
-    const actionItems = allItems.filter(item => item !== lastPreview && item.kind === 'tool' && this.toolStatus(item) === 'complete' && !item.error && dashboardActionLinks(item, this.conversationId).length > 0)
+    const actionItems = allItems.filter(item => item !== lastPreview && item.kind === 'tool' && this.toolStatus(item) === 'complete' && this.visibleToolActions(item, dashboardReply).length > 0)
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
           ${compactAnswer ? html`<div class="dashboard-summary">${this.renderAssistantContent(summary)}</div>` : nothing}
-          ${steps.length > 0 || context.length > 0 || actionItems.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context, lastPreview) : nothing}
-          ${displayedItems.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item))}
+          ${visibleSteps.length > 0 || context.length > 0 || actionItems.length > 0 ? this.renderRunSteps(visibleSteps, prompt, allItems, running, context, lastPreview, dashboardReply) : nothing}
+          ${displayedItems.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item, dashboardReply))}
           ${noFinalAnswer ? html`<p class="run-notice" role="status">This request stopped before a final answer was ready. You can ask the agent to continue.</p>` : nothing}
-          ${lastPreview ? this.renderToolActions(lastPreview) : nothing}
+          ${lastPreview ? this.renderToolActions(lastPreview, dashboardReply) : nothing}
+          ${dashboardReply ? this.renderPageArtifacts() : nothing}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>
     `
   }
 
-  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, context: ChatTranscriptItemSignal[], primaryAction?: ChatTranscriptItemSignal) {
+  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, context: ChatTranscriptItemSignal[], primaryAction?: ChatTranscriptItemSignal, hideDashboardActions = false) {
     const start = Date.parse(prompt?.createdAt || allItems[0]?.createdAt || '')
     const end = Date.parse(allItems[allItems.length - 1]?.createdAt || '')
     const elapsed = Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatElapsed(end - start) : ''
@@ -248,8 +275,8 @@ class ChatThread extends LitElement {
     return html`<details class="run-steps run-activity">
       <summary>${label}${lucideIcon(ChevronRight, { size: 16 })}</summary>
       ${steps.length > 0 ? html`<div class="run-step-list">${steps.map(item => html`<div class="run-step">${item.markdown || item.text || ''}</div>`)}</div>` : nothing}
-      ${context.map(item => this.renderAgentItem(item))}
-      ${allItems.filter(item => item !== primaryAction && item.kind === 'tool' && this.toolStatus(item) === 'complete').map(item => this.renderToolActions(item))}
+      ${context.map(item => this.renderAgentItem(item, hideDashboardActions))}
+      ${allItems.filter(item => item !== primaryAction && item.kind === 'tool' && this.toolStatus(item) === 'complete').map(item => this.renderToolActions(item, hideDashboardActions))}
     </details>`
   }
 
@@ -285,10 +312,10 @@ class ChatThread extends LitElement {
     }
   }
 
-  private renderAgentItem(item: ChatTranscriptItemSignal) {
+  private renderAgentItem(item: ChatTranscriptItemSignal, hideDashboardActions = false) {
     switch (item.kind) {
       case 'tool':
-        return this.renderToolOutcome(item)
+        return this.renderToolOutcome(item, hideDashboardActions)
       case 'error':
         return this.renderMessage('error', item.text || item.error || '-', false, true)
       case 'assistant': {
@@ -318,16 +345,21 @@ class ChatThread extends LitElement {
     return html`<lv-markdown-view class="agent-markdown" .value=${content}></lv-markdown-view>`
   }
 
-  private renderToolOutcome(item: ChatTranscriptItemSignal) {
+  private renderToolOutcome(item: ChatTranscriptItemSignal, hideDashboardActions = false) {
     const status = this.toolStatus(item)
-    if (status === 'complete' && item.artifact) return html`${this.renderArtifact(item.artifact, item)}${this.renderToolActions(item)}`
+    if (status === 'complete' && item.artifact) return html`${this.renderArtifact(item.artifact, item)}${this.renderToolActions(item, hideDashboardActions)}`
     if (status === 'error') return this.renderMessage('error', item.error?.trim() || 'A requested operation failed.', false, true)
     return nothing
   }
 
-  private renderToolActions(item: ChatTranscriptItemSignal) {
-    if (item.error) return nothing
-    const actions = dashboardActionLinks(item, this.conversationId)
+  private visibleToolActions(item: ChatTranscriptItemSignal, hideDashboardActions = false) {
+    const dashboardId = dashboardActionIdentity(item)
+    if (item.error || ((hideDashboardActions || this.dashboardPreviewAvailable) && (!dashboardId || !this.dashboardId || dashboardId === this.dashboardId))) return []
+    return dashboardActionLinks(item, this.conversationId)
+  }
+
+  private renderToolActions(item: ChatTranscriptItemSignal, hideDashboardActions = false) {
+    const actions = this.visibleToolActions(item, hideDashboardActions)
     return actions.length ? html`<nav class="tool-actions" aria-label="Review this action in the app">
       ${actions.map(action => html`<a href=${action.href}>${action.label}${lucideIcon(ChevronRight, { size: 14 })}</a>`)}
     </nav>` : nothing
@@ -338,7 +370,7 @@ class ChatThread extends LitElement {
     const title = payload?.spec.title || artifact.summary || 'Visual'
     if (this.dashboardPreviewAvailable) {
       const kind = payload?.spec.kind ?? artifact.type
-      const label = kind === 'kpi' ? 'Metric' : ['table', 'matrix', 'pivot'].includes(kind) ? 'Table' : 'Chart'
+      const label = !payload && artifact.type === 'visual' ? 'Visual' : kind === 'kpi' ? 'Metric' : ['table', 'matrix', 'pivot'].includes(kind) ? 'Table' : 'Chart'
       return html`
         <button class="visual-reference" type="button" aria-label=${`Open ${title} in visuals sidebar`}
           aria-pressed=${this.selectedVisualId === artifact.id}

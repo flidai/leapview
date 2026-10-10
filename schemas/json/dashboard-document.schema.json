@@ -1513,18 +1513,22 @@
       "properties": {
         "columns": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "gap": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "padding": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "rowHeight": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -1541,18 +1545,22 @@
       "properties": {
         "columns": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "gap": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "padding": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "rowHeight": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -2075,18 +2083,22 @@
       "properties": {
         "column": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "columnSpan": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "row": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "rowSpan": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -3080,6 +3092,130 @@
       ],
       "type": "object",
       "unevaluatedProperties": false
+    },
+    "GridLevelHierarchy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/GridRowHierarchyBase"
+        }
+      ],
+      "properties": {
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "label": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "levels"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields",
+        "mode"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "GridNestedHierarchy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/GridRowHierarchyBase"
+        }
+      ],
+      "properties": {
+        "childrenField": {
+          "type": "string"
+        },
+        "idField": {
+          "type": "string"
+        },
+        "labelField": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "nested"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "childrenField",
+        "labelField",
+        "mode"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "GridParentChildHierarchy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/GridRowHierarchyBase"
+        }
+      ],
+      "properties": {
+        "idField": {
+          "type": "string"
+        },
+        "labelField": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "parent_child"
+          ],
+          "type": "string"
+        },
+        "parentField": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "idField",
+        "labelField",
+        "mode",
+        "parentField"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "GridRowHierarchy": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/GridLevelHierarchy"
+        },
+        {
+          "$ref": "#/$defs/GridParentChildHierarchy"
+        },
+        {
+          "$ref": "#/$defs/GridNestedHierarchy"
+        }
+      ]
+    },
+    "GridRowHierarchyBase": {
+      "description": "Tree rows are expanded locally over the complete governed result frame.",
+      "properties": {
+        "defaultExpandedDepth": {
+          "format": "int32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
     },
     "HeaderDashboardPageComponent": {
       "allOf": [
@@ -4188,6 +4324,27 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "TableCellContent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TableImageCellContent"
+        },
+        {
+          "$ref": "#/$defs/TableLinkCellContent"
+        }
+      ]
+    },
+    "TableCellContentBase": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
     "TableDashboardPresentation": {
       "allOf": [
         {
@@ -4195,6 +4352,15 @@
         }
       ],
       "properties": {
+        "cellContent": {
+          "additionalProperties": {
+            "$ref": "#/$defs/TableCellContent"
+          },
+          "type": "object"
+        },
+        "hierarchy": {
+          "$ref": "#/$defs/GridRowHierarchy"
+        },
         "rowHeight": {
           "format": "int32",
           "type": "integer"
@@ -4217,6 +4383,78 @@
         "showHeader",
         "striped",
         "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "TableImageCellContent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/TableCellContentBase"
+        }
+      ],
+      "properties": {
+        "altField": {
+          "type": "string"
+        },
+        "display": {
+          "$ref": "#/$defs/TableImageDisplay"
+        },
+        "height": {
+          "format": "int32",
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "image"
+          ],
+          "type": "string"
+        },
+        "width": {
+          "format": "int32",
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "display",
+        "kind"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "TableImageDisplay": {
+      "enum": [
+        "inline",
+        "tooltip"
+      ],
+      "type": "string"
+    },
+    "TableLinkCellContent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/TableCellContentBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "link"
+          ],
+          "type": "string"
+        },
+        "labelField": {
+          "type": "string"
+        },
+        "newTab": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object",
       "unevaluatedProperties": false

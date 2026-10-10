@@ -77,7 +77,7 @@ class SQLCLayerScreenTests(unittest.TestCase):
 
     def test_dockerfile_keeps_tool_layer_independent_and_versioned(self):
         docker = "# syntax=docker/dockerfile:1.7@sha256:" + "a" * 64 + "\n"
-        docker += "FROM golang:1.27.1-bookworm@sha256:" + "b" * 64 + " AS go-deps\n"
+        docker += "FROM golang:1.27.2-bookworm@sha256:" + "b" * 64 + " AS go-deps\n"
         rendered = screen.dockerfile(docker, self.outputs)
         self.assertIn("GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9 GOBIN=/out go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1", rendered)
         self.assertLess(rendered.index("AS sqlc-tool"), rendered.index("COPY . ."))

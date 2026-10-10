@@ -1028,6 +1028,8 @@ model TableDashboardPresentation extends DashboardPresentation {
   rowHeight: int32;
   showHeader: boolean;
   striped: boolean;
+  hierarchy?: LeapViewVisualization.GridRowHierarchy;
+  cellContent?: Record<LeapViewVisualization.TableCellContent>;
 }
 
 model KPIDashboardPresentation extends DashboardPresentation {
@@ -1223,23 +1225,35 @@ model DashboardSpatialMapping {
 }
 
 model DashboardLayoutDefaults {
+  @minValue(1)
   columns: int32;
+  @minValue(1)
   rowHeight: int32;
+  @minValue(0)
   gap: int32;
+  @minValue(0)
   padding: int32;
 }
 
 model DashboardLayoutOverride {
+  @minValue(1)
   columns?: int32;
+  @minValue(1)
   rowHeight?: int32;
+  @minValue(0)
   gap?: int32;
+  @minValue(0)
   padding?: int32;
 }
 
 model DashboardPlacement {
+  @minValue(1)
   column: int32;
+  @minValue(1)
   row: int32;
+  @minValue(1)
   columnSpan: int32;
+  @minValue(1)
   rowSpan: int32;
 }
 

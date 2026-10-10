@@ -1,0 +1,73 @@
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {join,dirname} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
+import {qualify,sourceFiles,digest} from '/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/controller.ts';
+import {lowerSourceFiles} from '/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/prototypes.ts';
+import {qualificationIssues} from '/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-design-evaluation/qualification.ts';
+const repo='/home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand';
+const input=join(repo,'playground/dashboard-design-evaluation');
+const comparison=join(input,'comparison');
+const out='/tmp/pr938-oct10-requalification';
+const build='/var/tmp/pr938-oct10-requalification';
+const binary=join(build,'dashboardcontracttrials');
+const write=(path:string,value:any)=>writeFileSync(path,JSON.stringify(value,null,2)+'\n',{flag:'wx'});
+const raw=(path:string)=>readFileSync(path);
+const hash=(path:string)=>digest(raw(path));
+const manifestPath=join(input,'manifest.json');
+const corpus=JSON.parse(raw(manifestPath).toString());
+const inventoryPath=join(comparison,'inventory.json');
+const inventory=JSON.parse(raw(inventoryPath).toString());
+const oldReportPath=join(comparison,'graded-results-final.json');
+const oldReport=JSON.parse(raw(oldReportPath).toString());
+const oldQualification=JSON.parse(raw(join(comparison,'prototype-qualification.json')).toString());
+const fingerprints:Record<string,string>={};
+function retain(path:string, expected?:string){const value=hash(path);if(expected&&expected!==value)throw new Error('Input SHA mismatch '+path);fingerprints[path]=value;return value;}
+function unchanged(){for(const[path,want]of Object.entries(fingerprints))if(hash(path)!==want)throw new Error('Input changed '+path);}
+function command(args:string[]){const p=Bun.spawnSync(args,{cwd:repo});if(p.exitCode!==0)throw new Error(p.stderr.toString());return p.stdout.toString().trim();}
+const startedAt=new Date().toISOString();
+const identity={startedAt,head:command(['git','rev-parse','HEAD']),mainIntegration:command(['git','rev-parse','MERGE_HEAD']),goVersion:command(['go','version']),goFlags:'-tags=duckdb_arrow -buildvcs=false',binary,binarySHA256:retain(binary),binaryBuildInfo:command(['go','version','-m',binary]),agentTrials:0,queryExecutionScored:false,scope:'Merged-main deterministic requalification of existing fixtures and the same 90 committed first-attempt authored outputs; no new author inference or process/scope regrading'};
+retain(manifestPath,oldQualification.corpusSHA256);retain(inventoryPath);retain(oldReportPath,inventory.finalGradedReportSHA256);
+for(const name of ['controller.ts','prototypes.ts','prototypes-cli.ts','qualification.ts']){retain(join(input,name));}
+for(const name of ['prototypes.ts','prototypes-cli.ts'])if(hash(join(input,name))!==oldQualification.implementationSHA256[name])throw new Error('Qualified lowerer changed '+name);
+const snapshot=join(build,'corpus');mkdirSync(snapshot,{recursive:true});
+writeFileSync(join(snapshot,'manifest.json'),raw(manifestPath),{flag:'wx'});
+for(const[name,want]of Object.entries(corpus.frozenFiles) as [string,string][]){const path=join(input,name);retain(path,want);const dest=join(snapshot,name);mkdirSync(dirname(dest),{recursive:true});writeFileSync(dest,raw(path),{flag:'wx'});}
+if(inventory.denominator!==90||inventory.sourceFiles.length!==108)throw new Error('Unexpected recorded submission inventory');
+for(const entry of inventory.sourceFiles)retain(join(comparison,entry.path),entry.sha256);
+write(join(out,'identity.json'),{...identity,inputSHA256:fingerprints});
+unchanged();
+console.log('Requalifying exact 93 fixtures');
+const qualified=qualify(binary);
+const qualificationErrors=qualificationIssues(qualified,corpus);
+write(join(out,'prototype-qualification.json'),qualified);
+if(qualificationErrors.length)throw new Error(JSON.stringify(qualificationErrors));
+unchanged();
+console.log('Qualification complete: '+qualified.records.length+' expected fixture outcomes');
+const records:any[]=[];
+for(const task of corpus.tasks)for(const candidate of ['A','B','C'])for(const replicate of [1,2,3]){
+  const id=task.id+'-'+candidate+'-'+replicate;
+  const sourceRoot=join(comparison,'sources',id);
+  const source=sourceFiles(sourceRoot);
+  const entries=inventory.sourceFiles.filter((entry:any)=>entry.trial===id);
+  const expectedNames=entries.map((entry:any)=>entry.path.slice(('sources/'+id+'/').length)).sort();
+  if(!isDeepStrictEqual(Object.keys(source).sort(),expectedNames))throw new Error('Source file set changed '+id);
+  const authoredSHA256=Object.fromEntries(Object.entries(source).map(([name,text])=>[name,digest(text)]));
+  const lowered=lowerSourceFiles(source,candidate as 'A'|'B'|'C');
+  const canonicalRoot=join(build,'canonical',id);mkdirSync(canonicalRoot,{recursive:true});
+  for(const[name,text]of Object.entries(lowered)){const dest=join(canonicalRoot,name);mkdirSync(dirname(dest),{recursive:true});writeFileSync(dest,text,{flag:'wx'});}
+  const child=Bun.spawnSync([binary,'-design-manifest',join(snapshot,'manifest.json'),'-design-task',task.id,'-design-source',canonicalRoot],{cwd:repo});
+  let canonical:any=null;
+  try{canonical=JSON.parse(child.stdout.toString());}catch{}
+  const old=oldReport.records.find((r:any)=>r.id===id);
+  if(!old)throw new Error('Missing original grade '+id);
+  const sameOutcomes=canonical&&['parseAndSchema','compiler','intent','pass'].every(key=>canonical[key]===old.canonical[key]);
+  const sameCanonicalSourceHash=canonical?.sourceHash===old.canonical.sourceHash;
+  records.push({id,task:task.id,candidate,replicate,authoredSHA256,loweredSHA256:Object.fromEntries(Object.entries(lowered).map(([name,text])=>[name,digest(text)])),canonicalRoot,cliExitCode:child.exitCode,canonical,stderr:child.stderr.toString(),sameOutcomes,sameCanonicalSourceHash,success:child.exitCode===0&&canonical?.parseAndSchema===true&&canonical?.compiler===true&&canonical?.intent===true&&canonical?.pass===true&&sameOutcomes&&sameCanonicalSourceHash});
+  if(records.length%9===0)console.log('Checked '+records.length+'/90: '+task.id);
+}
+unchanged();
+const summary=Object.fromEntries(['A','B','C'].map(candidate=>{const cells=records.filter(r=>r.candidate===candidate);return[candidate,{denominator:30,parseAndSchema:cells.filter(r=>r.canonical?.parseAndSchema).length,compiler:cells.filter(r=>r.canonical?.compiler).length,intent:cells.filter(r=>r.canonical?.intent).length,pass:cells.filter(r=>r.canonical?.pass).length,successes:cells.filter(r=>r.success).length}];}));
+const report={kind:'merged-main-existing-submission-requalification',...identity,finishedAt:new Date().toISOString(),inputSHA256:fingerprints,corpusManifestSHA256:hash(manifestPath),frozenCorpusManifest:join(snapshot,'manifest.json'),frozenCorpusFileCount:Object.keys(corpus.frozenFiles).length,qualification:{qualified:qualified.qualified,records:qualified.records.length,expectedOutcomeIssues:qualificationErrors,reportSHA256:hash(join(out,'prototype-qualification.json'))},denominator:90,authoredFileCount:inventory.sourceFiles.length,summary,allOutcomesUnchanged:records.every(r=>r.sameOutcomes),allCanonicalSourceHashesUnchanged:records.every(r=>r.sameCanonicalSourceHash),records};
+write(join(out,'authored-output-requalification.json'),report);
+console.log(JSON.stringify({qualification:report.qualification,summary,allOutcomesUnchanged:report.allOutcomesUnchanged,allCanonicalSourceHashesUnchanged:report.allCanonicalSourceHashesUnchanged}));
+if(records.length!==90||records.some(r=>!r.success))process.exitCode=1;

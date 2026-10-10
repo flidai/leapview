@@ -1,0 +1,129 @@
+{
+  "id": "revision-v1",
+  "dashboardId": "sales",
+  "number": 7,
+  "document": {
+    "apiVersion": "leapview.dev/v1",
+    "kind": "Dashboard",
+    "metadata": {
+      "id": "sales",
+      "name": "sales",
+      "displayName": "Sales"
+    },
+    "spec": {
+      "semanticModel": "sales_model",
+      "filters": [],
+      "visuals": [
+        {
+          "id": "trend",
+          "type": "line",
+          "title": "Monthly orders",
+          "query": {
+            "type": "aggregate",
+            "dimensions": [
+              {
+                "dimension": "purchaseDate",
+                "grain": "month",
+                "alias": "purchaseMonth"
+              },
+              {
+                "dimension": "status",
+                "alias": "orderStatus"
+              }
+            ],
+            "metrics": [
+              {
+                "metric": "order_count",
+                "alias": "orders"
+              }
+            ],
+            "sort": [
+              {
+                "field": "purchaseMonth",
+                "direction": "asc"
+              }
+            ],
+            "limit": 24
+          },
+          "presentation": {
+            "type": "cartesian",
+            "legend": "right",
+            "smooth": false
+          }
+        },
+        {
+          "id": "total",
+          "type": "kpi",
+          "query": {
+            "type": "aggregate",
+            "dimensions": [],
+            "metrics": [
+              "order_count"
+            ]
+          },
+          "presentation": {
+            "type": "kpi"
+          }
+        }
+      ],
+      "pages": [
+        {
+          "id": "overview",
+          "title": "Overview",
+          "layout": {},
+          "components": [
+            {
+              "id": "trend-card",
+              "type": "visual",
+              "visual": "trend",
+              "placement": {
+                "column": 1,
+                "row": 1,
+                "columnSpan": 8,
+                "rowSpan": 4
+              }
+            },
+            {
+              "id": "total-card",
+              "type": "visual",
+              "visual": "total",
+              "placement": {
+                "column": 9,
+                "row": 1,
+                "columnSpan": 4,
+                "rowSpan": 2
+              }
+            }
+          ]
+        },
+        {
+          "id": "detail",
+          "title": "Detail",
+          "layout": {
+            "gap": 0,
+            "padding": 0
+          },
+          "components": [
+            {
+              "id": "trend-detail",
+              "type": "visual",
+              "visual": "trend",
+              "placement": {
+                "column": 1,
+                "row": 6,
+                "columnSpan": 12,
+                "rowSpan": 3
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "contentHash": "sha256:82bfec0cf143f474503705bce510d011aa59428702e2a13ba0773dc7be020310",
+  "provenance": {
+    "origin": "file",
+    "actorId": "fixture-capture"
+  },
+  "createdAt": "2026-10-08T00:00:00Z"
+}

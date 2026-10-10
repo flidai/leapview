@@ -51,22 +51,41 @@ func (h *Handler) ChatActionOpen(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, "Action is unavailable", statusForNotFound(err))
 		return
 	}
-	if createdBy := strings.TrimSpace(r.URL.Query().Get("createdBy")); createdBy != "" {
+	createdBy := strings.TrimSpace(r.URL.Query().Get("createdBy"))
+	authoredBy := strings.TrimSpace(r.URL.Query().Get("authoredBy"))
+	if createdBy != "" || authoredBy != "" {
+		if createdBy != "" && authoredBy != "" {
+			nethttp.NotFound(w, r)
+			return
+		}
 		createdDashboard := ""
-		for _, creation := range state.Transcript {
-			if creation.RunID != item.RunID || creation.ToolCallID != createdBy || creation.Kind != "tool" || creation.Status != "complete" || creation.Error != "" || (creation.Name != "create_dashboard_draft" && creation.Name != "fork_dashboard") {
+		authorIndex := -1
+		for index, creation := range state.Transcript {
+			matches := createdBy != "" && creation.ToolCallID == createdBy && (creation.Name == "create_dashboard_draft" || creation.Name == "fork_dashboard")
+			matches = matches || (authoredBy != "" && creation.ToolCallID == authoredBy && creation.Name == "edit_dashboard_source")
+			if creation.RunID != item.RunID || !matches || creation.Kind != "tool" || creation.Status != "complete" || creation.Error != "" {
 				continue
 			}
 			hydrateRetainedTool(&creation, messages)
 			if creation.Error == "" {
-				createdDashboard = dashboardCreationID(creation.ResultJSON)
+				if createdBy != "" {
+					createdDashboard = dashboardCreationID(creation.ResultJSON)
+				} else {
+					var input struct {
+						DashboardID string `json:"dashboardId"`
+					}
+					if json.Unmarshal([]byte(creation.ArgumentsJSON), &input) == nil {
+						createdDashboard = input.DashboardID
+					}
+				}
+				authorIndex = index
 			}
 			break
 		}
 		// Bounded/TOON browser previews may omit identities. Resolve the last
 		// preview for the created dashboard from the full retained arguments.
 		var preview *agent.ChatTranscriptItem
-		for i := len(state.Transcript) - 1; createdDashboard != "" && i >= 0; i-- {
+		for i := len(state.Transcript) - 1; createdDashboard != "" && i > authorIndex; i-- {
 			candidate := &state.Transcript[i]
 			if candidate.RunID != item.RunID || candidate.Kind != "tool" || candidate.Name != "preview_dashboard_draft" {
 				continue
@@ -144,7 +163,7 @@ func (h *Handler) ChatActionOpen(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.NotFound(w, r)
 		return
 	}
-	if (r.URL.Query().Get("createdBy") != "" || r.URL.Query().Get("mode") == "preview") && len(result.VisualErrors) > 0 {
+	if (createdBy != "" || authoredBy != "" || r.URL.Query().Get("mode") == "preview") && len(result.VisualErrors) > 0 {
 		nethttp.NotFound(w, r)
 		return
 	}

@@ -369,19 +369,22 @@ func TestFirstSourceCredentialAuthorityHoldsSessionAndTargetUntilCallbackEnds(t 
 		var postgresErr *pgconn.PgError
 		require.ErrorAs(t, err, &postgresErr)
 		require.Equal(t, "55P03", postgresErr.Code, "publication must wait until the bounded callback finishes")
-		// A client deadline can return before PostgreSQL has cancelled the
-		// blocked statement. Require a server-confirmed lock timeout in an
-		// explicit transaction so no delayed revocation can outlive this probe.
+		require.NoError(t, competing.Rollback(ctx))
+
 		revocation, err := f.pool.Begin(ctx)
 		require.NoError(t, err)
 		defer revocation.Rollback(context.Background())
-		_, err = revocation.Exec(ctx, "SET LOCAL lock_timeout='100ms'")
+		_, err = revocation.Exec(ctx, "SET LOCAL lock_timeout='200ms'")
 		require.NoError(t, err)
 		revoker, err := accesspostgres.NewAccess(revocation, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("k", 32))})
 		require.NoError(t, err)
 		err = revoker.DeleteSession(ctx, f.session)
-		require.ErrorAs(t, err, &postgresErr)
-		require.Equal(t, "55P03", postgresErr.Code, "the live session row is locked through credential work")
+		var revocationErr *pgconn.PgError
+		require.ErrorAs(t, err, &revocationErr)
+		require.Equal(t, "55P03", revocationErr.Code, "the live session row is locked through credential work")
+		// Client cancellation can return before an autocommit DELETE finishes on
+		// the server. Roll back this failed transaction before releasing the lock.
+		require.NoError(t, revocation.Rollback(ctx))
 		return nil
 	})
 	require.NoError(t, err)

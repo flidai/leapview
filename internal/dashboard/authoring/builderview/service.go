@@ -251,6 +251,12 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 			field.CanFilter = uisignals.Pointer(available)
 		}
 	}
+	for pageIndex := range pages {
+		for visualIndex := range pages[pageIndex].Visuals {
+			visual := &pages[pageIndex].Visuals[visualIndex]
+			visual.FormatOptions = filterGridMediaFormatOptions(visual.FormatOptions, revision.Document.Spec.Visuals[visual.VisualID], model)
+		}
+	}
 	if len(diagnostics) > maxDiagnostics {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder diagnostics exceed bounded limit")
 	}
@@ -759,7 +765,83 @@ func projectVisualFormatOptions(options []authoring.VisualFormatOption) []uisign
 		if option.Placeholder != "" {
 			projected.Placeholder = &option.Placeholder
 		}
+		if option.Description != "" {
+			projected.Description = &option.Description
+		}
+		projected.Min, projected.Max, projected.Step = option.Minimum, option.Maximum, option.Step
 		result = append(result, projected)
+	}
+	return result
+}
+
+func filterGridMediaFormatOptions(options []uisignals.DashboardBuilderFormatOptionSignal, visual dashboarddocument.DashboardVisual, model *semanticmodel.Model) []uisignals.DashboardBuilderFormatOptionSignal {
+	allowed := map[string]bool{}
+	allow := func(alias string) {
+		for _, property := range []string{"displayAs", "width", "height", "altField", "labelField", "newTab"} {
+			allowed["cellContent."+strings.TrimSpace(alias)+"."+property] = true
+		}
+	}
+	memberName := func(name string) string {
+		name = strings.TrimSpace(name)
+		if index := strings.LastIndexByte(name, '.'); index >= 0 {
+			return name[index+1:]
+		}
+		return name
+	}
+	addDimension := func(selection dashboarddocument.DashboardDimensionSelection) {
+		if model == nil {
+			return
+		}
+		name, alias := canonicalDimension(selection)
+		if selection.String != nil {
+			alias = memberName(alias)
+		}
+		dimension, err := model.ResolveSemanticDimension(strings.TrimSpace(name))
+		if err == nil && dimension.Datatype == semanticmodel.DataTypeString {
+			allow(alias)
+		}
+	}
+	switch query := visual.Query.Value.(type) {
+	case *dashboarddocument.RecordsDashboardQuery:
+		if query != nil && model != nil {
+			for _, selection := range query.Fields {
+				name, alias := canonicalRecordField(selection)
+				name = strings.TrimSpace(name)
+				if selection.String != nil || (selection.Reference != nil && selection.Reference.Alias == nil) {
+					alias = memberName(alias)
+				}
+				if !strings.Contains(name, ".") {
+					name = strings.TrimSpace(query.Dataset) + "." + name
+				}
+				dimension, err := model.ResolveDimension(name)
+				if err == nil && dimension.Datatype == semanticmodel.DataTypeString {
+					allow(alias)
+				}
+			}
+		}
+	case *dashboarddocument.AggregateDashboardQuery:
+		if query != nil {
+			for _, selection := range query.Dimensions {
+				addDimension(selection)
+			}
+		}
+	case *dashboarddocument.PivotDashboardQuery:
+		if query != nil {
+			for _, selection := range query.Rows {
+				addDimension(selection)
+			}
+			if visual.Type == dashboarddocument.DashboardVisualTypeTable {
+				for _, selection := range query.Columns {
+					addDimension(selection)
+				}
+			}
+		}
+	}
+	result := make([]uisignals.DashboardBuilderFormatOptionSignal, 0, len(options))
+	for _, option := range options {
+		if !strings.HasPrefix(option.Key, "cellContent.") || allowed[option.Key] {
+			result = append(result, option)
+		}
 	}
 	return result
 }
