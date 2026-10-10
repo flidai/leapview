@@ -34,6 +34,19 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('cold Nix development prepares pinned SQLC modules before source generation', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const prepare = workflow.jobs.development.steps.find((step: any) =>
+    step.name === 'Prepare generated and embedded assets for the fresh checkout')
+  expect(prepare.run).toContain('nix develop --no-update-lock-file -c bash scripts/prepare_sqlc_modules.sh')
+  expect(prepare.run.indexOf('prepare_sqlc_modules.sh')).toBeLessThan(prepare.run.indexOf('task ci:prepare'))
+  for (const input of ['scripts/prepare_sqlc_modules.sh', 'scripts/tests/test_prepare_sqlc_modules.py']) {
+    expect(workflow.on.pull_request.paths).toContain(input)
+  }
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain(
+    'python3 -m unittest discover -s scripts/tests -p test_prepare_sqlc_modules.py')
+})
+
 test('Nix source-generation inputs select their consumer builds', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   for (const input of ['scripts/generate_build_sources.sh', 'scripts/time_build_phase.sh']) {
