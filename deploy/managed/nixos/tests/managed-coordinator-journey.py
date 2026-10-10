@@ -128,11 +128,13 @@ with subtest("actual installed backup frontier has real source preparation and i
     expires = datetime.now(timezone.utc) + timedelta(hours=2)
     prepare = {"config": fixture.source_configuration(value, state + "/ca.crt"), "set": value["set"],
                "frontier": frontier, "expiresAt": expires.isoformat(), "receiptFile": state + "/prepared.json"}
-    document(source, state + "/prepare.json", prepare)
-    execute(source, "env LEAPVIEW_TEST_MANAGED_PREPARE_FILE=" + state + "/prepare.json "
+    # Use the same separate private client allowed by the installed database
+    # module. Source-local loopback is rejected by production pool policy.
+    document(replacement, state + "/prepare.json", prepare)
+    execute(replacement, "env LEAPVIEW_TEST_MANAGED_PREPARE_FILE=" + state + "/prepare.json "
             + shlex.quote(str(fixture_binary)) + " -test.run '^TestManagedRecoveryInstalledSourcePreparation$' -test.timeout 2m",
             "source-prepare", timeout=180)
-    prepared = json.loads(read(source, state + "/prepared.json"))
+    prepared = json.loads(read(replacement, state + "/prepared.json"))
     retained = prepared["set"]
     assert retained["status"] == "prepared" and not retained.get("published_validation_attempt_id")
     execute(authority, "systemctl start postgresql.service", "authority-start", timeout=300)

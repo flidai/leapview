@@ -129,6 +129,22 @@ PY
         with self.assertRaises(ValueError):
             fixture.tls_url("postgres://runtime@old/db", "replacement")
 
+    def test_source_preparation_uses_private_database_from_separate_host(self):
+        config = {"Production": True, "PostgresRequireTLS": True,
+                  "PostgresControlMaintenanceURL": "postgres://maintenance:secret@old:5544/leapview_control?sslmode=require",
+                  "PostgresDuckLakeURL": "postgres://runtime:secret@old:5544/leapview_ducklake?sslmode=require",
+                  "PostgresControlReadonlyURL": ""}
+        result = fixture.source_configuration({"config": config}, "/private/ca.crt")
+        for key in ("PostgresControlMaintenanceURL", "PostgresDuckLakeURL"):
+            parsed = urlsplit(result[key])
+            self.assertEqual(parsed.hostname, "192.168.1.2")
+            self.assertEqual(parsed.port, 5432)
+            self.assertEqual(parse_qs(parsed.query), {"sslmode": ["verify-full"], "sslrootcert": ["/private/ca.crt"]})
+        self.assertTrue(result["Production"])
+        self.assertTrue(result["PostgresRequireTLS"])
+        self.assertEqual(result["PostgresControlReadonlyURL"], "")
+        self.assertIn("@old:5544", config["PostgresControlMaintenanceURL"])
+
     def test_receipt_requires_real_original_fence_and_keeps_profile_closed(self):
         receipt = {"schemaVersion": 1, "kind": "leapview/managed-recovery-preactivation-qualification",
                    "scope": "fresh-managed-coordinator-replay-admission", "activationQualified": False,

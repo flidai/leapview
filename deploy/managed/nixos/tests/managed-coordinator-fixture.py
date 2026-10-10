@@ -88,10 +88,12 @@ def tls_url(raw, address, ca_path=None):
 
 
 def source_configuration(value, ca_path):
+    # Production pools reject loopback destinations. Preparation runs on the
+    # separate replacement host, already admitted by the source's private HBA.
     result = dict(value["config"])
     for key, raw in result.items():
         if key.startswith("Postgres") and key.endswith("URL") and raw:
-            result[key] = tls_url(raw, "127.0.0.1:5432", ca_path)
+            result[key] = tls_url(raw, "192.168.1.2:5432", ca_path)
     return result
 
 
