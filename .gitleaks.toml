@@ -79,3 +79,11 @@ regexes = [
   '''^\s*"src/interfaces/libpq/fe-auth-oauth\.c": "e909c6c453e820e091de35825c0c4c563a5079dd67f62a76ab96a42611bd8be5",?$''',
 ]
 paths = ['''(?:^|/)nix/database-source-lock\.json$''']
+
+[[allowlists]]
+description = "Exact non-secret SHA-256 source digest of the selected Azure credential implementation"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''^\s*"src/client_secret_credential\.cpp": "dad2a8e2df19c3dfbff658cbd8e240f45d1d910b038d88d7cb9a696a05ec549e",?$''']
+paths = ['''(?:^|/)nix/azure-source-lock\.json$''']
