@@ -177,7 +177,60 @@ func (m *Module) resolveBuilderTurnContext(ctx context.Context, scope agent.Scop
 	if err != nil {
 		return agent.TurnContext{}, err
 	}
-	return resolvedBuilderTurnContext(candidate, builder)
+	scope.ProjectID = projectID
+	return m.resolvedBuilderContextWithReferences(ctx, scope, candidate, builder)
+}
+
+// The authoring facade has already authorized this builder signal. Validate
+// the active destination before resolving separately authorized attachments.
+func (m *Module) resolvedBuilderContextWithReferences(ctx context.Context, scope agent.Scope, candidate agent.TurnContext, builder uisignals.DashboardBuilderSignal) (agent.TurnContext, error) {
+	resolved, err := resolvedBuilderTurnContext(candidate, builder)
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
+	resolved.References, err = m.resolveEmbeddedTurnReferences(ctx, scope, candidate.References, nil)
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
+	return resolved, nil
+}
+
+// Embedded surfaces retain their authorized page or draft as the destination.
+// Attachments supply read-authorized metadata, never a new edit destination.
+func (m *Module) resolveEmbeddedTurnReferences(ctx context.Context, scope agent.Scope, candidates []agent.TurnReference, resolveLocal func([]agent.TurnReference) []agent.TurnReference) ([]agent.TurnReference, error) {
+	if len(candidates) > agent.MaxTurnReferences {
+		return nil, fmt.Errorf("at most %d references can be attached", agent.MaxTurnReferences)
+	}
+	references := make([]agent.TurnReference, 0, len(candidates))
+	seen := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		if resourceID := strings.TrimSpace(candidate.Resource.ID); resourceID != "" && resourceID != scope.ProjectID {
+			return nil, errors.New("referenced resource belongs to another project")
+		}
+		var resolved []agent.TurnReference
+		if strings.EqualFold(strings.TrimSpace(candidate.Reference.Kind), "visual") {
+			if resolveLocal != nil {
+				resolved = resolveLocal([]agent.TurnReference{candidate})
+			}
+		} else {
+			var err error
+			resolved, err = m.resolveCatalogTurnReferences(ctx, scope, []agent.TurnReference{candidate}, false)
+			if err != nil {
+				return nil, err
+			}
+		}
+		for _, reference := range resolved {
+			key := reference.Reference.Kind + "\x00" + reference.Reference.ID
+			if reference.ComponentID != "" {
+				key = "visual\x00" + reference.ComponentID
+			}
+			if !seen[key] {
+				seen[key] = true
+				references = append(references, reference)
+			}
+		}
+	}
+	return references, nil
 }
 
 func resolvedBuilderTurnContext(candidate agent.TurnContext, builder uisignals.DashboardBuilderSignal) (agent.TurnContext, error) {
@@ -352,6 +405,15 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	if err != nil {
 		return agent.TurnContext{}, err
 	}
+	references, err := m.resolveEmbeddedTurnReferences(ctx, scope, candidate.References, func(candidates []agent.TurnReference) []agent.TurnReference {
+		return ResolveDashboardTurnReferences(candidates, DashboardTurnReferenceContext{
+			Resource:    agent.TurnReferenceResource{ID: projectID, Name: projectID},
+			DashboardID: report.ID, DashboardTitle: report.Title, Page: page,
+		}, report.Visualizations)
+	})
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
 	return agent.TurnContext{
 		Surface:        "dashboard",
 		DashboardID:    report.ID,
@@ -361,10 +423,7 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 		ModelID:        metrics.ModelIDForDashboard(report.ID),
 		Generation:     candidate.Generation,
 		Filters:        filterMap,
-		References: ResolveDashboardTurnReferences(candidate.References, DashboardTurnReferenceContext{
-			Resource:    agent.TurnReferenceResource{ID: projectID, Name: projectID},
-			DashboardID: report.ID, DashboardTitle: report.Title, Page: page,
-		}, report.Visualizations),
+		References:     references,
 	}, nil
 }
 
