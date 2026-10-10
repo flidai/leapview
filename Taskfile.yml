@@ -629,6 +629,7 @@ tasks:
 
       - python3 -m unittest discover -s scripts/tests -p test_nix_native_vortex_receipt.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_native_iceberg_receipt.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_native_sqlite_receipt.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_extension_version.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py

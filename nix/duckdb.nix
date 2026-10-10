@@ -63,6 +63,7 @@ pkgs.duckdb.overrideAttrs (old: {
     http.libraries.openssl
   ];
   cmakeFlags = [
+    (pkgs.lib.cmakeFeature "SQLITE_SELECTED_LIBRARY" "${sqlite.library}/lib/libsqlite3.a")
     (pkgs.lib.cmakeFeature "DUCKDB_EXTENSION_CONFIGS" "${extensions}")
     (pkgs.lib.cmakeFeature "OVERRIDE_GIT_DESCRIBE" "v1.5.4-0-g${revision}")
     (pkgs.lib.cmakeFeature "DUCKDB_EXPLICIT_PLATFORM" (
@@ -175,6 +176,11 @@ pkgs.duckdb.overrideAttrs (old: {
     root = pathlib.Path(sys.argv[1])
     pathlib.Path(sys.argv[2]).write_text(json.dumps({str(p.relative_to(root)): {'archive': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted((root / 'lib').glob('*.a'))}, sort_keys=True) + '\n')
     PYICEBERG
+    ${pkgs.python3}/bin/python3 - ${sqlite.library}/lib/libsqlite3.a "$TMPDIR/native-evidence/sqlite-link.json" <<'PYSQLITE'
+    import hashlib, json, pathlib, sys
+    archive = pathlib.Path(sys.argv[1])
+    pathlib.Path(sys.argv[2]).write_text(json.dumps({'archive': str(archive), 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}, sort_keys=True) + '\n')
+    PYSQLITE
     cp ${extensions} "$TMPDIR/native-evidence/extensions.cmake"
     ${pkgs.python3}/bin/python3 - ${sqlite.source} "$TMPDIR/native-evidence/sqlite-source.json" <<'PY'
     import hashlib, json, pathlib, sys

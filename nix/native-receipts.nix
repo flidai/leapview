@@ -15,6 +15,7 @@ let
     "scripts/nix_native_azure_receipt.py"
     "scripts/nix_native_vortex_receipt.py"
     "scripts/nix_native_iceberg_receipt.py"
+    "scripts/nix_native_sqlite_receipt.py"
   ];
   lance = [
     "nix/lance.nix"
@@ -109,6 +110,14 @@ let
     "nix/check-iceberg-static-libraries.cpp"
     "scripts/nix_native_iceberg_receipt.py"
   ];
+  sqlite = [
+    "nix/sqlite.nix"
+    "nix/sqlite-library.nix"
+    "nix/sqlite-library-source-lock.json"
+    "nix/sqlite-shared-library.patch"
+    "nix/sqlite-smoke.c"
+    "scripts/nix_native_sqlite_receipt.py"
+  ];
   duckdb = [
     "nix/duckdb.nix"
     "nix/sqlite.nix"
@@ -122,7 +131,8 @@ let
   ++ delta
   ++ azure
   ++ vortex
-  ++ iceberg;
+  ++ iceberg
+  ++ sqlite;
   croaring = [
     "nix/ducklake.nix"
     "nix/ducklake-source-lock.json"
@@ -136,6 +146,8 @@ let
         iceberg ++ http
       else if component == "vortex" then
         vortex
+      else if component == "sqlite" then
+        sqlite
       else if component == "delta" then
         delta
       else if component == "azure" then

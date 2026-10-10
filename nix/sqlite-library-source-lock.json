@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "version": "3.53.4",
+  "sourceID": "2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc",
+  "selectedFiles": {
+    "sqlite3.c": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+    "sqlite3.h": "919e7f2e8ed1d8f56ac17b412b8971c76aa5d1a879752cc6058f75e7d5910e1d",
+    "sqlite3ext.h": "ac9645e5c9ff0cf176efdd6e75cb5e98f46295d38e02db5c4d208826a39ab4be"
+  },
+  "defines": [
+    "SQLITE_ENABLE_FTS5",
+    "SQLITE_ENABLE_FTS4",
+    "SQLITE_ENABLE_FTS3_PARENTHESIS",
+    "SQLITE_ENABLE_RTREE"
+  ],
+  "wrapperPatchSHA256": "997b34de5c20a778f5bdb3f737807b62d26071483669402c896d6161e18429ba"
+}

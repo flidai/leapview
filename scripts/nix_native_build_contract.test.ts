@@ -161,3 +161,18 @@ test('Iceberg qualification preserves snapshot fixtures, exact linked binary and
   expect(patch).toContain('+  target_link_libraries(${target} -Wl,--start-group')
   expect(patch).not.toContain('+  target_link_libraries(${target} PRIVATE')
 })
+
+
+test('shared SQLite preserves one selected archive and executes its FTS/RTREE checks', () => {
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('test_nix_native_sqlite_receipt.py')
+  expect(readFileSync('nix/duckdb.nix', 'utf8')).toContain('"SQLITE_SELECTED_LIBRARY" "${sqlite.library}/lib/libsqlite3.a"')
+  const application = readFileSync('nix/application.nix', 'utf8')
+  expect(application).toContain('--sqlite ${duckdb.sqlite.library}')
+  expect(application).toContain('$nativeLibraries ${duckdb.sqlite.library}/lib/libsqlite3.a')
+  const recipe = readFileSync('nix/sqlite-library.nix', 'utf8')
+  expect(recipe).toContain('"$out/lib/libsqlite3.a" -lm -lpthread -ldl')
+  expect(recipe).toContain('"$TMPDIR/sqlite-final-consumer" "$TMPDIR/sqlite-final-archive.db"')
+  const smoke = readFileSync('nix/sqlite-smoke.c', 'utf8')
+  expect(smoke).toContain('CREATE VIRTUAL TABLE bounds USING rtree')
+  expect(smoke).toContain('sqlite3_compileoption_used("ENABLE_FTS5")')
+})

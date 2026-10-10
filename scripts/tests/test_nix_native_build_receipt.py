@@ -17,6 +17,7 @@ from test_nix_native_delta_receipt import delta_fixture
 from test_nix_native_iceberg_receipt import fixture as iceberg_fixture
 from test_nix_native_azure_receipt import fixture as azure_fixture
 from test_nix_native_vortex_receipt import vortex_fixture
+from test_nix_native_sqlite_receipt import sqlite_fixture
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / 'nix_native_build_receipt.py'
 sys.path.insert(0, str(SCRIPT.parent))
@@ -362,6 +363,17 @@ class BuildReceipts(unittest.TestCase):
         receipt.create_component('azure', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
         return root, evidence
 
+    def sqlite(self):
+        root = self.root / 'sqlite'
+        (root / 'lib').mkdir(parents=True)
+        (root / 'lib/libsqlite3.a').write_bytes(b'!<arch>\nsqlite')
+        evidence = self.root / 'sqlite-evidence'; evidence.mkdir()
+        for name, data in sqlite_fixture(receipt.sources(REPO, 'sqlite')).items():
+            (evidence / name).write_bytes(data)
+        (root / 'share/leapview').mkdir(parents=True)
+        receipt.create_component('sqlite', 'linux/amd64', REPO, evidence, root, root / 'share/leapview/native-build')
+        return root, evidence
+
     def application(self):
         croaring, _ = self.croaring()
         http, _ = self.http()
@@ -372,6 +384,7 @@ class BuildReceipts(unittest.TestCase):
         azure, _ = self.azure(http)
         iceberg, _ = self.iceberg(http)
         vortex, _ = self.vortex()
+        sqlite_root, _ = self.sqlite()
         lance = self.root / 'lance'
         (lance / 'lib').mkdir(parents=True)
         (lance / 'lib/liblance_duckdb_ffi.a').write_bytes(b'!<arch>\nlance')
@@ -385,7 +398,7 @@ class BuildReceipts(unittest.TestCase):
         evidence.mkdir()
         (evidence / 'compiler.txt').write_text('gcc 15\ncompiler-target: x86_64-unknown-linux-gnu\n')
         (evidence / 'cmake-cache.txt').write_text('DUCKDB_EXPLICIT_PLATFORM:STRING=linux_amd64\nroaring_DIR:PATH=' + str(croaring) + '/lib/cmake/roaring\n')
-        receipt.write(evidence / 'compile-commands.json', [{'file': '/store/sqlite/src/sqlite/sqlite3.c', 'command': 'cc -c sqlite3.c'}, {'file': '/store/ducklake/src/storage/ducklake_deletion_vector.cpp', 'command': 'c++ -c ducklake_deletion_vector.cpp'}])
+        receipt.write(evidence / 'compile-commands.json', [{'file': '/store/sqlite/src/sqlite_scanner.cpp', 'command': 'c++ -c sqlite_scanner.cpp'}, {'file': '/store/ducklake/src/storage/ducklake_deletion_vector.cpp', 'command': 'c++ -c ducklake_deletion_vector.cpp'}])
         (evidence / 'extensions.cmake').write_text('duckdb_extension_load(lance SOURCE_DIR /store/lance)\nduckdb_extension_load(sqlite_scanner SOURCE_DIR /store/sqlite)\nduckdb_extension_load(ducklake SOURCE_DIR /store/ducklake EXTENSION_VERSION ' + receipt.sources(REPO, 'duckdb')['ducklake']['revision'] + ')\n')
         receipt.write(evidence / 'croaring-link.json', {'archive': str(croaring / 'lib/libroaring.a'), 'sha256': receipt.digest(croaring / 'lib/libroaring.a')})
         commands = receipt.load(evidence / 'compile-commands.json')
@@ -397,6 +410,8 @@ class BuildReceipts(unittest.TestCase):
         for name, file in (('httpfs', 'src/httpfs.cpp'), ('quack', 'src/quack_client.cpp')):
             commands.append({'file': '/store/' + name + '/' + file, 'command': 'c++ -c ' + file})
             selection.write_text(selection.read_text() + 'duckdb_extension_load(' + name + ' SOURCE_DIR /store/' + name + ' EXTENSION_VERSION ' + receipt.sources(REPO, 'duckdb')['http'][name]['revision'] + ')\n')
+        receipt.write(evidence / 'sqlite-link.json', {'archive': str(sqlite_root / 'lib/libsqlite3.a'), 'sha256': receipt.digest(sqlite_root / 'lib/libsqlite3.a')})
+        cache.write_text(cache.read_text() + 'SQLITE_SELECTED_LIBRARY:FILEPATH=' + str(sqlite_root / 'lib/libsqlite3.a') + '\n')
         receipt.write(evidence / 'azure-link.json', {name: {'archive': str(azure / name), 'sha256': receipt.digest(azure / name)} for name in receipt.azure.ARCHIVES})
         cache.write_text(cache.read_text() + 'AZURE_LIBRARIES:STRING=' + ';'.join(str(azure / name) for name in sorted(receipt.azure.ARCHIVES)) + '\n')
         cache.write_text(cache.read_text() + 'AZURE_HTTP_LIBRARIES:STRING=' + ';'.join(str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)) + '\n')
@@ -442,7 +457,7 @@ class BuildReceipts(unittest.TestCase):
         receipt.write(evidence / 'sqlite-source.json', {name: sqlite[name + 'SHA256'].removeprefix('sha256:') for name in ('sqlite3.c', 'sqlite3.h')})
         (duckdb / 'share/leapview').mkdir(parents=True)
         receipt.create_component('duckdb', 'linux/amd64', REPO, evidence, duckdb, duckdb / 'share/leapview/native-build')
-        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)] + [str(delta / 'lib/libdelta_kernel_ffi.a')] + [str(azure / name) for name in sorted(receipt.azure.ARCHIVES)] + [str(vortex / 'lib/libvortex_duckdb.a')] + [str(iceberg / name) for name in sorted(receipt.iceberg.ARCHIVES)]
+        selected = [str(p) for p in sorted((duckdb / 'lib').glob('*.a')) if 'dummy_' not in p.name] + [str(lance / 'lib/liblance_duckdb_ffi.a'), str(croaring / 'lib/libroaring.a')] + [str(http / name) for name in sorted(receipt.HTTP_ARCHIVES)] + [str(database / name) for name in sorted(receipt.database.ARCHIVES)] + [str(excel / name) for name in sorted(receipt.excel.ARCHIVES)] + [str(avro / name) for name in sorted(receipt.avro.ARCHIVES)] + [str(delta / 'lib/libdelta_kernel_ffi.a'), str(sqlite_root / 'lib/libsqlite3.a')] + [str(azure / name) for name in sorted(receipt.azure.ARCHIVES)] + [str(vortex / 'lib/libvortex_duckdb.a')] + [str(iceberg / name) for name in sorted(receipt.iceberg.ARCHIVES)]
         inputs = self.root / 'link-inputs'
         inputs.write_text('\n'.join(selected) + '\n')
         app_evidence = self.root / 'app-evidence'
@@ -455,7 +470,7 @@ class BuildReceipts(unittest.TestCase):
         for name in ('leapview', 'leapviewctl'):
             (binaries / name).write_bytes(b'\x7fELF\x02\x01' + b'\0' * 12 + bytes([62, 0]) + name.encode())
         destination = self.root / 'application'
-        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro, delta, azure, vortex, iceberg)
+        receipt.compose(REPO, 'linux/amd64', 'a' * 40, duckdb, lance, binaries, inputs, app_evidence, destination, croaring, http, database, excel, avro, delta, azure, vortex, iceberg, sqlite_root)
         return destination, binaries
 
     def test_vortex_missing_receipt_and_generated_header_rejected(self):

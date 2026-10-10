@@ -20,8 +20,13 @@ Compiler stdout is bounded while being captured.
 DuckDB retains the effective CMake cache, compilation commands, static extension
 selection, compiler target, and exact SQLite amalgamation/header hashes. Its
 receipt hashes the actual installed static archives after Nix fixups. SQLite
-is compiled inside this engine build; the standalone SQLite smoke executable
-is not used as evidence for the application's compiled SQLite component.
+now has one selected static/PIC archive shared with its engine wrapper and the
+Spatial dependency work. The library receipt checks the actual compiler command,
+unchanged FTS/RTREE definitions, all three amalgamation headers/source identities,
+and a consumer linked against the final installed archive. Engine composition
+rejects another inline `sqlite3.c` compilation and binds the exact same archive in
+the engine and application link. Source-built whole-engine/runtime evidence is
+still required; a component consumer alone does not qualify the application.
 
 The application checks both component receipts against its selected archive
 bytes and records the actual link-input list, compiler, build tags, and final
@@ -618,3 +623,20 @@ aggregate, rebuilt engine and both-architecture publisher still require actual
 qualification. Spatial remains a signed source-replacement gap, alongside engine
 vendored identities and the complete native security assessment. Whole-application
 admission remains closed.
+
+## Spatial source-build prerequisites in progress
+
+The exact Spatial wrapper remains `28db190f7184bcf61eb01d291e0cba79849bddb6`.
+The independent GEOS producer selects the wrapper overlay's exact 3.14.1 source
+commit `7db6f62d50221a7ccac91c329a9a4fe61d172a56`, static/PIC output, mandatory
+nonempty upstream CTest execution and a native geometry/containment/buffer consumer.
+This is a selected dependency prerequisite, not a completed Spatial engine closure.
+GDAL, PROJ, their formats/embedded data and all transitive source selections remain
+pending, as do revised engine, both-architecture runtime and publisher checks.
+
+The prerequisite SQLite refactor preserves the already selected official 3.53.4
+amalgamation and scanner feature definitions. It also authenticates `sqlite3ext.h`
+from the same retained ZIP for PROJ's in-memory VFS. Sharing this one archive avoids
+mixing the Spatial overlay's older SQLite with the current scanner's global SQLite
+symbols. Transaction/reopen, FTS and RTREE component checks do not substitute for
+revised-engine SQLite/Spatial functionality and full selected archive binding.
