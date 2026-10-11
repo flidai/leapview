@@ -105,6 +105,15 @@ and user. **Save draft**, select its returned version, then **Test draft**. The
 password clears immediately, is never returned in signals, and is never replayed
 automatically. The real probe checks the exact destination and current authority.
 
+When the admitted operator is also the claiming user, open **Personal settings →
+API tokens** and create an ordinary personal API token with the needed delivery
+permissions, the exact admitted connection's `connection.manage` and
+`connection.use` permissions, and a short expiry. Use this bearer for the delivery
+plan matching the returned `firstSourcePreparationId`. Issuance rechecks the live
+browser session, unpublished admission, current claim roles and exact staged
+grant. OAuth/device and initial publisher credentials do not gain access to the
+customer credential. After publication, the normal permission picker resumes.
+
 Upload the intended source using the same user's authenticated normal delivery
 workflow. Enter its retained source digest, attestation digest and the delivery
 plan's idempotency key on the first-source page. **Prepare first publication**

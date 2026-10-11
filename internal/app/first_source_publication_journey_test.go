@@ -38,7 +38,7 @@ func runFirstSourceProductionPublicationJourney(t *testing.T, interrupt bool) (*
 
 func runFirstSourceProductionPublicationJourneyBeforeRestart(t *testing.T, interrupt bool, beforeRestart func(*sourceCredentialHTTPJourney)) (*sourceCredentialHTTPJourney, string) {
 	f := newSourceCredentialHTTPJourneyProfile(t, true)
-	token := f.bootstrapProject(t)
+	token := f.bootstrapProjectCredential(t, true)
 	identity, err := f.graph.Access.CredentialForAPIToken(t.Context(), token)
 	require.NoError(t, err)
 	browser := newFirstSourceJourneyBrowser(t, f, f.initial.Email, "source-journey-replacement-password")
@@ -90,6 +90,7 @@ func runFirstSourceProductionPublicationJourneyBeforeRestart(t *testing.T, inter
 	validationResponse = browser.command(t, "/connections/connection:warehouse/credential-drafts/"+draft.VersionId+"/validate", "validateCredentialDraft", credentialgen.CredentialValidationRequest{ExpectedBindingRevision: 1})
 	require.NoError(t, json.Unmarshal(validationResponse.Body.Bytes(), &receipt))
 	browser.command(t, "/connections/connection:warehouse/credential-drafts/"+draft.VersionId+"/prepare-first-source", "prepareFirstSourceCredential", credentialgen.FirstSourcePreparationRequest{PreparationId: preparation, ReceiptId: receipt.ReceiptId, SourceDigest: retained.SourceDigest, SourceAttestationDigest: retained.SourceAttestationDigest, PlanIdempotencyKey: planKey, ExpectedTargetRevision: 1})
+	token = browser.issueFirstSourceToken(t)
 	client := deploymentgen.NewGenClient(f.transport(token))
 	plan, err := client.CreateDeliveryPlan(t.Context(), deploymentgen.GenCreateDeliveryPlanClientRequest{Project: sourceJourneyProject, Headers: deploymentgen.GenCreateDeliveryPlanClientHeaders{IdempotencyKey: planKey}, Body: deploymentgen.DeliveryPlanRequest{TargetId: f.instance, Operation: deploymentgen.DeliveryOperationKindCodeChange, SourceDigest: retained.SourceDigest, SourceAttestationDigest: retained.SourceAttestationDigest, FirstSourcePreparationId: &preparation}})
 	require.NoError(t, err)
@@ -142,6 +143,8 @@ func runFirstSourceProductionPublicationJourneyBeforeRestart(t *testing.T, inter
 		return response.Code == http.StatusOK
 	}, time.Minute, 50*time.Millisecond, "committed publication must install its production runtime")
 	_ = f.querySource(t, token, "30")
+	postPublicationToken := browser.issueFirstSourceToken(t)
+	_ = f.querySource(t, postPublicationToken, "30")
 	if beforeRestart != nil {
 		beforeRestart(f)
 	}
