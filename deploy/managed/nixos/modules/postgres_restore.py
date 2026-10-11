@@ -233,12 +233,15 @@ class ModuleRestore(promotion.Promotion):
                 self._revalidate(binding)
                 return completed
             if action == "stop-readback":
-                if self._properties().get("ActiveState") == "active":
+                active = self._properties().get("ActiveState") == "active"
+                if active:
                     self._observed(wanted, completed["replayedThroughLSN"])
                     self.execute(self.systemctl, "stop", "postgresql.service")
                 if self._properties() != {"ActiveState": "inactive", "SubState": "dead", "MainPID": "0"}:
                     raise ValueError("readback stop did not complete")
                 self._revalidate(binding)
+                if active:
+                    self.execute(self.systemctl, "reset-failed", "postgresql.service")
                 return completed
             if self._properties().get("ActiveState") == "inactive":
                 self._revalidate(binding)
@@ -262,11 +265,16 @@ class ModuleRestore(promotion.Promotion):
                 raise ValueError("root restore did not leave PostgreSQL stopped")
             if completed:
                 self._revalidate(binding)
+                self.execute(self.systemctl, "reset-failed", "postgresql.service")
                 return completed
             value = self._public(binding) | {"replayedThroughLSN": observed["lsn"], "restoredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
             self._revalidate(binding)
             self._write(self.state / RECEIPT, json.dumps(value, sort_keys=True) + "\n", 0o640)
             self._revalidate(binding)
+            # The coordinator intentionally repeats healthy readback cycles.
+            # Clear only this unit's start counter after exact verification,
+            # a clean stop and binding revalidation; failures retain the limit.
+            self.execute(self.systemctl, "reset-failed", "postgresql.service")
             return value
         except BaseException:
             if started:

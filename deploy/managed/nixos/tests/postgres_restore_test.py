@@ -110,6 +110,61 @@ class ModuleRestoreTest(unittest.TestCase):
         self.assertFalse(self.active)
         self.assertEqual(sum("restore" in call for call in self.calls), 1)
 
+    def test_healthy_readback_cycles_do_not_exhaust_service_start_limit(self):
+        execute = self.restorer.execute
+        starts = 0
+        def limited_service(*args):
+            nonlocal starts
+            if args[:2] == ("systemctl", "reset-failed"):
+                self.assertEqual(args[2:], ("postgresql.service",))
+                self.assertFalse(self.active)
+                starts = 0
+                return ""
+            if args[:2] == ("systemctl", "start"):
+                starts += 1
+                if starts > 5:
+                    raise subprocess.CalledProcessError(1, args, stderr="start-limit-hit")
+            return execute(*args)
+        self.restorer.execute = limited_service
+        receipt = self.restorer.apply(self.wanted)
+        for _ in range(6):
+            self.assertEqual(self.restorer.apply(self.wanted, action="start-readback"), receipt)
+            self.assertTrue(self.active)
+            self.assertEqual(self.restorer.apply(self.wanted, action="stop-readback"), receipt)
+            self.assertFalse(self.active)
+        self.assertEqual(sum("restore" in call for call in self.calls), 1)
+
+    def test_unqualified_readback_does_not_reset_service_start_limit(self):
+        self.override["paused"] = False
+        with self.assertRaises(ValueError):
+            self.restorer.apply(self.wanted)
+        self.assertFalse(self.active)
+        self.assertFalse(any(call[:2] == ("systemctl", "reset-failed") for call in self.calls))
+        self.assertFalse((self.state / module.RECEIPT).exists())
+
+    def test_failed_service_start_does_not_reset_service_start_limit(self):
+        execute = self.restorer.execute
+        def failed_start(*args):
+            if args[:2] == ("systemctl", "start"):
+                self.calls.append(args)
+                raise subprocess.CalledProcessError(1, args, stderr="start-limit-hit")
+            return execute(*args)
+        self.restorer.execute = failed_start
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.restorer.apply(self.wanted)
+        self.assertFalse(self.active)
+        self.assertFalse(any(call[:2] == ("systemctl", "reset-failed") for call in self.calls))
+        self.assertFalse((self.state / module.RECEIPT).exists())
+
+    def test_foreign_request_and_stopped_checks_do_not_reset_service_start_limit(self):
+        receipt = self.restorer.apply(self.wanted)
+        self.calls.clear()
+        self.assertEqual(self.restorer.apply(self.wanted, action="check"), receipt)
+        self.assertEqual(self.restorer.apply(self.wanted, action="stop-readback"), receipt)
+        with self.assertRaises(ValueError):
+            self.restorer.apply(dict(self.wanted, frontierDigest="sha256:" + "e" * 64))
+        self.assertFalse(any(call[:2] == ("systemctl", "reset-failed") for call in self.calls))
+
     def test_service_start_permission_drift_stops_without_restore_receipt(self):
         self.start_mode = 0o770
         with self.assertRaises(ValueError):
@@ -171,6 +226,7 @@ class ModuleRestoreTest(unittest.TestCase):
                         self.restorer.apply(self.wanted)
                     self.assertFalse(self.active)
                     self.assertFalse((self.state / module.RECEIPT).exists())
+                    self.assertFalse(any(call[:2] == ("systemctl", "reset-failed") for call in self.calls))
                     if phase == "provider":
                         self.assertFalse(self.data.exists())
                         self.assertFalse(any(call[:2] == ("systemctl", "start") for call in self.calls))
