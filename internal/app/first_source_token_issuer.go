@@ -2,12 +2,10 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	credentialmodule "github.com/flidai/leapview/internal/credential/module"
 	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
@@ -67,27 +65,15 @@ func (i *firstSourceTokenIssuer) Create(ctx context.Context, input access.Scoped
 		return "", false, nil
 	}
 	handled, err = i.withAdmission(ctx, input.PrincipalID, func(ctx context.Context) error {
-		return i.repository.RunAuditedMutation(ctx, func(repository access.Repository) (access.AuditEventInput, error) {
-			native, ok := repository.(*accesspostgres.Repository)
-			if !ok {
-				return access.AuditEventInput{}, access.ErrForbidden
-			}
-			tx, ok := native.DB().(pgx.Tx)
-			if !ok {
-				return access.AuditEventInput{}, access.ErrForbidden
-			}
+		var err error
+		secret, err = accessmodule.CreatePersonalTokenWithAuthority(ctx, i.repository, input, func(ctx context.Context, tx pgx.Tx) error {
 			pairs, err := i.permissionsTx(ctx, tx, input.PrincipalID)
 			if err != nil {
-				return access.AuditEventInput{}, err
+				return err
 			}
-			if err = access.ValidatePermissionPairsAgainstAuthority(pairs, input.Permissions); err != nil {
-				return access.AuditEventInput{}, err
-			}
-			var token access.APIToken
-			secret, token, err = native.CreateScopedAPITokenWithMetadata(ctx, input)
-			metadata, _ := json.Marshal(map[string]string{"name": input.Name})
-			return access.AuditEventInput{PrincipalID: input.PrincipalID, Action: "api_token.created", ResourceKind: "api_token", ResourceID: token.ID, Status: "success", MetadataJSON: string(metadata)}, err
+			return access.ValidatePermissionPairsAgainstAuthority(pairs, input.Permissions)
 		})
+		return err
 	})
 	if err != nil {
 		secret = ""
@@ -180,12 +166,12 @@ func (i *firstSourceTokenIssuer) permissionsTx(ctx context.Context, tx pgx.Tx, a
 	pairs = append(pairs, grant.Permissions...)
 	// Instance authority remains an independent durable role. Never derive it
 	// from the claim or admission; lock a positive read through token commit.
-	admin, err := accesspostgres.IsPlatformAdministratorTx(ctx, tx, actor)
+	admin, err := accessmodule.IsPlatformAdministratorTx(ctx, tx, actor)
 	if err != nil {
 		return nil, err
 	}
 	if admin {
-		if err = accesspostgres.LockPlatformAdministratorTx(ctx, tx, actor); err != nil {
+		if err = accessmodule.LockPlatformAdministratorTx(ctx, tx, actor); err != nil {
 			return nil, err
 		}
 		instance, err := access.InstancePermissionOptions(a.targetID)

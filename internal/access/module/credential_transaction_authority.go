@@ -18,6 +18,12 @@ func LockPlatformAdministratorTx(ctx context.Context, tx pgx.Tx, actor string) e
 	return accesspostgres.LockPlatformAdministratorTx(ctx, tx, actor)
 }
 
+// IsPlatformAdministratorTx reads the independent instance role through the
+// retained transaction. A positive result must also be locked before issuance.
+func IsPlatformAdministratorTx(ctx context.Context, tx pgx.Tx, actor string) (bool, error) {
+	return accesspostgres.IsPlatformAdministratorTx(ctx, tx, actor)
+}
+
 // LockCredentialAuthorizationSubjectsTx holds the current principal and group
 // memberships used by the application's canonical serving-policy check.
 func LockCredentialAuthorizationSubjectsTx(ctx context.Context, tx pgx.Tx, actor string) ([]access.SubjectRef, error) {
