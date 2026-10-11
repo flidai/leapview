@@ -195,7 +195,11 @@ export class TableCellContentElement extends LitElement {
       root = root.host.getRootNode()
     }
     this.ownerDocument.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { this.focusSuppressed = true; this.closePreview() }
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      this.focusSuppressed = true
+      this.closePreview()
     }, { capture: true, signal: controller.signal })
   }
 
