@@ -81,6 +81,8 @@ jobs:
       - name: Check Nix formatting
         working-directory: deploy/managed/nixos
         run: nix fmt -- --check flake.nix inventory.example.nix modules/*.nix tests/*.nix
+      - name: Exercise fresh native PostgreSQL role bootstrap
+        run: nix develop --no-update-lock-file .#managed-recovery -c task managed:postgres:bootstrap-test
       - name: Build both locked host closures and deploy-rs checks
         working-directory: deploy/managed/nixos
         run: |

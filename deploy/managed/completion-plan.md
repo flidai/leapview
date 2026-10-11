@@ -17,6 +17,24 @@ operational acceptance still require their own evidence. This document preserves
 the earlier takeover findings and does not describe the current issue completion
 state; use the project's delivery ledger for current PRs and results.
 
+**10 October 2026 scope amendment:** finish the managed NixOS and public Compose
+deployments with admitted conventional images, their application/credential
+lifecycle and native backup/recovery exercises, then the installation-specific
+handover. Replacement Nix application, site, Desktop and CLI/build-output
+adoption is deferred in the
+[deployment-first project reassessment](https://linear.app/flid/document/10-october-scope-reassessment-deployment-first-closeout-6ee3da3b0bc6).
+Do not make those deferred outputs prerequisites for host qualification.
+
+The original [managed operations decision](https://github.com/flidai/leapview/blob/1c1c3021a108129a6c9213c4748958b94533fc2f/adr/0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md#managed-operations-without-a-prerequisite-platform-build)
+permits versioned configuration, existing tools and documented operator
+procedures. The remaining real two-host recovery drill may therefore use
+pgBackRest, Restic and native NixOS/application operations. It must still prove
+consistent database/files/key recovery, original-writer fencing, reconciliation
+of jobs/publications/acknowledgments and replacement writes, with measured bounds.
+Adopting the newer managed-local coordinator or adding its separate PostgreSQL
+authority is not a prerequisite for this operator-run drill. Its component
+results retain their explicit limits and do not qualify the split-host profile.
+
 ## Execution baseline
 
 - Original scaffold: `25d3ee01e2aa46b49ec0d2c79b49330db12ffe37`.

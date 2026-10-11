@@ -648,3 +648,35 @@ Canonical release identity, upgrade, rollback, recovery, profile observation and
 exact promotion remain pending. Conventional desktop release workflows remain
 authoritative; follow the [profile handover record](../deploy/adoption.md) before
 changing any production caller.
+## Conventional Compose guest qualification
+
+The protected Compose workflow can exercise the original conventional release
+without waiting for Nix controller or bundle adoption:
+
+```sh
+gh workflow run nix-compose-candidate.yml --ref main \
+  -f release_run_id=COMPLETED_SUCCESSFUL_RELEASE_RUN -f bundle_source=conventional
+```
+
+Use a successful main-branch `release.yml` dispatch that retains the separate
+`compose-controller-build-identities-RUN-ATTEMPT` artifact. Older runs without
+those original builder receipts are rejected; receipts are never reconstructed.
+The protected consumer authenticates both artifact IDs, source/run identities
+and ZIP digests, then verifies the original archive and inner controller bytes
+against the retained receipt and source. It does not rebuild or repackage them.
+
+This runs eight bootstrap guests: Ubuntu 24.04 and Debian 13, each on AMD64 and
+ARM64, with external and bundled PostgreSQL. Existing controller security,
+private bootstrap, first publication, explicit activation and reboot checks
+remain required. Nix is still used for pinned verifier tools; no Nix controller
+or candidate bundle is produced by this mode. The default `bundle_source=nix`
+continues to exercise both installer modes and its existing signing path.
+
+Conventional host receipts bind `bundleProducer: conventional`,
+`nixQualification: false` and the original producer evidence digest. Some shared
+receipt filenames and controller keys retain their historical `nix` prefix for
+compatibility; they describe the exact archived bytes, not a Nix build claim.
+Conventional runs skip Nix-specific installed-candidate signing, which is
+separate from the original release's installed-candidate validation. Retained
+host evidence remains `releaseAdmission: false`; a successful run does not
+authorize production rollout or qualify two-image upgrade/rollback.
