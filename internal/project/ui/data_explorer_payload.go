@@ -154,6 +154,15 @@ func DataExplorerAgentContextPayload(context uisignals.AgentContextSignal) dataE
 	return wire
 }
 
+// DataExplorerAgentContextRefreshPayload refreshes governed context while
+// retaining references attached to the browser's current chat turn.
+func DataExplorerAgentContextRefreshPayload(context uisignals.AgentContextSignal) any {
+	return struct {
+		dataExplorerAgentContextWire
+		References []uisignals.AgentReferenceSignal `json:"references,omitempty"`
+	}{dataExplorerAgentContextWire: DataExplorerAgentContextPayload(context)}
+}
+
 type savedExplorationWire struct {
 	uisignals.SavedExplorationStateSignal
 	Current *savedExplorationCurrentWire `json:"current"`

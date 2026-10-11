@@ -312,6 +312,112 @@ async function openTransportAgent(page: Page, command = false, styled = false, e
   return explorer
 }
 
+function signalEvent(signals: Record<string, unknown>, onlyIfMissing = false): string {
+  return `event: datastar-patch-signals\ndata: onlyIfMissing ${onlyIfMissing}\ndata: signals ${JSON.stringify(signals)}\n\n`
+}
+
+for (const running of [false, true]) test(`Explorer SSE reconnect preserves ${running ? 'running' : 'idle'} chat while refreshing governed context`, async () => {
+  const page = await browser.newPage({ viewport: { width: 768, height: 900 } })
+  const browserErrors: string[] = []
+  page.on('pageerror', error => browserErrors.push(error.message))
+  try {
+    await page.addInitScript(() => {
+      ;(window as any).restoredConversations = []
+      document.addEventListener('lv-chat-restore', event => {
+        (window as any).restoredConversations.push((event as CustomEvent).detail.conversationId)
+      })
+    })
+    const turns: any[] = []
+    await page.route('**/chats/turns', route => {
+      turns.push(JSON.parse(route.request().postData()!))
+      return route.fulfill({ status: 204 })
+    })
+    const explorer = await openTransportAgent(page, true)
+    const drawer = explorer.locator('lv-chat-drawer'), composer = drawer.locator('lv-chat-composer')
+    const input = composer.getByRole('combobox')
+    const reference = { reference: { kind: 'dataset', id: 'governed-dataset' }, name: 'Attached governed dataset',
+      hierarchy: [], href: '', locations: [], context: [] }
+    const draft = 'Keep this unsent Explorer question  '
+    await drawer.evaluate((element: any, reference) => element.openWithReference(reference), reference)
+    await input.fill(draft)
+    await explorer.evaluate(async (element: any, { running, reference, draft }) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ dataExplorer: element.dataExplorer,
+        agent: { status: { running, runId: running ? 'live-run' : 'previous-run', canContinue: !running, error: '' },
+        composer: { value: draft } }, agentContext: { references: [reference] },
+        agentReferenceSearch: { query: 'governed', requestId: 7, results: [reference] },
+        agentVisuals: { retainedChart: {
+          schemaVersion: 14, visualID: 'retainedChart', rendererID: 'echarts', specRevision: 'retained-spec', dataRevision: 1,
+          spec: { kind: 'cartesian', datasets: [] },
+          dataState: { kind: 'inline', datasets: [] }, selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
+        } } })
+      element.requestUpdate(); await element.updateComplete
+      const trigger = document.createElement('button')
+      trigger.id = 'reconnect-explorer'
+      trigger.textContent = 'Reconnect Explorer stream'
+      trigger.setAttribute('data-on:click', "@get('/updates?route=data&surface=explore', {retry: 'never', retryMaxCount: 0, openWhenHidden: true})")
+      document.body.append(trigger)
+    }, { running, reference, draft })
+    await drawer.evaluate((element: any) => element.updateComplete)
+    const before = await drawer.evaluate((element: any) => ({ agent: element.agent, visuals: element.visuals }))
+    expect(await page.evaluate(() => (window as any).restoredConversations)).toEqual(['existing-conversation'])
+    let reconnects = 0
+    await page.route('**/updates?route=data&surface=explore**', route => {
+      reconnects++
+      // A new /updates connection replays missing-only chat defaults, then the
+      // current governed Explorer context and authoritative conversation list.
+      return route.fulfill({ contentType: 'text/event-stream', body:
+        signalEvent({ agent: { conversations: [], activeConversationId: '', transcript: [],
+          status: { enabled: true, running: false, runId: '', canContinue: false, error: '' },
+          composer: { value: '', disabled: false, placeholder: '' } },
+          agentVisuals: {}, agentReferenceSearch: { query: '', requestId: 0, results: [] },
+          agentContext: { references: [] } }, true)
+        + signalEvent({ dataExplorer: { warnings: [`Governed context revision ${reconnects}`] },
+          agent: { conversations: [{ id: 'fresh-conversation', title: `Fresh conversation list ${reconnects}`,
+            principalId: 'current-principal', status: 'ready', messageCount: 2, createdAt: '', updatedAt: '' }],
+            status: { enabled: true } },
+          agentContext: { surface: 'data', modelId: 'refreshed-model', datasetId: 'refreshed-dataset',
+            exploration: { schemaVersion: 1, modelId: 'refreshed-model', datasetId: 'refreshed-dataset',
+              dimensions: [], metrics: [], filters: [], sort: [], limit: 25 + reconnects } } }) })
+    })
+    for (const revision of [1, 2]) {
+      await page.locator('#reconnect-explorer').evaluate((element: HTMLButtonElement) => element.click())
+      await page.waitForFunction(revision => {
+        const explorer = document.querySelector('lv-data-explorer') as any
+        return explorer.dataExplorer.warnings[0] === `Governed context revision ${revision}`
+          && explorer.shadowRoot.querySelector('lv-chat-drawer').context.exploration.limit === 25 + revision
+      }, revision, { timeout: 5000 })
+      await drawer.evaluate(async (element: any) => { await element.updateComplete; await element.shadowRoot.querySelector('lv-chat-composer').updateComplete })
+      expect(await input.inputValue()).toBe(draft)
+      expect(await composer.evaluate((element: any) => element.references)).toEqual([reference])
+      const after = await drawer.evaluate((element: any) => ({ agent: element.agent, visuals: element.visuals, context: element.context }))
+      expect(after.agent.activeConversationId).toBe('existing-conversation')
+      expect(after.agent.transcript).toEqual(before.agent.transcript)
+      expect(after.agent.status).toEqual(before.agent.status)
+      expect(after.agent.composer).toEqual(before.agent.composer)
+      expect(after.visuals).toEqual(before.visuals)
+      expect(after.context.references).toEqual([reference])
+      expect(after.context).toMatchObject({ modelId: 'refreshed-model', datasetId: 'refreshed-dataset' })
+      expect(after.agent.conversations[0].title).toBe(`Fresh conversation list ${revision}`)
+      expect(await explorer.evaluate((element: any) => element.signal('agentReferenceSearch', {}))).toEqual({ query: 'governed', requestId: 7, results: [reference] })
+      expect(await drawer.getByText('Original question', { exact: true }).count()).toBe(1)
+      expect(await page.evaluate(() => (window as any).restoredConversations)).toEqual(['existing-conversation'])
+      if (running) expect(await composer.getByRole('button', { name: 'Stop response', exact: true }).isEnabled()).toBe(true)
+    }
+    expect(reconnects).toBe(2)
+    expect(browserErrors).toEqual([])
+    if (!running) {
+      await input.press('Enter')
+      await page.waitForFunction(() => (window as any).fetchFinished === 3)
+      expect(turns).toHaveLength(1)
+      expect(turns[0].agent.activeConversationId).toBe('existing-conversation')
+      expect(turns[0].agent.composer.value).toBe(draft.trim())
+      expect(turns[0].agentContext.references).toEqual([reference])
+      expect(turns[0].agentContext.exploration).toMatchObject({ modelId: 'refreshed-model', datasetId: 'refreshed-dataset', limit: 27 })
+    }
+  } finally { await page.close() }
+})
+
 test('Explorer shows a real rejected agent command and preserves draft, references, and edit target for retry', async () => {
   const page = await browser.newPage({ viewport: { width: 768, height: 844 } })
   try {

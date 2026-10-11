@@ -33,6 +33,59 @@ func TestSignalStreamPatchSendsOnePatchSignalsEventPerCall(t *testing.T) {
 	}
 }
 
+func TestSignalStreamPatchIfMissingOnlyAppliesToDefaults(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/updates", nil)
+	rec := httptest.NewRecorder()
+	stream := NewSignalStream(rec, req)
+	if err := stream.PatchIfMissing(SignalPatch{"draft": "", "transcript": []string{}}); err != nil {
+		t.Fatalf("patch defaults: %v", err)
+	}
+	if err := stream.Patch(SignalPatch{"draft": "current draft"}); err != nil {
+		t.Fatalf("patch authoritative state: %v", err)
+	}
+	updates := make(chan SignalPatch, 1)
+	updates <- SignalPatch{"transcript": []string{"accepted answer"}}
+	close(updates)
+	if err := stream.ForwardUpdates(req.Context(), updates); err != nil {
+		t.Fatalf("forward authoritative state: %v", err)
+	}
+
+	events := ssetest.Events(t, rec.Body.String())
+	if len(events) != 3 {
+		t.Fatalf("stream events = %#v", events)
+	}
+	for index, event := range events {
+		if index == 0 {
+			if !strings.HasPrefix(event.Data, "onlyIfMissing true\n") {
+				t.Fatalf("defaults event missing defaults-only flag: %q", event.Data)
+			}
+		} else if strings.Contains(event.Data, "onlyIfMissing ") {
+			t.Fatalf("authoritative event %d retained defaults-only option: %q", index, event.Data)
+		}
+	}
+	patches := ssetest.PatchSignals(t, rec.Body.String())
+	if patches[0]["draft"] != "" || patches[1]["draft"] != "current draft" {
+		t.Fatalf("stream draft patches = %#v", patches)
+	}
+	transcript, ok := patches[2]["transcript"].([]any)
+	if !ok || len(transcript) != 1 || transcript[0] != "accepted answer" {
+		t.Fatalf("forwarded transcript = %#v", patches[2]["transcript"])
+	}
+}
+
+func TestSignalStreamPatchIfMissingIgnoresEmptyPatches(t *testing.T) {
+	for _, patch := range []SignalPatch{nil, {}} {
+		req := httptest.NewRequest(http.MethodGet, "/updates", nil)
+		rec := httptest.NewRecorder()
+		if err := NewSignalStream(rec, req).PatchIfMissing(patch); err != nil {
+			t.Fatalf("patch empty defaults: %v", err)
+		}
+		if rec.Body.Len() != 0 {
+			t.Fatalf("empty defaults wrote response = %q", rec.Body.String())
+		}
+	}
+}
+
 func TestPatchResponseSendsOnePatchSignalsEvent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/command", nil)
 	rec := httptest.NewRecorder()

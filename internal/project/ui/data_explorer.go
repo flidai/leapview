@@ -19,7 +19,10 @@ import (
 // DataExplorerAgentBootstrap is agent-owned state projected into the data
 // explorer without making the project module depend on agent signal types.
 type DataExplorerAgentBootstrap struct {
-	Agent   any
+	Agent any
+	// Refresh contains only conversation history and availability, which may
+	// change without replacing the browser's active conversation or draft.
+	Refresh any
 	Visuals any
 }
 

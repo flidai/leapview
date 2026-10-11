@@ -21,6 +21,12 @@ product policy. Generation ordering, coalescing, tracing, signal history, and
 inspector APIs are outside the framework. Do not add new Datastar capabilities
 merely because Datastar provides them.
 
+`SignalStream.PatchIfMissing` initializes client-owned defaults through the
+update stream without overwriting an active conversation or unsent draft when
+the stream reconnects. Callers keep these defaults separate from server-owned
+state, which continues to use ordinary `Patch` calls. Broker forwarding always
+uses ordinary patches so committed changes still replace existing state.
+
 The broker never blocks publishers or silently drops an individual patch. Each
 subscription has a configurable pending limit (256 by default); reaching it
 closes that slow subscription so the browser reconnects and rebuilds from

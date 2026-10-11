@@ -189,7 +189,13 @@ func dashboardChatSignal(state agentmodule.ChatSignal) dashboardmodule.ChatSigna
 }
 
 func dataExplorerAgentBootstrap(state agentmodule.ChatViewState) projecthttp.DataExplorerAgentBootstrap {
-	return projecthttp.DataExplorerAgentBootstrap{Agent: agentmodule.ChatSignalPatch(state)["agent"], Visuals: state.Visuals}
+	return projecthttp.DataExplorerAgentBootstrap{
+		Agent: agentmodule.ChatSignalPatch(state)["agent"], Visuals: state.Visuals,
+		Refresh: map[string]any{
+			"conversations": state.Agent.Conversations,
+			"status":        map[string]any{"enabled": state.Agent.Status.Enabled},
+		},
+	}
 }
 
 func dataExplorerAgentCommands(module *agentmodule.Module) projecthttp.DataExplorerAgentCommandBindings {

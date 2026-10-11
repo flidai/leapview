@@ -990,6 +990,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
 	var dataExplorerBootstrapCommand *projectsignals.DataExplorerCommand
+	var dataExplorerAgentDefaults pagestream.SignalPatch
 	switch route {
 	case "catalog":
 		catalog, options, err := h.dashboardCatalogPage(r, r.URL.Query().Get("q"))
@@ -1011,7 +1012,9 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
 				Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
 			}
-			patch = projectui.DataExplorerBootstrapSignalsWithAgentAndSavedExplorations(h.navigationCatalog(r), page, explorer, h.dataExplorerAgentBootstrap(r), savedState, h.layout(r))
+			agent := h.dataExplorerAgentBootstrap(r)
+			patch = projectui.DataExplorerBootstrapSignalsWithAgentAndSavedExplorations(h.navigationCatalog(r), page, explorer, agent, savedState, h.layout(r))
+			dataExplorerAgentDefaults = dataExplorerAgentBootstrapDefaults(patch, agent, projectui.DataExplorerAgentContext(page, explorer))
 		} else if surface == "asset" {
 			if assetPatch, ok := h.assetBootstrap(w, r); ok {
 				patch = assetPatch
@@ -1073,7 +1076,10 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}
 		var err error
 		if current {
-			err = stream.Patch(pagestream.SignalPatch(patch))
+			err = stream.PatchIfMissing(dataExplorerAgentDefaults)
+			if err == nil {
+				err = stream.Patch(pagestream.SignalPatch(patch))
+			}
 		}
 		if release != nil {
 			release()

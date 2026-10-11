@@ -134,6 +134,22 @@ func TestDataExplorerAgentAdapterPreservesExplicitStatusResetsAndCommandScope(t 
 	if status["enabled"] != true || status["running"] != false {
 		t.Fatalf("agent status lost: %s", raw)
 	}
+	refreshJSON, err := json.Marshal(projected.Refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refresh map[string]any
+	if err := json.Unmarshal(refreshJSON, &refresh); err != nil {
+		t.Fatal(err)
+	}
+	refreshStatus, ok := refresh["status"].(map[string]any)
+	if len(refresh) != 2 || len(refreshStatus) != 1 || !ok || refreshStatus["enabled"] != true {
+		t.Fatalf("reconnect refresh can replace active chat state: %s", refreshJSON)
+	}
+	if _, exists := refresh["conversations"]; !exists {
+		t.Fatalf("reconnect must refresh conversation history: %s", refreshJSON)
+	}
+
 	bindings := dataExplorerAgentCommands(&agentmodule.Module{})
 	if bindings.CreateConversation.OperationID() != "createAgentConversation" || bindings.CreateRun.OperationID() != "createAgentRun" || bindings.CancelRun.OperationID() != "cancelAgentRun" {
 		t.Fatalf("agent command contract mismatch: %#v", bindings)

@@ -5,6 +5,7 @@ import (
 
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectui "github.com/flidai/leapview/internal/project/ui"
+	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
@@ -14,10 +15,32 @@ type DataExplorerAgentBootstrap = projectui.DataExplorerAgentBootstrap
 type DataExplorerAgentCommandBindings = projectui.DataExplorerAgentCommandBindings
 
 func (h *BrowserHandler) dataExplorerAgentBootstrap(r *stdhttp.Request) projectui.DataExplorerAgentBootstrap {
-	if h.AgentBootstrap == nil {
-		return projectui.DataExplorerAgentBootstrap{}
+	var bootstrap projectui.DataExplorerAgentBootstrap
+	if h.AgentBootstrap != nil {
+		bootstrap = h.AgentBootstrap(r)
 	}
-	return h.AgentBootstrap(r)
+	if bootstrap.Agent == nil && bootstrap.Refresh == nil {
+		bootstrap.Refresh = map[string]any{
+			"conversations": []any{}, "status": map[string]any{"enabled": false},
+		}
+	}
+	return bootstrap
+}
+
+// Split tab-owned chat defaults from the authoritative Explorer refresh.
+// Reconnects retain selection, draft, run controls, visuals and references.
+func dataExplorerAgentBootstrapDefaults(patch map[string]any, agent DataExplorerAgentBootstrap, context projectsignals.AgentContextSignal) pagestream.SignalPatch {
+	defaults := pagestream.SignalPatch{}
+	for _, key := range []string{"agent", "agentVisuals", "agentReferenceSearch"} {
+		defaults[key] = patch[key]
+		delete(patch, key)
+	}
+	defaults["agentContext"] = map[string]any{"references": context.References}
+	patch["agentContext"] = projectui.DataExplorerAgentContextRefreshPayload(context)
+	if agent.Refresh != nil {
+		patch["agent"] = agent.Refresh
+	}
+	return defaults
 }
 
 type dataExplorerAgentSubscription struct {
