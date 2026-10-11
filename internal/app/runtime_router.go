@@ -857,6 +857,23 @@ func buildApplicationSurfaces(
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
+		AgentBootstrap: func(r *http.Request) projecthttp.DataExplorerAgentBootstrap {
+			if routes.agentModule == nil {
+				return projecthttp.DataExplorerAgentBootstrap{}
+			}
+			return dataExplorerAgentBootstrap(routes.agentModule.DashboardBootstrap(r))
+		},
+		AgentCommands: dataExplorerAgentCommands(routes.agentModule),
+		AgentSubscribe: func(r *http.Request, clientID string) (<-chan pagestream.SignalPatch, func(), error) {
+			if routes.agentModule == nil || runtime.broker == nil {
+				return nil, nil, nil
+			}
+			scope := routes.agentModule.HTTP().Scope(r)
+			if scope.PrincipalID == "" || !routes.agentModule.ChromeSignal(r).Status.Enabled {
+				return nil, nil, nil
+			}
+			return runtime.broker.Subscribe(agentmodule.ChatStreamID(scope, clientID))
+		},
 		ClientIDs: policy.clientIDs,
 		Graph:     capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		LegacySavedExplorations: capabilities.SavedExplorations,

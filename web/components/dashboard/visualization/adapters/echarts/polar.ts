@@ -135,6 +135,7 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
   return {
     dataset: undefined, ...polarLegendDecoration(spec.presentation.legend, context, spec.series ? spec.presentation : undefined, seriesValues),
     radar: {
+      __lv_axis_name_policy: { density: spec.presentation.labelPolicy.density, minimumSpacing: spec.presentation.labelPolicy.minimumSpacing },
       indicator: categories.map((category, index) => ({ name: category.label, max: maxima[index], color: context.colors.muted })),
       axisLine: { lineStyle: { color: context.colors.grid } },
       splitLine: { lineStyle: { color: context.colors.grid } },

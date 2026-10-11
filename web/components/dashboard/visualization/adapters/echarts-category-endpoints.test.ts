@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import * as echarts from 'echarts'
 
 import { defaultRendererContext } from '../host-controller'
-import { echartsOption } from './echarts'
+import { echartsOption, responsiveEChartsPatch } from './echarts'
 import { cartesianFixture } from './echarts-test-fixtures'
 
 const months = Array.from({ length: 26 }, (_, index) => {
@@ -108,5 +108,82 @@ test('category-series line and area charts contain horizontal endpoint labels', 
     ])
     const option = echartsOption(envelope, defaultRendererContext) as any
     expect(option.xAxis.axisLabel).toMatchObject({ alignMinLabel: 'left', alignMaxLabel: 'right' })
+  }
+})
+
+
+test('boxplot rotated category labels stay inside compact, card, and expanded chart bounds', () => {
+  const categories = [
+    'books_general_interest', 'books_technical', 'cds_dvds_musicals', 'books_imported',
+    'audio', 'bed_bath_table', 'baby', 'auto', 'art', 'air_conditioning',
+    'agro_industry_and_commerce', 'home_appliances',
+  ]
+  for (const dataZoom of [false, true]) {
+    const envelope = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
+    envelope.spec.presentation.dataZoom = dataZoom
+    envelope.dataState.datasets[0].rows = categories.map((category, index) => [
+      category, index, index + 1, index + 2, index + 3, index + 4,
+    ])
+    for (const [width, height] of [[364, 322], [432, 457], [800, 500]]) {
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+      try {
+        chart.setOption({ ...echartsOption(envelope, defaultRendererContext), animation: false })
+        chart.renderToSVGString()
+        const axis = (chart as any).getModel().getComponent('xAxis').axis
+        const labels = axis.axisBuilder.group.children()[0].children()
+          .filter((label: any) => label.type === 'text' && label.ignore !== true)
+        expect(labels.length).toBeGreaterThan(0)
+        for (const label of labels) {
+          const bounds = label.getBoundingRect().clone()
+          const transform = label.getComputedTransform()
+          if (transform) bounds.applyTransform(transform)
+          const detail = `${label.style.text} at ${width}x${height}, data zoom ${dataZoom}`
+          expect(bounds.x, detail).toBeGreaterThanOrEqual(0)
+          expect(bounds.x + bounds.width, detail).toBeLessThanOrEqual(width)
+          expect(bounds.y + bounds.height, detail).toBeLessThanOrEqual(height)
+        }
+        expect(envelope.dataState.datasets[0].rows.map((row: unknown[]) => row[0])).toEqual(categories)
+      } finally {
+        chart.dispose()
+      }
+    }
+  }
+})
+
+
+test('long boxplot categories retain usable plot space without clipping their display labels', () => {
+  const categories = Array.from({ length: 8 }, (_, index) =>
+    `Region ${index + 1} — enterprise customers and strategic accounts with an unusually long name`)
+  for (const dataZoom of [false, true]) {
+    const envelope = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
+    envelope.spec.presentation.dataZoom = dataZoom
+    envelope.dataState.datasets[0].rows = categories.map((category, index) =>
+      [category, index, index + 1, index + 2, index + 3, index + 4])
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    for (const [width, height] of [[351, 384], [432, 457], [800, 500], [1416, 384]]) {
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+      try {
+        chart.setOption({ ...option, ...responsiveEChartsPatch(option, width!, height!), animation: false })
+        chart.renderToSVGString()
+        const model = (chart as any).getModel()
+        const plot = model.getComponent('grid').coordinateSystem.getRect()
+        expect(plot.width).toBeGreaterThan(width! * 0.3)
+        expect(plot.height).toBeGreaterThan(height! * 0.3)
+        const labels = model.getComponent('xAxis').axis.axisBuilder.group.children()[0].children()
+          .filter((label: any) => label.type === 'text' && !label.ignore)
+        expect(labels.length).toBeGreaterThan(0)
+        for (const label of labels) {
+          const bounds = label.getBoundingRect().clone()
+          const transform = label.getComputedTransform()
+          if (transform) bounds.applyTransform(transform)
+          expect(bounds.x).toBeGreaterThanOrEqual(-0.001)
+          expect(bounds.x + bounds.width).toBeLessThanOrEqual(width! + 0.001)
+          expect(bounds.y + bounds.height).toBeLessThanOrEqual(height! + 0.001)
+        }
+        expect(model.getComponent('xAxis').get('axisLabel.rotate')).toBe(option.xAxis.axisLabel.rotate)
+        expect(option.xAxis.data).toEqual(categories)
+        expect(option.series[0].data.map((item: any) => item.name)).toEqual(categories)
+      } finally { chart.dispose() }
+    }
   }
 })

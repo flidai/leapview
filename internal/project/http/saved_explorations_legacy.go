@@ -181,16 +181,19 @@ func savedExplorationCommandFromURL(value string) (projectsignals.DataExplorerCo
 	if err != nil {
 		return projectsignals.DataExplorerCommand{}, fmt.Errorf("explorerUrl query is invalid")
 	}
-	allowed := map[string]bool{"v": true, "mode": true, "semanticModel": true, "dataset": true, "dimension": true, "metric": true, "filter": true, "sort": true, "time": true, "limit": true}
+	allowed := map[string]bool{"v": true, "mode": true, "state": true, "semanticModel": true, "dataset": true, "dimension": true, "metric": true, "filter": true, "sort": true, "time": true, "limit": true}
 	for key := range values {
 		if !allowed[key] {
 			return projectsignals.DataExplorerCommand{}, fmt.Errorf("unsupported explorerUrl parameter %q", key)
 		}
 	}
-	for _, key := range []string{"v", "mode", "semanticModel", "dataset", "time", "limit"} {
+	for _, key := range []string{"v", "mode", "state", "semanticModel", "dataset", "time", "limit"} {
 		if len(values[key]) > 1 {
 			return projectsignals.DataExplorerCommand{}, fmt.Errorf("explorerUrl parameter %q may be supplied once", key)
 		}
+	}
+	if _, present := values["state"]; present && strings.TrimSpace(values.Get("v")) != dataExploreCanonicalURLVersion {
+		return projectsignals.DataExplorerCommand{}, fmt.Errorf("explorerUrl state requires version 2")
 	}
 	if len(values["mode"]) != 1 || strings.TrimSpace(values.Get("mode")) != "explore" {
 		return projectsignals.DataExplorerCommand{}, fmt.Errorf("explorerUrl must select explore mode")

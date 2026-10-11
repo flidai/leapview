@@ -3,6 +3,7 @@ import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { ArrowLeft, ChevronRight, Code2, Columns3, Database, Filter, Play, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
+  ChatSignal,
   DataExploreCommand,
   DataExploreFieldSignal,
   DataExploreFilterSignal,
@@ -119,6 +120,11 @@ const emptyExplorer: DataExplorerSignal = {
 
 type ExplorerColumn = { key: string, label?: string }
 
+function filterInputValues(value: string, operator: string): string[] {
+  const values = operator === 'in' || operator === 'not_in' ? value.split(',') : [value]
+  return values.map((item) => item.trim()).filter(Boolean)
+}
+
 class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly dashboardAppend = new DashboardAppendController(this, () => this.requestUpdate())
   private readonly savedViewController = new SavedExplorationViewController(this, () => this.requestUpdate())
@@ -133,6 +139,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private filterSuggestionRequestSeq = 0
   @state() private optimisticExplore: DataExploreCommand | null = null
   @state() private agentDrawerOpen = false
+  @state() private agentCommandError = ''
+  private agentSubmission: {
+    conversationId: string
+    messageIds: Set<string>
+    runId: string
+    error: string
+    pending: boolean
+  } | null = null
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
   @state() private browseVisibleColumns: { objectKey: string; keys: string[] } | null = null
@@ -226,6 +240,21 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       grid-row: 1 / -1;
       grid-column: 2;
       min-height: 0;
+    }
+
+    lv-chat-drawer:not([open]) { display: none; }
+
+    /* Use the existing full-screen drawer mode when this container cannot
+       fit both a useful query surface and the 28rem agent pane. */
+    @container explorer (max-width: 900px) {
+      .route.agent-open { grid-template-columns: minmax(0, 1fr); }
+      lv-chat-drawer {
+        position: fixed;
+        inset: 0;
+        z-index: var(--zIndex-modal, 200);
+        width: 100%;
+        border-left: 0;
+      }
     }
 
     .header {
@@ -469,7 +498,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     .browse-layout.filters-open { --explorer-filter-width: 320px; }
     @media (max-width: 720px) {
       .browse-layout { position: relative; }
-      .browse-layout.filters-open .semantic-filter-dock { position: absolute; z-index: var(--zIndex-sticky, 50); inset: 0 0 0 auto; width: min(320px, 85vw); box-shadow: var(--lv-shadow-floating-sm); }
+      .browse-layout.filters-open .semantic-filter-dock { position: absolute; z-index: var(--zIndex-sticky, 50); inset: 0 0 0 auto; width: min(320px, 100%); box-shadow: var(--lv-shadow-floating-sm); }
     }
 
     lv-data-preview-table {
@@ -595,9 +624,22 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   `, dataExplorerResultStyles, dataExplorerResponsiveStyles]
 
   private readonly handleDatastarFetch = (event: Event) => {
+    if (!ownsBrowserCommandFetch(this, event)) return
+    if (this.agentSubmission?.pending) {
+      const agent = this.signal<ChatSignal | null>('agent', null)
+      if (this.agentTurnAccepted(agent)) {
+        this.clearAgentSubmission()
+      } else {
+        const failure = browserCommandFailure(event, 'Sending your message')
+        if (failure) {
+          this.agentSubmission.pending = false
+          this.agentCommandError = `${failure.message} Your draft was kept; you can edit it and try again.`
+        }
+      }
+    }
     const action = this.exploreTransportAction
     const lifecycleActive = ['running', 'pending', 'stopped', 'uncertain'].includes(this.exploreExecutionState) || action !== null
-    if (!lifecycleActive || !ownsBrowserCommandFetch(this, event)) return
+    if (!lifecycleActive) return
     // Datastar identifies the handler element, not which of its overlapping
     // commands failed. Keep the outcome deliberately unknown until a current
     // semantic status arrives.
@@ -620,11 +662,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (!this.embedded && window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
     if (!this.agentStateInitialized) {
       const stored = this.agentStateController.initialize()
-      this.agentDrawerOpen = stored.open
+      this.agentDrawerOpen = stored.open || new URL(window.location.href).searchParams.get('chat') === 'expanded'
+      this.agentStateController.setOpen(this.agentDrawerOpen)
       this.restoredAgentConversationId = stored.conversationId
       this.agentStateInitialized = true
     }
     if (typeof document !== 'undefined') document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+    window.addEventListener('popstate', this.handleAgentLocation)
     document.addEventListener('pointerdown', this.savedViewController.handleOutsidePointer)
     document.addEventListener('pointerdown', this.handleSemanticFieldsOutsidePointer)
     super.connectedCallback()
@@ -635,12 +679,15 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     window.clearTimeout(this.filterSuggestionTimer)
     this.browserResizeCleanup?.()
     if (typeof document !== 'undefined') document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    window.removeEventListener('popstate', this.handleAgentLocation)
     document.removeEventListener('pointerdown', this.savedViewController.handleOutsidePointer)
     document.removeEventListener('pointerdown', this.handleSemanticFieldsOutsidePointer)
     super.disconnectedCallback()
   }
 
   updated(): void {
+    const agent = this.signal<ChatSignal | null>('agent', null)
+    this.toggleAttribute('data-agent-open', this.agentDrawerOpen && Boolean(agent?.status.enabled))
     const observedExploreRequestSeq = this.dataExplorer.explore?.command?.requestSeq ?? 0
     if (observedExploreRequestSeq > this.latestExploreRequestSeq) this.latestExploreRequestSeq = observedExploreRequestSeq
     const exploreCommand = this.dataExplorer.explore?.command
@@ -679,7 +726,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.optimisticExplore = null
       if (!this.embedded) this.replaceDataExplorerURL(this.dataExplorer.command)
     }
-    const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
+    if (this.agentSubmission && (this.agentTurnAccepted(agent)
+      || Boolean(agent?.status.error && agent.status.error !== this.agentSubmission.error))) this.clearAgentSubmission()
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
     if (activeConversationId) {
       this.restoredAgentConversationId = activeConversationId
@@ -854,8 +902,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 : loading ? 'Loading Data Explorer…' : 'No data objects are available.'}</p>`}
           </main>
         </div>
-        ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
-          open
+        ${agentEnabled ? html`<lv-chat-drawer
+          .open=${this.agentDrawerOpen}
+          .commandError=${this.agentCommandError}
+          @lv-chat-submit=${this.handleAgentSubmit}
           .suggestions=${dataExplorerAgentSuggestions(explorer, this.optimisticExplore ?? explorer.explore.command, this.page?.context)}
           @lv-chat-drawer-close=${() => this.setAgentDrawerOpen(false)}
           @lv-chat-new=${this.handleAgentNew}
@@ -1036,9 +1086,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private applyExploreFilter(command: DataExploreCommand, fields: DataExploreFieldSignal[]) {
     if (!this.filterField) return
     const needsValue = this.filterOperator !== 'is_null' && this.filterOperator !== 'is_not_null'
-    const values = needsValue
-      ? this.filterValue.split(',').map((value) => value.trim()).filter(Boolean)
-      : []
+    const values = needsValue ? filterInputValues(this.filterValue, this.filterOperator) : []
     if (needsValue && !values.length) return
     const field = fields.find((candidate) => candidate.id === this.filterField)
     const spec = explorationSpecFor(command)
@@ -1062,7 +1110,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private applyBrowseFilter(command: DataExploreCommand, fields: DataExploreFieldSignal[]) {
     if (!this.filterField) return
     const needsValue = this.filterOperator !== 'is_null' && this.filterOperator !== 'is_not_null'
-    const values = needsValue ? this.filterValue.split(',').map((value) => value.trim()).filter(Boolean) : []
+    const values = needsValue ? filterInputValues(this.filterValue, this.filterOperator) : []
     if (needsValue && !values.length) return
     const field = fields.find((candidate) => candidate.id === this.filterField)
     if (!field || field.kind !== 'dimension' || field.compatible === false) return
@@ -1174,17 +1222,61 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({ action: 'stop', mode: 'explore', runId: uncertain ? undefined : this.clientState.runID(), explore: stopCommand })
   }
 
+  private handleAgentSubmit = (event: CustomEvent<{ input: string }>) => {
+    if (!event.detail?.input?.trim()) return
+    const agent = this.signal<ChatSignal | null>('agent', null)
+    this.agentCommandError = ''
+    this.agentSubmission = {
+      conversationId: agent?.activeConversationId?.trim() ?? '',
+      messageIds: new Set((agent?.transcript ?? []).map(item => item.id?.trim() ?? '').filter(Boolean)),
+      runId: agent?.status.runId ?? '',
+      error: agent?.status.error ?? '',
+      pending: true,
+    }
+  }
+
+  private agentTurnAccepted(agent: ChatSignal | null): boolean {
+    const submission = this.agentSubmission
+    if (!agent || !submission) return false
+    return (agent.activeConversationId?.trim() ?? '') !== submission.conversationId
+      || Boolean(agent.status.running)
+      || Boolean(agent.status.runId && agent.status.runId !== submission.runId)
+      || (agent.transcript ?? []).some(item => (item.kind === 'user' || item.kind === 'assistant')
+        && Boolean(item.id?.trim()) && !submission.messageIds.has(item.id.trim()))
+  }
+
+  private clearAgentSubmission(): void {
+    this.agentSubmission = null
+    this.agentCommandError = ''
+  }
+
   private handleAgentNew = () => {
+    this.clearAgentSubmission()
     this.restoredAgentConversationId = ''
     this.agentRestoreDispatched = true
     this.agentStateController.newConversation()
     this.persistAgentState()
   }
 
+  private handleAgentLocation = (): void => {
+    if (new URL(window.location.href).searchParams.get('chat') === 'expanded') this.setAgentDrawerOpen(true)
+  }
+
   private setAgentDrawerOpen(open: boolean): void {
     this.agentDrawerOpen = open
     this.agentStateController.setOpen(open)
     this.persistAgentState()
+    if (!open) void this.updateComplete.then(async () => {
+      await this.renderRoot.querySelector<LitElement>('lv-chat-drawer')?.updateComplete
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      if (!this.isConnected || this.agentDrawerOpen || !this.signal<ChatSignal | null>('agent', null)?.status.enabled) return
+      let active = this.ownerDocument.activeElement
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+      if (active === this.ownerDocument.body || active === this.ownerDocument.documentElement
+        || active instanceof HTMLElement && active.getClientRects().length === 0) {
+        this.renderRoot.querySelector<HTMLButtonElement>('.ask-button')?.focus()
+      }
+    })
   }
 
   private beginBrowserResize = (event: PointerEvent): void => {

@@ -34,7 +34,9 @@ func ChatPage(projectID, csrfToken, view string, state ChatViewState, providers 
 			g.Attr("view", view),
 			g.Attr("data-indicator", "agentTurnPending"),
 			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(agentgen.GenUIActionCancelAgentRun(), "/chats/stop", "agent", "agentContext")),
-			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.surface = evt.detail.surface || 'chat'; $agentContext.references = evt.detail.references; "+turnCommand),
+			// Clear only on explicit submit so a fresh rejection can repeat the
+			// previous error while queued commands await their /updates acceptance.
+			g.Attr("data-on:lv-chat-submit", "$agent.status.error = ''; $agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.surface = evt.detail.surface || 'chat'; $agentContext.references = evt.detail.references; "+turnCommand),
 		),
 	})
 }

@@ -2,15 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property } from 'lit/decorators.js'
 import { X } from 'lucide'
 import { lucideIcon } from './lucide-icons'
-
-const focusableSelector = [
-  'a[href]:not([tabindex="-1"])',
-  'button:not([disabled]):not([tabindex="-1"])',
-  'input:not([disabled]):not([tabindex="-1"])',
-  'select:not([disabled]):not([tabindex="-1"])',
-  'textarea:not([disabled]):not([tabindex="-1"])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(', ')
+import { composedFocusableElements, wrapModalTab } from './modal-focus'
 
 class LeapViewDrawer extends LitElement {
   @property({ type: Boolean, reflect: true }) open = false
@@ -187,7 +179,7 @@ class LeapViewDrawer extends LitElement {
   focusFirst(): void {
     window.setTimeout(() => {
       const close = this.renderRoot.querySelector<HTMLElement>('.close')
-      const focusable = this.focusableElements()
+      const focusable = composedFocusableElements(this.renderRoot)
       // Keep initial focus on content, independently of the native Tab order.
       const initial = focusable.find(element => element !== close) ?? close
       initial?.focus()
@@ -220,41 +212,8 @@ class LeapViewDrawer extends LitElement {
       return
     }
     if (event.key !== 'Tab' || !this.modal || event.defaultPrevented) return
-    const focusable = this.focusableElements()
-    if (focusable.length === 0) return
-    // Only wrap at the composed tree's edges. Nested components retain their
-    // own keyboard behavior between them, including open popovers.
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    const active = event.composedPath()[0]
-    if (event.shiftKey && active === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
-
-  private focusableElements(): HTMLElement[] {
-    const focusable: HTMLElement[] = []
-    const visit = (element: Element): void => {
-      const style = getComputedStyle(element)
-      if (element.matches('[hidden], [inert]') || style.display === 'none') return
-      if (element instanceof HTMLElement && element.matches(focusableSelector)
-        && element.tabIndex >= 0 && !element.matches(':disabled')
-        && style.visibility === 'visible' && element.getClientRects().length > 0) {
-        focusable.push(element)
-      }
-      // Traverse rendered slots and open shadow roots in place, rather than
-      // grouping light-DOM controls separately from their nested controls.
-      const children = element instanceof HTMLSlotElement
-        ? element.assignedElements({ flatten: true })
-        : Array.from((element.shadowRoot ?? element).children)
-      children.forEach(visit)
-    }
-    Array.from(this.renderRoot.children).forEach(visit)
-    return focusable
+    // Keep the existing composed-tree edge wrapping for nested controls.
+    wrapModalTab(event, this.renderRoot)
   }
 }
 

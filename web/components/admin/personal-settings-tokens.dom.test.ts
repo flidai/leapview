@@ -1006,3 +1006,54 @@ test('token creation opens directly with the scoped permission picker', async ()
     await page.close()
   }
 })
+
+test('token permission heading and count stay clear of the action on narrow pages', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    // Match the production font and control tokens omitted by this isolated fixture.
+    const font = Buffer.from(await Bun.file('static/files/inter-latin-wght-normal.woff2').arrayBuffer()).toString('base64')
+    await page.addStyleTag({ content: `@font-face { font-family: 'Inter Variable'; font-style: normal; font-weight: 100 900; src: url(data:font/woff2;base64,${font}) format('woff2'); } body { --fontStack-system: 'Inter Variable', sans-serif; --lv-type-body: 400 14px/1.5 'Inter Variable', sans-serif; --lv-type-body-compact: 400 14px/1.25 'Inter Variable', sans-serif; --lv-type-caption: 400 12px/1.25 'Inter Variable', sans-serif; --base-text-weight-semibold: 600; --control-small-paddingInline-normal: 12px; --control-small-size: 28px; }` })
+    await page.evaluate(() => document.fonts.load('600 14px "Inter Variable"'))
+    await page.waitForFunction(() => customElements.get('lv-personal-settings'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { kind: 'admin', title: 'API tokens', active: 'api-token-new', headerTitle: 'New personal access token', headerDetail: '' }, personalSettings: {
+        active: 'api-tokens',
+        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
+        security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
+        tokens: { items: [], permissionOptionsReady: true, capabilities: [] },
+      } })
+      const admin = document.querySelector('lv-admin-page') as any
+      await admin.updateComplete
+      await admin.shadowRoot.querySelector('lv-personal-settings').updateComplete
+    })
+    const action = page.getByRole('button', { name: 'Add permissions', exact: true })
+    for (const width of [1440, 1280, 768, 390, 375]) {
+      await page.setViewportSize({ width, height: 900 })
+      // Reproduce the space owned by the app sidebar or its mobile toggle rail.
+      await page.evaluate(width => { document.body.style.paddingLeft = width >= 640 ? '248px' : '44px' }, width)
+      await action.scrollIntoViewIfNeeded()
+      const geometry = await page.locator('lv-personal-settings').evaluate((personal: any) => {
+        const root = personal.shadowRoot as ShadowRoot
+        const header = root.querySelector('.permissions-header')!.getBoundingClientRect()
+        const title = root.querySelector('.permissions-title')!.getBoundingClientRect()
+        const count = root.querySelector('.permissions-title .count')!.getBoundingClientRect()
+        const button = root.querySelector('.permission-trigger')!.getBoundingClientRect()
+        const intersects = (a: DOMRect, b: DOMRect) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+        return { overlap: intersects(count, button) || intersects(title, button), countInside: count.left >= header.left && count.right <= header.right, actionInside: button.left >= header.left && button.right <= header.right, sameRow: count.top < button.bottom && count.bottom > button.top, countText: root.querySelector('.permissions-title .count')!.textContent?.trim() }
+      })
+      expect(geometry.overlap).toBe(false)
+      expect(geometry.countInside).toBe(true)
+      expect(geometry.actionInside).toBe(true)
+      expect(geometry.countText).toBe('0')
+      if (width >= 1280) expect(geometry.sameRow).toBe(true)
+      await action.click()
+      expect(await action.getAttribute('aria-expanded')).toBe('true')
+      await page.keyboard.press('Escape')
+      expect(await action.getAttribute('aria-expanded')).toBe('false')
+    }
+  } finally {
+    await page.close()
+  }
+})

@@ -8,6 +8,7 @@ import type {
   PersonalTokenSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { toggleAnchoredPopover } from '../shared/anchored-popover'
 import { browserCommandFailure } from '../shared/command-failure'
 import { emptyStateStyles, renderEmptyState } from '../shared/empty-state'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -172,6 +173,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   override disconnectedCallback(): void {
+    this.closeThemeMenu()
     document.removeEventListener('pointerdown', this.handleDocumentPointerDown)
     document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
     window.removeEventListener('keydown', this.handleWindowKeydown)
@@ -343,7 +345,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           ${lucideIcon(ChevronDown, { size: 16, strokeWidth: 2 })}
         </button>
         ${this.themeMenuOpen ? html`
-          <div id="personal-theme-listbox" class="theme-menu" role="listbox" aria-labelledby="personal-theme-label" @keydown=${this.handleThemeOptionKeydown}>
+          <div id="personal-theme-listbox" class="theme-menu" popover="auto" role="listbox" tabindex="0" aria-labelledby="personal-theme-label" @toggle=${this.handleThemeMenuToggle} @keydown=${this.handleThemeOptionKeydown}>
             ${themeGroups.map((group) => html`
               <div class="theme-group" role="group" aria-label=${group}>
                 <div class="theme-group-label" aria-hidden="true">${group}</div>
@@ -680,8 +682,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.closeThemeMenu(true)
   }
   private toggleThemeMenu = (): void => {
-    this.themeMenuOpen = !this.themeMenuOpen
-    if (!this.themeMenuOpen) return
+    if (this.themeMenuOpen) { this.closeThemeMenu(); return }
+    this.themeMenuOpen = true
     this.closeAvatarMenu()
     this.closePermissionMenu()
     this.closeExpirationMenu()
@@ -698,10 +700,18 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private focusSelectedThemeOption = async (): Promise<void> => {
     await this.updateComplete
+    const menu = this.renderRoot.querySelector<HTMLElement>('.theme-menu')
+    if (!this.themeMenuOpen || !menu || !this.themeTrigger) return
+    if (!menu.matches(':popover-open')) toggleAnchoredPopover(this.themeTrigger, menu, { minWidth: 240, maxWidth: 352, maxHeight: 512, gap: 6, align: 'end' })
     const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.theme-option'))
     const selected = options.find((option) => option.getAttribute('aria-selected') === 'true')
     const focusTarget = selected ?? options[0]
     focusTarget?.focus()
+  }
+  private handleThemeMenuToggle = (event: Event): void => {
+    const menu = event.currentTarget as HTMLElement
+    if (menu !== this.renderRoot.querySelector('.theme-menu')) return
+    if ((event as ToggleEvent).newState === 'closed' && !menu.matches(':popover-open')) this.closeThemeMenu()
   }
   private handleThemeOptionKeydown = (event: KeyboardEvent): void => {
     const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.theme-option'))
@@ -1020,6 +1030,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private closeThemeMenu(returnFocus = false): void {
     if (!this.themeMenuOpen) return
+    const menu = this.renderRoot.querySelector<HTMLElement>('.theme-menu')
+    if (menu?.matches(':popover-open')) menu.hidePopover()
     this.themeMenuOpen = false
     if (returnFocus) void this.updateComplete.then(() => this.themeTrigger?.focus())
   }

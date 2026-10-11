@@ -362,7 +362,6 @@ func (h *Handler) ChatReferenceSearch(w nethttp.ResponseWriter, r *nethttp.Reque
 
 func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	scope := h.chatScope(r)
-	signal, view := h.chatBootstrapSignal(r, scope)
 	projectID := ""
 	clientID, ok := h.options.ClientIDs.Require(w, r)
 	if !ok {
@@ -372,15 +371,29 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if conversationID := strings.TrimSpace(r.URL.Query().Get("conversation")); conversationID != "" {
 		streamID = chatConversationStreamID(scope, clientID, conversationID)
 	}
+	var wake <-chan pagestream.SignalPatch
+	if h.options.Service != nil && h.options.Service.Enabled() && scope.PrincipalID != "" && h.options.Broker != nil {
+		// Subscribe before reading the bootstrap snapshot so a fast worker's
+		// terminal patch cannot disappear between that read and forwarding.
+		var unsubscribe func()
+		var err error
+		wake, unsubscribe, err = h.options.Broker.Subscribe(streamID)
+		if err != nil {
+			nethttp.Error(w, "chat updates are unavailable", nethttp.StatusServiceUnavailable)
+			return
+		}
+		defer unsubscribe()
+	}
+	signal, view := h.chatBootstrapSignal(r, scope)
 	updates := pagestream.NewSignalStream(w, r)
 	if err := updates.Patch(ui.ChatBootstrapSignals(projectID, view, signal, h.layout(r))); err != nil {
 		return
 	}
-	if h.options.Service == nil || !h.options.Service.Enabled() || scope.PrincipalID == "" || h.options.Broker == nil {
+	if wake == nil || !h.options.Service.Enabled() {
 		updates.Wait(r.Context())
 		return
 	}
-	_ = updates.Forward(r.Context(), h.options.Broker, streamID)
+	_ = updates.ForwardUpdates(r.Context(), wake)
 }
 
 func (h *Handler) renderChat(w nethttp.ResponseWriter, r *nethttp.Request, view string, signal ui.ChatViewState) {

@@ -367,7 +367,9 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
     && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
   const titlelessLineArea = (spec.mark === 'line' || spec.mark === 'area')
     && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
-  const useOuterBounds = titlelessHorizontalBar || titlelessLineArea
+  // Rotated boxplot categories need horizontal as well as vertical label
+  // space; containLabel only reserves space perpendicular to each axis.
+  const useOuterBounds = titlelessHorizontalBar || titlelessLineArea || spec.mark === 'boxplot'
   const outsideHorizontalLabels = spec.mark === 'bar' && cartesianIsHorizontal(spec)
     && ['outside', 'right'].includes(spec.presentation.labelPosition ?? '')
   return {

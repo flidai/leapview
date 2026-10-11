@@ -34,7 +34,7 @@ func NewSignalStream(w http.ResponseWriter, r *http.Request) SignalStream {
 }
 
 // Redirect emits a Datastar redirect response for short-lived command handlers.
-// Long-lived update streams should use SignalStream and Patch only.
+// Long-lived update streams should use SignalStream signal patches only.
 func Redirect(w http.ResponseWriter, r *http.Request, location string) error {
 	return datastar.NewSSE(w, r).Redirect(location)
 }
@@ -46,16 +46,22 @@ func PatchResponse(w http.ResponseWriter, r *http.Request, patch SignalPatch) er
 
 // Patch emits one Datastar patch-signals event. Empty patches are ignored.
 func (s SignalStream) Patch(patch SignalPatch) error {
-	return s.writeForwarded(patch)
+	return s.writePatch(patch, false)
 }
 
-func (s SignalStream) writeForwarded(patch SignalPatch) error {
+// PatchIfMissing initializes client-owned defaults without replacing existing
+// signals when an update stream reconnects. Empty patches are ignored.
+func (s SignalStream) PatchIfMissing(patch SignalPatch) error {
+	return s.writePatch(patch, true)
+}
+
+func (s SignalStream) writePatch(patch SignalPatch, onlyIfMissing bool) error {
 	if len(patch) == 0 {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sse.MarshalAndPatchSignals(patch)
+	return s.sse.MarshalAndPatchSignals(patch, datastar.WithOnlyIfMissing(onlyIfMissing))
 }
 
 func (s SignalStream) keepAlive() error {
@@ -131,7 +137,7 @@ func (s SignalStream) forwardUpdates(ctx context.Context, updates <-chan SignalP
 			if !ok {
 				return nil
 			}
-			if err := s.writeForwarded(patch); err != nil {
+			if err := s.writePatch(patch, false); err != nil {
 				return err
 			}
 		}

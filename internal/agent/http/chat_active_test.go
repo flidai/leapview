@@ -240,6 +240,77 @@ func TestChatRestoreStreamsOwnedStateAndClearsUnauthorizedState(t *testing.T) {
 	}
 }
 
+type bootstrapChatRecorder struct {
+	*activeChatRecorder
+	onFlush func()
+	once    sync.Once
+}
+
+func (r *bootstrapChatRecorder) Flush() {
+	r.activeChatRecorder.Flush()
+	r.once.Do(r.onFlush)
+}
+
+func TestChatUpdatesRetainsTerminalPatchPublishedDuringBootstrap(t *testing.T) {
+	fixture := newActiveChatFixture(t)
+	scope := agent.Scope{PrincipalID: fixture.owner}
+	conversation, err := fixture.service.CreateConversation(t.Context(), scope, "Bootstrap race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"read", "flush"} {
+		t.Run(phase, func(t *testing.T) {
+			broker := pagestream.NewBroker()
+			terminal := "completed-during-bootstrap-" + phase
+			publish := func() {
+				broker.Publish(chatConversationStreamID(scope, "bootstrap-client", conversation.ID), pagestream.SignalPatch{
+					"agent": map[string]any{
+						"status":     map[string]any{"running": false},
+						"transcript": []map[string]any{{"kind": "assistant", "text": terminal}},
+					},
+				})
+			}
+			handler := NewHandler(Options{
+				Service: fixture.service, Broker: broker, CurrentPrincipal: fixture.ownerRequest,
+				ChatSignalWith: func(context.Context, agent.Scope, string, []agent.ChatTranscriptItem, agent.ChatArtifactSignals, string, bool) ui.ChatViewState {
+					// The bootstrap snapshot was read just before the worker completed.
+					state := ui.ChatViewState{Agent: ui.ChatSignal{ActiveConversationID: conversation.ID, Status: ui.ChatStatus{Enabled: true, Running: true}}}
+					if phase == "read" {
+						publish()
+					}
+					return state
+				},
+			})
+			requestCtx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			request := httptest.NewRequestWithContext(requestCtx, http.MethodGet, "/updates?route=chat&conversation="+conversation.ID, nil)
+			request.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "bootstrap-client"})
+			response := &bootstrapChatRecorder{activeChatRecorder: newActiveChatRecorder(), onFlush: func() {
+				if phase == "flush" {
+					publish()
+				}
+			}}
+			done := make(chan struct{})
+			go func() { defer close(done); handler.ChatUpdates(response, request) }()
+			deadline := time.Now().Add(time.Second)
+			for !strings.Contains(response.body(), terminal) && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			cancel()
+			<-done
+			body := response.body()
+			if !strings.Contains(body, terminal) {
+				t.Fatalf("terminal patch published during bootstrap %s was lost: %s", phase, body)
+			}
+			initialRunning := strings.Index(body, `"running":true`)
+			settledRunning := strings.Index(body, `"running":false`)
+			if initialRunning < 0 || settledRunning < 0 || initialRunning > settledRunning || initialRunning > strings.Index(body, terminal) {
+				t.Fatalf("want running bootstrap followed by settled terminal patch: %s", body)
+			}
+		})
+	}
+}
+
 func TestChatUpdatesForwardsDatastarConversationPatches(t *testing.T) {
 	fixture := newActiveChatFixture(t)
 	liveConversation, err := fixture.service.CreateConversation(t.Context(), agent.Scope{PrincipalID: fixture.owner}, "Live title")

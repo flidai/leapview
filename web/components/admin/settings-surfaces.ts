@@ -1021,7 +1021,13 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       this.secretExpirationPreset = '90'
       this.secretCustomExpiration = ''
     }
-    if (action === 'delete') this.deleteAccountOpen = false
+    if (action === 'delete') {
+      this.deleteAccountOpen = false
+      const signal = this.accounts
+      if (!signal.error && !signal.items.some((account) => account.id === signal.selectedId)) {
+        window.location.assign('/admin/service-accounts')
+      }
+    }
     if (action === 'revoke_secret') this.pendingSecretRevocation = null
   }
 

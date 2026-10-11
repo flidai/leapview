@@ -128,7 +128,8 @@ func dataExploreStateFromSpec(spec exploration.ExplorationSpec) dataExploreState
 		state.Metrics = append(state.Metrics, metric.Field)
 	}
 	for _, filter := range spec.Filters {
-		item := dataExploreFilter{Field: filter.Field, Dataset: filter.DatasetID}
+		// Keep operand arrays stable in recursive browser signal patches, including null checks.
+		item := dataExploreFilter{Field: filter.Field, Dataset: filter.DatasetID, Values: []string{}}
 		if filter.Expression.Value != nil {
 			switch expression := filter.Expression.Value.(type) {
 			case *exploration.NullCheckExplorationFilterExpression:

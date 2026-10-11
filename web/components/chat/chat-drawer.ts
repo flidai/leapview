@@ -17,6 +17,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
+import { wrapModalTab } from '../shared/modal-focus'
 import { chatVisualsFromSignals } from './visual-signals'
 import './chat-visual-panel'
 import './chat-composer'
@@ -69,8 +70,11 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) embedded = false
   @property({ type: Boolean, reflect: true }) expanded = false
+  @property({ attribute: false }) commandError = ''
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
   @property({ attribute: false }) dashboardSavedVisualIds: string[] = []
+  @state() private covering = false
+  private coverObserver: ResizeObserver | null = null
   @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
@@ -93,16 +97,28 @@ class ChatDrawer extends DatastarLit(LitElement) {
     super.connectedCallback()
     window.addEventListener('popstate', this.syncExpandedLocation)
     this.syncExpandedLocation()
+    this.coverObserver = new ResizeObserver(this.syncCovering)
+    this.coverObserver.observe(this)
+    window.addEventListener('resize', this.syncCovering)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('popstate', this.syncExpandedLocation)
+    window.removeEventListener('resize', this.syncCovering)
+    this.coverObserver?.disconnect()
+    this.coverObserver = null
     super.disconnectedCallback()
+  }
+
+  private syncCovering = (): void => {
+    const covering = this.open && (this.expanded || (!this.embedded && getComputedStyle(this).position === 'fixed'))
+    if (covering !== this.covering) this.covering = covering
   }
 
   private syncExpandedLocation = (): void => {
     this.expanded = new URL(window.location.href).searchParams.get('chat') === 'expanded'
     if (this.expanded) this.open = true
+    this.syncCovering()
   }
 
   private toggleExpanded = async (): Promise<void> => {
@@ -196,6 +212,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
   protected updated(changed: Map<string, unknown>): void {
+    this.syncCovering()
 		this.syncEditState()
 		if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
     if (!changed.has('open')) return
@@ -234,16 +251,21 @@ class ChatDrawer extends DatastarLit(LitElement) {
 			this.suggestions,
 		)
 		const catalogSuggestions = searchResults.filter((reference) => !isOnPageReference(reference, context))
+    const dataContext = context?.surface === 'data'
+    const agentTitle = dataContext ? 'Explorer agent' : 'Dashboard agent'
     const agentEnabled = Boolean(agent.status?.enabled)
+    const dataContextReady = !dataContext || Boolean(context?.exploration?.modelId?.trim())
     const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
-    const composer = html`<lv-chat-composer
+    const composer = html`
+      ${this.commandError ? html`<p class="reference-limit-status" role="alert">${this.commandError}</p>` : null}
+      <lv-chat-composer
       .value=${agent.composer.value ?? ''}
-      .disabled=${this.pending || agent.composer.disabled || !agentEnabled}
+      .disabled=${this.pending || agent.composer.disabled || !agentEnabled || !dataContextReady}
       .pending=${this.pending}
       .running=${Boolean(agent.status.running)}
       .runId=${agent.status.runId ?? ''}
       .canContinue=${Boolean(agent.status.canContinue)}
-      .placeholder=${agentEnabled ? this.embedded ? 'Ask to change this dashboard…' : context?.exploration ? 'Ask about this data…' : 'Ask about this dashboard…' : 'Agent is not configured'}
+      .placeholder=${agentEnabled ? !dataContextReady ? 'Select a model or switch to Analyze' : this.embedded ? 'Ask to change this dashboard…' : context?.exploration ? 'Ask about this data…' : 'Ask about this dashboard…' : 'Agent is not configured'}
       .references=${this.references}
       .referenceLimit=${context?.referenceLimit ?? defaultAgentReferenceLimit}
       .pinnedSuggestions=${pinnedSuggestions}
@@ -257,32 +279,33 @@ class ChatDrawer extends DatastarLit(LitElement) {
       @lv-chat-edit-cancel=${this.cancelEdit}
     ></lv-chat-composer>`
     return html`
-		<aside class=${showWelcome ? 'drawer welcome-mode' : 'drawer'} role="dialog" aria-modal="false" aria-label="Dashboard agent" aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
+		<aside class=${showWelcome ? 'drawer welcome-mode' : 'drawer'} role="dialog" aria-modal=${String(this.covering)} aria-label=${agentTitle} aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
         <header class="header">
           <div class="toolbar">
-            <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
+            <div class="title">${agentIcon()}<span>${agentTitle}</span></div>
             <div class="toolbar-actions">
               <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
               <button type="button" title=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-label=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-pressed=${this.expanded} @click=${this.toggleExpanded}>${lucideIcon(this.expanded ? Minimize2 : Maximize2)}</button>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
             </div>
           </div>
-          <section class="context" aria-label="Included dashboard context">
+          <section class="context" aria-label=${dataContext ? 'Included data context' : 'Included dashboard context'}>
             <div class="context-line">
-              <span class="page-context">${context?.pageTitle || 'Current page'}</span>
+              <span class="page-context">${context?.pageTitle || (dataContext ? 'Current exploration' : 'Current page')}</span>
               ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : null}
             </div>
+            ${agentEnabled && !dataContextReady ? html`<p class="reference-limit-status" role="status">Select a model or switch to Analyze to ask about data.</p>` : null}
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>
             ` : null}
           </section>
         </header>
         ${showWelcome ? html`
-          <section class="welcome" aria-label="Start a dashboard conversation">
+          <section class="welcome" aria-label=${dataContext ? 'Start a data conversation' : 'Start a dashboard conversation'}>
             <div class="welcome-heading"><span class="agent-mark" aria-hidden="true">${agentIcon()}</span><h2>${this.embedded ? 'What should I change?' : 'What would you like to understand?'}</h2></div>
             ${composer}
             <div class="prompts">
-              ${(this.embedded ? builderPrompts : dashboardPrompts).map(({ label, prompt, icon }) => html`<button class="prompt" type="button" title=${prompt} aria-label=${`${label}: ${prompt}`} @click=${() => this.fillPrompt(prompt)}>${lucideIcon(icon, { size: 16, strokeWidth: 2 })}<span>${label}</span></button>`)}
+              ${(this.embedded ? builderPrompts : dashboardPrompts).map(({ label, prompt, icon }) => html`<button class="prompt" type="button" title=${prompt} aria-label=${`${label}: ${prompt}`} ?disabled=${!dataContextReady} @click=${() => this.fillPrompt(prompt)}>${lucideIcon(icon, { size: 16, strokeWidth: 2 })}<span>${label}</span></button>`)}
             </div>
             <p class="welcome-hint">Type <kbd>@</kbd> to attach ${this.embedded ? 'a chart on this page.' : 'a dashboard, metric, model, page, or visual.'}</p>
           </section>
@@ -388,6 +411,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
   private handleKeydown = (event: KeyboardEvent): void => {
+    if (this.open && this.covering) wrapModalTab(event, this.renderRoot)
     if (event.key !== 'Escape' || !this.open || event.defaultPrevented) return
     event.preventDefault()
     event.stopPropagation()

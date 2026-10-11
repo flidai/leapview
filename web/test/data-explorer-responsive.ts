@@ -1,5 +1,6 @@
 import { expect } from 'bun:test'
 import type { Page } from '@playwright/test'
+import type { ChatSignal } from '../generated/signals'
 
 export async function assertDataExplorerResponsiveDrawers(page: Page): Promise<void> {
   const closeFilters = page.getByRole('button', { name: 'Close filters', exact: true })
@@ -57,7 +58,12 @@ export async function assertDataExplorerResponsiveDrawers(page: Page): Promise<v
   await page.setViewportSize({ width: 1024, height: 720 })
   await page.evaluate(async () => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-    mergePatch({ agent: {} })
+    const agent: ChatSignal = {
+      activeConversationId: '', conversations: [], transcript: [],
+      status: { enabled: true, running: false },
+      composer: { value: '', disabled: false, placeholder: 'Ask about this data…' },
+    }
+    mergePatch({ agent })
     const explorer = document.querySelector('lv-data-explorer') as any
     explorer.agentDrawerOpen = true
     await explorer.updateComplete

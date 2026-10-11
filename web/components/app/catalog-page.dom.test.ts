@@ -12,6 +12,8 @@ const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/catalog-page-test')
 
 beforeAll(async () => {
+  const pickerBuild = await Bun.build({ entrypoints: ['web/components/app/dashboard-icon-picker.ts'], target: 'browser', format: 'esm', outdir: root, naming: 'dashboard-icon-picker-under-test.js' })
+  if (!pickerBuild.success) throw new Error('failed to build isolated dashboard icon picker fixture')
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
@@ -1221,4 +1223,50 @@ test('dashboard list displays persisted appearance without editing controls', as
   } finally {
     await page.close()
   }
+})
+
+test('dashboard icon picker keeps every virtualized column visible and selectable at narrow widths', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(async () => {
+      const fixtureModule = '/dashboard-icon-picker-under-test.js'
+      await import(fixtureModule)
+      document.body.replaceChildren()
+      document.body.style.padding = '24px'
+      const picker = document.createElement('lv-dashboard-icon-picker') as any
+      picker.label = 'Responsive fixture'
+      document.body.append(picker)
+      await picker.updateComplete
+      ;(window as any).appearanceSelections = []
+      picker.addEventListener('lv-dashboard-appearance-select', (event: CustomEvent) => (window as any).appearanceSelections.push(event.detail))
+    })
+    const picker = page.locator('lv-dashboard-icon-picker')
+    for (const width of [1440, 1280, 768, 390, 375, 390, 1280]) {
+      await page.setViewportSize({ width, height: 900 })
+      await picker.evaluate(async (element: any) => { await element.updateComplete; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))) })
+      const firstRow = await picker.evaluate((element: any) => {
+        const root = element.shadowRoot as ShadowRoot
+        const viewport = root.querySelector('.viewport') as HTMLElement
+        const bounds = viewport.getBoundingClientRect()
+        const choices = Array.from(root.querySelectorAll<HTMLButtonElement>('.icon')).filter(button => button.offsetTop < 38)
+        return { count: choices.length, last: choices.at(-1)!.getAttribute('aria-label'), contained: choices.every(button => { const box = button.getBoundingClientRect(); return box.left >= bounds.left && box.right <= bounds.left + viewport.clientWidth }) }
+      })
+      expect(firstRow.contained).toBe(true)
+      expect(firstRow.count).toBe(width <= 390 ? 8 : 9)
+      await picker.getByRole('button', { name: firstRow.last!, exact: true }).click()
+      expect(await page.evaluate(() => (window as any).appearanceSelections.at(-1).icon)).toBe(firstRow.last)
+    }
+    // The last catalog choices remain reachable after a resize changes row packing.
+    await picker.locator('.viewport').evaluate((viewport: HTMLElement) => { viewport.scrollTop = viewport.scrollHeight })
+    await page.waitForFunction(() => {
+      const root = document.querySelector('lv-dashboard-icon-picker')!.shadowRoot!
+      return Array.from(root.querySelectorAll('.icon')).some(button => button.getAttribute('aria-label') === 'zoom-out')
+    })
+    await picker.getByRole('button', { name: 'zoom-out', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).appearanceSelections.at(-1).icon)).toBe('zoom-out')
+    await picker.getByRole('searchbox', { name: 'Search icons', exact: true }).fill('rocket')
+    await picker.getByRole('button', { name: 'rocket', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).appearanceSelections.at(-1).icon)).toBe('rocket')
+  } finally { await page.close() }
 })

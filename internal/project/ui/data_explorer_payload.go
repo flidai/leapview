@@ -140,17 +140,27 @@ func explorationSpecPayload(spec exploration.ExplorationSpec) explorationSpecWir
 
 type dataExplorerAgentContextWire struct {
 	uisignals.AgentContextSignal
+	DatasetID   *string              `json:"datasetId"`
 	Exploration *explorationSpecWire `json:"exploration"`
 }
 
 // DataExplorerAgentContextPayload clears removed time settings in agent context.
 func DataExplorerAgentContextPayload(context uisignals.AgentContextSignal) dataExplorerAgentContextWire {
-	wire := dataExplorerAgentContextWire{AgentContextSignal: context}
+	wire := dataExplorerAgentContextWire{AgentContextSignal: context, DatasetID: context.DatasetID}
 	if context.Exploration != nil {
 		spec := explorationSpecPayload(*context.Exploration)
 		wire.Exploration = &spec
 	}
 	return wire
+}
+
+// DataExplorerAgentContextRefreshPayload refreshes governed context while
+// retaining references attached to the browser's current chat turn.
+func DataExplorerAgentContextRefreshPayload(context uisignals.AgentContextSignal) any {
+	return struct {
+		dataExplorerAgentContextWire
+		References []uisignals.AgentReferenceSignal `json:"references,omitempty"`
+	}{dataExplorerAgentContextWire: DataExplorerAgentContextPayload(context)}
 }
 
 type savedExplorationWire struct {

@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projecthttp "github.com/flidai/leapview/internal/project/http"
 )
 
 func authorizedProductNavigationAccess(ctx context.Context, access *accessmodule.Module, catalog *projectcatalog.Service, r *http.Request) appshell.ProductNavigationAccess {
@@ -185,4 +186,21 @@ func dashboardChatSignal(state agentmodule.ChatSignal) dashboardmodule.ChatSigna
 			Disabled: state.Composer.Disabled, Placeholder: state.Composer.Placeholder, Value: state.Composer.Value,
 		},
 	}
+}
+
+func dataExplorerAgentBootstrap(state agentmodule.ChatViewState) projecthttp.DataExplorerAgentBootstrap {
+	return projecthttp.DataExplorerAgentBootstrap{
+		Agent: agentmodule.ChatSignalPatch(state)["agent"], Visuals: state.Visuals,
+		Refresh: map[string]any{
+			"conversations": state.Agent.Conversations,
+			"status":        map[string]any{"enabled": state.Agent.Status.Enabled},
+		},
+	}
+}
+
+func dataExplorerAgentCommands(module *agentmodule.Module) projecthttp.DataExplorerAgentCommandBindings {
+	// Generated command bindings are static and nil-receiver safe, including
+	// while the browser surface is composed before the agent module is built.
+	bindings := module.UICommandBindings()
+	return projecthttp.DataExplorerAgentCommandBindings{CreateConversation: bindings.CreateConversation, CreateRun: bindings.CreateRun, CancelRun: bindings.CancelRun}
 }

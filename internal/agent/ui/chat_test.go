@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/json"
+	"html"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/agent"
@@ -115,5 +118,27 @@ func TestChatConversationsPatchPreservesOneOrderForListAndSidebar(t *testing.T) 
 	}
 	if !items[1].Active {
 		t.Fatalf("active sidebar item = %#v", items)
+	}
+}
+
+func TestChatPageSubmitClearsPreviousRunErrorBeforeCommand(t *testing.T) {
+	for _, conversationID := range []string{"", "conversation-1"} {
+		t.Run(conversationID, func(t *testing.T) {
+			var output bytes.Buffer
+			state := ChatViewState{Agent: ChatSignal{ActiveConversationID: conversationID, Status: ChatStatus{Enabled: true}}}
+			if err := ChatPage("", "csrf-test", "conversation", state).Render(&output); err != nil {
+				t.Fatal(err)
+			}
+			rendered := html.UnescapeString(output.String())
+			const submitStart = `data-on:lv-chat-submit="`
+			_, submit, found := strings.Cut(rendered, submitStart)
+			if !found {
+				t.Fatal("chat submit command missing")
+			}
+			submit, _, _ = strings.Cut(submit, `"`)
+			if !strings.HasPrefix(submit, "$agent.status.error = ''; ") || !strings.Contains(submit, "@post('/chats/turns'") {
+				t.Fatalf("submit must clear the previous error before posting the new turn: %s", submit)
+			}
+		})
 	}
 }

@@ -123,16 +123,44 @@ test('local frontend validation runs every bounded shard without suppressing fai
     task: 'ci:lane:frontend:shard', vars: { SHARD: shard },
   })))
   expect(tasks['ci:lane:frontend:shard'].cmds).toEqual([
-    '{{if eq .SHARD "reports"}}\ntask ci:lane:frontend:reports\n{{else}}\nnode scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}\n{{end}}\n',
+    '{{if eq .SHARD "reports"}}\ntask ci:lane:frontend:reports\n{{else if eq .SHARD "data"}}\ntask ci:lane:frontend:data\n{{else}}\nnode scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}\n{{end}}\n',
   ])
   expect(tasks['ci:lane:frontend:reports'].cmds).toEqual([
     'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:viewer',
+    'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:playground',
     'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:builder',
   ])
   expect(tasks['ci:test:frontend:reports'].cmds).toEqual([
     { task: 'ci:test:frontend:reports:viewer' },
+    { task: 'ci:test:frontend:reports:playground' },
     { task: 'ci:test:frontend:reports:builder' },
   ])
+  expect(tasks['ci:test:frontend:reports:viewer'].cmds).toEqual([
+    'bun run test:visualization-ir', 'bun run test:table-selection', 'bun run test:interaction-selection',
+    'bun run test:record-table', 'bun run test:visual-modal', 'bun run test:catalog-page',
+    'bun run test:dashboard-page', 'bun run test:date-picker', 'bun run test:windowed-table', 'bun run test:filter-menu',
+  ])
+  expect(tasks['ci:test:frontend:reports:playground'].cmds).toEqual(['bun run test:playground'])
+  expect(tasks['ci:test:frontend:reports:builder'].cmds).toEqual(['bun run test:dashboard-builder'])
+  for (const unit of ['viewer', 'playground', 'builder']) {
+    expect(tasks[`ci:test:frontend:reports:${unit}`].ignore_error).toBeUndefined()
+  }
+  expect(tasks['ci:lane:frontend:data'].cmds).toEqual([
+    'node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:data:explorer',
+    'node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:data:pages',
+  ])
+  expect(tasks['ci:test:frontend:data'].cmds).toEqual([
+    { task: 'ci:test:frontend:data:explorer' }, { task: 'ci:test:frontend:data:pages' },
+  ])
+  expect(tasks['ci:test:frontend:data:explorer'].cmds).toEqual(['bun run test:data-explorer'])
+  expect(tasks['ci:test:frontend:data:pages'].cmds).toEqual([
+    'bun run test:project-page', 'bun run test:admin-page', 'bun run test:code-editor', 'bun run test:login-page',
+    'bun run test:asset-lineage', 'bun run test:semantic-model-graph', 'bun run test:datastar-inspector', 'bun run test:topology-background',
+  ])
+  for (const unit of ['explorer', 'pages']) {
+    expect(tasks[`ci:test:frontend:data:${unit}`].ignore_error).toBeUndefined()
+  }
+  expect(tasks['ci:lane:frontend:data'].ignore_error).toBeUndefined()
   expect(tasks['ci:lane:frontend:reports'].ignore_error).toBeUndefined()
   expect(tasks['ci:lane:frontend:local'].cmds).toEqual([{ task: 'ci:lane:frontend' }])
   expect(tasks['ci:lane:frontend'].ignore_error).toBeUndefined()

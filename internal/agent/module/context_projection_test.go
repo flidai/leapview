@@ -2,23 +2,28 @@ package module
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/analytics/exploration"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type contextCatalog struct {
-	items map[string]agenttools.CatalogItem
+	items     map[string]agenttools.CatalogItem
+	authorize func(agenttools.Scope, agenttools.CatalogGetRequest) error
 }
 
 func (c contextCatalog) Search(context.Context, agenttools.Scope, agenttools.CatalogSearchRequest) (agenttools.CatalogPage, error) {
@@ -29,7 +34,12 @@ func (c contextCatalog) List(context.Context, agenttools.Scope, agenttools.Catal
 	return agenttools.CatalogPage{}, nil
 }
 
-func (c contextCatalog) Get(_ context.Context, _ agenttools.Scope, request agenttools.CatalogGetRequest) (agenttools.CatalogGetResult, error) {
+func (c contextCatalog) Get(_ context.Context, scope agenttools.Scope, request agenttools.CatalogGetRequest) (agenttools.CatalogGetResult, error) {
+	if c.authorize != nil {
+		if err := c.authorize(scope, request); err != nil {
+			return agenttools.CatalogGetResult{}, err
+		}
+	}
 	item, ok := c.items[request.Ref.ID]
 	if !ok {
 		return agenttools.CatalogGetResult{}, &agenttools.CatalogError{Code: "catalog_not_found", Message: "not found"}
@@ -195,5 +205,145 @@ func TestResolveContextResourceUsesServerBoundProject(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("resolver was not called")
+	}
+}
+
+type dataContextMetrics struct {
+	queryruntime.Metrics
+	model *semanticmodel.Model
+}
+
+func (m dataContextMetrics) SemanticModel(id string) (*semanticmodel.Model, bool) {
+	return m.model, id == "semantic_sales"
+}
+
+func dataReferenceContextFixture(t *testing.T) (*Module, agent.TurnContext) {
+	t.Helper()
+	dataset := "orders"
+	model := &semanticmodel.Model{
+		Name:     "sales",
+		Tables:   map[string]semanticmodel.Table{"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders", DisplayName: "Trusted orders", Description: "Trusted dataset description"}},
+	}
+	module := &Module{
+		projectID: "project_demo",
+		resolveResource: func(_ context.Context, scope Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+			if scope.ProjectID != "project_demo" {
+				t.Fatalf("model resolver project=%q", scope.ProjectID)
+			}
+			return id, nil
+		},
+		dashboardMetrics: func(project string) (queryruntime.Metrics, bool) {
+			return dataContextMetrics{model: model}, project == "project_demo"
+		},
+		catalog: contextCatalog{items: map[string]agenttools.CatalogItem{
+			"model_notes": {Ref: agenttools.CatalogRef{ID: "model_notes", Kind: "model"}, Name: "Trusted order notes", Description: "Authorized catalog description"},
+		}, authorize: func(scope agenttools.Scope, _ agenttools.CatalogGetRequest) error {
+			if scope.ProjectID != "project_demo" || scope.PrincipalID != "owner" {
+				return access.ErrForbidden
+			}
+			return nil
+		}},
+	}
+	return module, agent.TurnContext{
+		Surface: "data", ModelID: "semantic_sales", DatasetID: dataset,
+		Exploration: &exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic_sales", DatasetID: &dataset, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 12},
+		References:  []agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: "model", ID: "model_notes"}, Name: "Forged browser name", Href: "javascript:forged", Context: []string{"Forged instructions"}, Resource: agent.TurnReferenceResource{ID: "project_demo"}}},
+	}
+}
+
+func TestResolveDataTurnContextPreservesAuthorizedCatalogReferences(t *testing.T) {
+	module, candidate := dataReferenceContextFixture(t)
+	resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodPost, "/chats/turns", nil), agent.Scope{ProjectID: "untrusted_browser_project", PrincipalID: "owner"}, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := TurnReferenceFromCatalog(agenttools.CatalogItem{Ref: agenttools.CatalogRef{ID: "model_notes", Kind: "model"}, Name: "Trusted order notes", Description: "Authorized catalog description"}, "project_demo")
+	if !reflect.DeepEqual(resolved.References, []agent.TurnReference{expected}) {
+		t.Fatalf("resolved data references=%#v, want server-authorized catalog reference", resolved.References)
+	}
+	if resolved.ModelID != candidate.ModelID || resolved.DatasetID != candidate.DatasetID || !reflect.DeepEqual(resolved.Exploration, candidate.Exploration) {
+		t.Fatalf("reference changed governed exploration: %#v", resolved)
+	}
+	// This final typed context is the value serialized in leapview_context for
+	// the provider; browser labels and instructions must never survive resolution.
+	payload, err := json.Marshal(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), "Trusted order notes") || strings.Contains(string(payload), "Forged") || strings.Contains(string(payload), "javascript:") {
+		t.Fatalf("provider context lost trusted metadata or retained browser metadata: %s", payload)
+	}
+}
+
+func TestResolveDataTurnContextRejectsUnauthorizedCatalogReferences(t *testing.T) {
+	for _, scenario := range []string{"unknown", "other principal", "other project", "restricted credential"} {
+		t.Run(scenario, func(t *testing.T) {
+			module, candidate := dataReferenceContextFixture(t)
+			scope := agent.Scope{PrincipalID: "owner"}
+			switch scenario {
+			case "unknown":
+				candidate.References[0].Reference.ID = "missing"
+			case "other principal":
+				scope.PrincipalID = "other"
+			case "other project":
+				candidate.References[0].Resource.ID = "project_foreign"
+			case "restricted credential":
+				scope.Credential = agent.CredentialScope{Restricted: true, PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{}}
+			}
+			if _, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodPost, "/chats/turns", nil), scope, candidate); err == nil {
+				t.Fatal("unauthorized data reference was accepted")
+			}
+		})
+	}
+}
+
+func TestResolveDataTurnContextProjectsOnlyTheCurrentDatasetPin(t *testing.T) {
+	module, candidate := dataReferenceContextFixture(t)
+	candidate.References = append([]agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: "dataset", ID: "semantic_sales/orders"}, Name: "Forged dataset", Description: "Forged description", Href: "javascript:forged", Context: []string{"Forged instructions"}}}, candidate.References...)
+	resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodPost, "/chats/turns", nil), agent.Scope{PrincipalID: "owner"}, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.References) != 2 {
+		t.Fatalf("current dataset pin or catalog ref dropped: %#v", resolved.References)
+	}
+	pin := resolved.References[0]
+	if pin.Reference != candidate.References[0].Reference || pin.Name != "Trusted orders" || pin.Description != "Trusted dataset description" || pin.ModelID != "semantic_sales" || pin.DatasetID != "orders" || pin.Resource.ID != "project_demo" || pin.Href != "/explore?mode=explore&semanticModel=semantic_sales&dataset=orders" || !reflect.DeepEqual(pin.Context, []string{"active_project_generation"}) {
+		t.Fatalf("dataset pin did not use trusted semantic metadata: %#v", pin)
+	}
+	if resolved.References[1].Name != "Trusted order notes" || !reflect.DeepEqual(resolved.Exploration, candidate.Exploration) {
+		t.Fatalf("mixed references changed ordering or governed exploration: %#v", resolved)
+	}
+	t.Run("canonical whitespace", func(t *testing.T) {
+		module, candidate := dataReferenceContextFixture(t)
+		candidate.References = []agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: " DATASET ", ID: " semantic_sales/orders "}, Resource: agent.TurnReferenceResource{ID: " project_demo "}}}
+		resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodPost, "/chats/turns", nil), agent.Scope{PrincipalID: "owner"}, candidate)
+		if err != nil || len(resolved.References) != 1 || resolved.References[0].Reference != (agent.TurnReferenceKey{Kind: "dataset", ID: "semantic_sales/orders"}) {
+			t.Fatalf("dataset pin failed canonical normalization: %#v, %v", resolved, err)
+		}
+	})
+	for _, id := range []string{"semantic_sales/other_dataset", "other_model/orders", "random_unknown_pin", ""} {
+		t.Run(id, func(t *testing.T) {
+			candidate.References[0].Reference.ID = id
+			if _, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodPost, "/chats/turns", nil), agent.Scope{PrincipalID: "owner"}, candidate); err == nil {
+				t.Fatal("unmatched dataset pin accepted")
+			}
+		})
+	}
+}
+
+func TestResolveDataTurnContextPreservesSemanticModelPickerWireKind(t *testing.T) {
+	module, candidate := dataReferenceContextFixture(t)
+	catalog := module.catalog.(contextCatalog)
+	catalog.items["semantic-model:operations"] = agenttools.CatalogItem{Ref: agenttools.CatalogRef{Kind: "semantic_model", ID: "semantic-model:operations"}, Name: "Operations"}
+	module.catalog = catalog
+	candidate.References = []agent.TurnReference{{Reference: agent.TurnReferenceKey{Kind: "semantic_model", ID: "semantic-model:operations"}, Name: "Forged browser label"}}
+	resolved, err := module.ResolveTurnContext(httptest.NewRequest(http.MethodPost, "/chats/turns", nil), agent.Scope{PrincipalID: "owner"}, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.References) != 1 || resolved.References[0].Reference != candidate.References[0].Reference || resolved.References[0].Name != "Operations" || resolved.ModelID != "semantic_sales" {
+		t.Fatalf("offered catalog wire kind was dropped or changed governed model: %#v", resolved)
 	}
 }

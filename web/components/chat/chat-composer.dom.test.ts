@@ -576,6 +576,133 @@ test('composer distinguishes matching reference IDs from different kinds', async
   }
 })
 
+for (const width of [768, 390, 375]) {
+  test(`long attachment chips stay inside the composer at ${width}px`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 820 } })
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+      const composer = page.locator('lv-chat-composer')
+      await composer.evaluate(async (element: any) => {
+        element.style.marginLeft = '44px'
+        element.style.width = 'calc(100% - 44px)'
+        const files = Array.from({ length: 5 }, (_, index) => ({
+          name: `${'synthetic-attachment-'.repeat(8)}${index}.txt`, text: 'Fixture', size: 7,
+        }))
+        element.setDraft(`Review\n\n<attached_files>\n${JSON.stringify(files)}\n</attached_files>`)
+        await element.updateComplete
+      })
+      for (const viewport of [{ width, height: 820 }, { width: 375, height: 540 }]) {
+        await page.setViewportSize(viewport)
+        const geometry = await composer.evaluate((element: any) => {
+          const root = element.shadowRoot as ShadowRoot
+          const surface = root.querySelector('.composer-surface')!.getBoundingClientRect()
+          return Array.from(root.querySelectorAll('.file-chip'), chip => {
+            const box = chip.getBoundingClientRect()
+            const remove = chip.querySelector('button')!.getBoundingClientRect()
+            return { chipLeft: box.left, chipRight: box.right, removeRight: remove.right,
+              removeWidth: remove.width, surfaceLeft: surface.left, surfaceRight: surface.right }
+          })
+        })
+        expect(geometry).toHaveLength(5)
+        for (const box of geometry) {
+          expect(box.chipLeft).toBeGreaterThanOrEqual(box.surfaceLeft)
+          expect(box.chipRight).toBeLessThanOrEqual(box.surfaceRight)
+          expect(box.removeRight).toBeLessThanOrEqual(box.surfaceRight)
+          expect(box.removeWidth).toBeGreaterThanOrEqual(14)
+        }
+      }
+      await composer.getByRole('button', { name: /Remove synthetic-attachment/ }).first().click()
+      expect(await composer.locator('.file-chip').count()).toBe(4)
+    } finally {
+      await page.close()
+    }
+  })
+}
+
+for (const width of [768, 390, 375]) {
+  test(`context picker stays visible with five attachments at ${width}px`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 820 } })
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+      const composer = page.locator('lv-chat-composer')
+      await composer.evaluate(async (element: any) => {
+        element.style.marginLeft = '44px'
+        element.style.width = 'calc(100% - 44px)'
+        element.style.marginTop = '64px'
+        const files = Array.from({ length: 5 }, (_, index) => ({
+          name: `PR991-visual-synthetic-long-attachment-${index}.txt`, text: 'Synthetic fixture', size: 17,
+        }))
+        element.setDraft(`@sales\n\n<attached_files>\n${JSON.stringify(files)}\n</attached_files>`)
+        element.suggestions = Array.from({ length: 6 }, (_, index) => ({
+          reference: { kind: 'model', id: `sales-${index}` }, name: `Sales ${index + 1}`,
+          description: '', href: '/explore', locations: [], context: [],
+        }))
+        await element.updateComplete
+        await element.updateComplete
+        const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+        textarea.value = '@sales'
+        textarea.setSelectionRange(6, 6)
+        textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+        await element.updateComplete
+      })
+      const geometry = () => composer.evaluate((element: any) => {
+        const root = element.shadowRoot as ShadowRoot
+        const picker = root.querySelector('.mention-picker') as HTMLElement
+        const first = root.querySelector('.mention-option') as HTMLElement
+        const textarea = root.querySelector('textarea') as HTMLTextAreaElement
+        const box = picker.getBoundingClientRect()
+        const row = first.getBoundingClientRect()
+        return { top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+          firstVisible: row.top >= Math.max(0, box.top) && row.bottom <= Math.min(innerHeight, box.bottom),
+          focused: root.activeElement === textarea, expanded: textarea.getAttribute('aria-expanded'),
+          count: root.querySelectorAll('.file-chip').length }
+      })
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      expect((await geometry()).firstVisible).toBe(true)
+      const state = await geometry()
+      expect(state.top).toBeGreaterThanOrEqual(8)
+      expect(state.bottom).toBeLessThanOrEqual(812)
+      expect(state.left).toBeGreaterThanOrEqual(8)
+      expect(state.right).toBeLessThanOrEqual(width - 8)
+      expect(state).toMatchObject({ focused: true, expanded: 'true', count: 5 })
+      await page.setViewportSize({ width, height: 400 })
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      expect((await geometry()).bottom).toBeLessThanOrEqual(392)
+      await composer.getByRole('combobox').press('ArrowDown')
+      await composer.getByRole('combobox').press('Enter')
+      expect(await composer.getByRole('listbox').count()).toBe(0)
+      expect(await composer.evaluate((element: any) => element.references[0]?.name)).toBe('Sales 2')
+      expect(await composer.evaluate((element: any) => element.shadowRoot.activeElement?.tagName)).toBe('TEXTAREA')
+      await composer.getByRole('button', { name: 'Add context', exact: true }).click()
+      await composer.getByRole('combobox').press('Escape')
+      expect(await composer.getByRole('listbox').count()).toBe(0)
+      await composer.getByRole('button', { name: 'Add context', exact: true }).click()
+      await page.evaluate(() => {
+        const button = document.createElement('button')
+        button.textContent = 'Outside composer'
+        button.style.cssText = 'position:fixed;top:0;left:0'
+        document.body.append(button)
+      })
+      const unsent = 'Keep this unsent prefix byte exact  @sal'
+      await composer.getByRole('combobox').fill(unsent)
+      await page.getByRole('button', { name: 'Outside composer' }).click()
+      await composer.evaluate((element: any) => element.updateComplete)
+      expect(await composer.getByRole('listbox').count()).toBe(0)
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('Outside composer')
+      expect(await composer.locator('.file-chip').count()).toBe(5)
+      expect(await composer.evaluate((element: any) => element.getDraft())).toBe(unsent)
+      expect(await composer.getByRole('combobox').getAttribute('aria-expanded')).toBe('false')
+      await composer.getByRole('combobox').focus()
+      await composer.evaluate((element: any) => element.updateComplete)
+      expect(await composer.getByRole('listbox').count()).toBe(1)
+    } finally {
+      await page.close()
+    }
+  })
+}
+
 test('mention picker opens immediately, renders compact rows, and scrolls with keyboard navigation', async () => {
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
   try {

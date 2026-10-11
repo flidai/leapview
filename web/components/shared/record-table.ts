@@ -430,7 +430,7 @@ class RecordTable extends LitElement {
       case 'actions':
         return this.renderActions(value, row)
       default:
-        return label === '-' ? html`<span class="record-muted">-</span>` : html`<span>${label}</span>`
+        return label === '-' ? html`<span class="record-muted">-</span>` : html`<span class="record-text" title=${label}>${label}</span>`
     }
   }
 
@@ -1066,6 +1066,14 @@ const recordTableStyles = `
   lv-record-table .record-table-sort:focus-visible .record-table-sort-indicator,
   lv-record-table .record-table-sort-indicator.is-active {
     opacity: 1;
+  }
+
+  lv-record-table .record-text {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   lv-record-table .record-code,

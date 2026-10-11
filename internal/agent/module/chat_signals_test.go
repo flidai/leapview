@@ -1,9 +1,11 @@
 package module
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/flidai/leapview/internal/agent"
+	"github.com/flidai/leapview/internal/agent/ui"
 )
 
 func TestChatSignalWithDerivesRunningFromDurableRun(t *testing.T) {
@@ -74,5 +76,35 @@ func TestChatSignalWithClearsRunningFromDurableTerminalRun(t *testing.T) {
 	}
 	if signal.Agent.Composer.Placeholder != "Ask about dashboards, metrics, or models..." {
 		t.Fatalf("composer placeholder = %q, want idle placeholder", signal.Agent.Composer.Placeholder)
+	}
+}
+
+func TestChatWorkerSignalPatchPreservesAndClearsRunStatus(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status ui.ChatStatus
+		want   map[string]any
+	}{
+		{"canceled", ui.ChatStatus{Enabled: true, CanContinue: ui.Pointer(true)}, map[string]any{"enabled": true, "running": false, "canContinue": true, "runId": nil, "error": nil}},
+		{"running", ui.ChatStatus{Enabled: true, Running: true, RunID: ui.Pointer("current-run")}, map[string]any{"enabled": true, "running": true, "canContinue": nil, "runId": "current-run", "error": nil}},
+		{"completed", ui.ChatStatus{Enabled: true}, map[string]any{"enabled": true, "running": false, "canContinue": nil, "runId": nil, "error": nil}},
+		{"failed", ui.ChatStatus{Enabled: true, Error: ui.Pointer("Please try again.")}, map[string]any{"enabled": true, "running": false, "canContinue": nil, "runId": nil, "error": "Please try again."}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(chatSignalPatch(ui.ChatViewState{Agent: ui.ChatSignal{Status: test.status}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var patch map[string]any
+			if err := json.Unmarshal(encoded, &patch); err != nil {
+				t.Fatal(err)
+			}
+			status := patch["agent"].(map[string]any)["status"].(map[string]any)
+			for key, want := range test.want {
+				if value, present := status[key]; !present || value != want {
+					t.Errorf("status[%q] = %#v (present %v), want %#v", key, value, present, want)
+				}
+			}
+		})
 	}
 }

@@ -1,53 +1,23 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import type { Browser } from '@playwright/test'
+import { createDataExplorerDOMFixture } from './data-explorer.test-fixture'
 import { testVisualizationEnvelopes } from '../dashboard/dashboard-page-test-fixtures'
 import { assertDataExplorerResponsiveDrawers } from '../../test/data-explorer-responsive'
 import { assertExploreTablePresentation } from '../../test/explore-table-presentation'
 import { assertExploreTablePresentationReset } from '../../test/explore-table-presentation-reset'
 
-let server: Server
+let fixture: Awaited<ReturnType<typeof createDataExplorerDOMFixture>>
 let baseURL = ''
 let browser: Browser
 
-const projectRoot = process.cwd()
-const root = join(projectRoot, '.tmp/data-explorer-test')
-
 beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
-    const file = normalize(join(fileRoot, url.pathname))
-    if (!file.startsWith(fileRoot)) {
-      response.writeHead(404)
-      response.end('not found')
-      return
-    }
-    try {
-      response.setHeader('content-type', 'text/javascript')
-      response.end(await readFile(file))
-    } catch {
-      response.writeHead(404)
-      response.end('not found')
-    }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
+  fixture = await createDataExplorerDOMFixture()
+  baseURL = fixture.baseURL
+  browser = fixture.browser
 })
 
 afterAll(async () => {
-  await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  await fixture?.close()
 }, 15_000)
 
 test('native table clears drag widths on saved baseline and explicit presentation resets', async () => {
@@ -1165,23 +1135,3 @@ test('data preview and semantic query failures expose retry and reset actions', 
     await page.close()
   }
 })
-
-function testDocument() {
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <style>
-          html, body { margin: 0; min-height: 100%; }
-          body { font-family: Inter, system-ui, sans-serif; }
-          lv-data-explorer { display: block; min-height: 720px; }
-        </style>
-      </head>
-      <body>
-        <main data-signals="{}"></main>
-        <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
-        <script type="module" src="/data-explorer-under-test.js"></script>
-      </body>
-    </html>
-  `
-}

@@ -739,7 +739,7 @@ export class ReportTable extends LitElement {
     .column-resizer {
       position: absolute;
       inset-block: 5px;
-      right: -3px;
+      right: 0;
       z-index: calc(var(--zIndex-default) + 3);
       width: 6px;
       cursor: col-resize;
@@ -1302,7 +1302,9 @@ export class ReportTable extends LitElement {
         const viewport = this.bodyViewportRef.value
         if (!viewport) return
         viewport.scrollTop = previewViewport?.top ?? 0
-        viewport.scrollLeft = previewViewport?.left ?? 0
+        // A row-window reset must keep the currently inspected column and its
+        // focused sort header visible. Preview copies restore both axes.
+        if (previewViewport) viewport.scrollLeft = previewViewport.left
         this.viewportTop = viewport.scrollTop
         this.viewportHeight = viewport.clientHeight
         this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
@@ -1761,7 +1763,7 @@ export class ReportTable extends LitElement {
             <div
               class=${`header-cell ${column.align === 'right' ? 'right' : ''} ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${sorted ? 'sorted' : ''}`}
               role="columnheader"
-              aria-sort=${sorted ? this.table?.sort?.direction === 'asc' ? 'ascending' : 'descending' : 'none'}
+              aria-sort=${sorted ? activeSort?.direction === 'asc' ? 'ascending' : 'descending' : 'none'}
               style=${this.pinnedCellStyle(header.column)}
             >
               <button

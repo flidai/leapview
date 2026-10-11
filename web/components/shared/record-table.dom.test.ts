@@ -904,3 +904,58 @@ function testDocument(): string {
     </html>
   `
 }
+
+test('plain text cells keep unbroken source labels inside their own column', async () => {
+  const page = await browser.newPage()
+  const labels = ['saved_exploration', 'saved_exploration_export_preparation_with_a_long_identifier']
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    await page.locator('lv-record-table').evaluate((element: any, labels) => {
+      element.table = {
+        columns: [
+          { id: 'source', header: 'Source type', width: '120px' },
+          { id: 'runtime', header: 'Runtime', kind: 'code', width: '130px' },
+          { id: 'query', header: 'Query', width: '560px' },
+        ],
+        rows: labels.map(source => ({ source, runtime: 'project_fixture', query: 'select 1' })),
+        minWidth: '810px',
+      }
+    }, labels)
+    for (const width of [1440, 1280, 768, 390, 375]) {
+      await page.setViewportSize({ width, height: 760 })
+      await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+      const cells = await page.locator('lv-record-table tbody tr').evaluateAll(rows => rows.map(row => {
+        const cell = row.querySelector('td')!
+        const content = cell.querySelector('span')!
+        const bounds = cell.getBoundingClientRect()
+        const style = getComputedStyle(cell)
+        const range = document.createRange()
+        range.selectNodeContents(content)
+        const lines = Array.from(range.getClientRects())
+        const contentStyle = getComputedStyle(content)
+        const clippingBounds = content.getBoundingClientRect()
+        const clipped = contentStyle.overflowX === 'hidden' || contentStyle.overflowX === 'clip'
+        return {
+          label: content.textContent,
+          title: content.getAttribute('title'),
+          contentHeight: clippingBounds.height,
+          lineHeight: parseFloat(contentStyle.lineHeight),
+          outsideContent: lines.some(line => {
+            const left = clipped ? Math.max(line.left, clippingBounds.left) : line.left
+            const right = clipped ? Math.min(line.right, clippingBounds.right) : line.right
+            return left < bounds.left + parseFloat(style.paddingLeft) - 0.5 || right > bounds.right - parseFloat(style.paddingRight) + 0.5
+          }),
+          runtime: row.querySelectorAll('td')[1]!.textContent?.trim(),
+        }
+      }))
+      expect(cells.map(cell => cell.label)).toEqual(labels)
+      expect(cells.map(cell => cell.runtime)).toEqual(['project_fixture', 'project_fixture'])
+      expect(cells.every(cell => !cell.outsideContent)).toBe(true)
+      expect(cells.every(cell => Number.isFinite(cell.lineHeight) && cell.contentHeight <= cell.lineHeight + 0.5)).toBe(true)
+      expect(cells.map(cell => cell.title)).toEqual(labels)
+    }
+  } finally {
+    await page.close()
+  }
+})

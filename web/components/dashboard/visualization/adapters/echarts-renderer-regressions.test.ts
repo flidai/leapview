@@ -6,7 +6,7 @@ import { defaultRendererContext } from '../host-controller'
 import { EChartsHandle, echartsOption, responsiveEChartsPatch } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { responsiveEChartsLayoutKey } from './echarts/view-state'
-import { hierarchyFixture, networkFixture } from './echarts-test-fixtures'
+import { cartesianFixture, hierarchyFixture, networkFixture, proportionalFixture } from './echarts-test-fixtures'
 
 test('expanded hierarchy and flow plots center their bounds without changing chart semantics', () => {
   for (const envelope of [hierarchyFixture('tree'), networkFixture('sankey')]) {
@@ -16,8 +16,31 @@ test('expanded hierarchy and flow plots center their bounds without changing cha
     expect(responsiveEChartsLayoutKey(envelope, 700, 500)).not.toBe(responsiveEChartsLayoutKey(envelope, 1200, 720))
     const compact = (responsiveEChartsPatch(option, 320, 240).series ?? option.series)[0]
     const expanded = responsiveEChartsPatch(option, 1200, 720).series[0]
-    expect(compact.left).toBe(option.series[0].left)
-    expect(compact.right).toBe(option.series[0].right)
+    if (envelope.spec.mark === 'sankey') {
+      expect(compact.left).toBe(option.series[0].left)
+      expect(compact.right).toBe(option.series[0].right)
+    } else {
+      expect(compact.left).toBeGreaterThanOrEqual(Number.parseFloat(option.series[0].left) * 3.2)
+      expect(compact.right).toBeGreaterThanOrEqual(Number.parseFloat(option.series[0].right) * 3.2)
+      expect(compact.data).toBe(option.series[0].data)
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 320, height: 240 })
+      try {
+        chart.setOption({ ...option, ...responsiveEChartsPatch(option, 320, 240), animation: false })
+        chart.renderToSVGString()
+        const layout = (chart as any).getModel().getSeriesByIndex(0).layoutInfo
+        expect(layout.width).toBeGreaterThan(96)
+        expect(layout.height).toBeGreaterThan(72)
+        const labels = chart.getZr().storage.getDisplayList().filter((item: any) => item.type === 'tspan' && item.style?.text)
+        expect(labels.length).toBe(2)
+        for (const label of labels) {
+          const bounds = label.getBoundingRect().clone()
+          const transform = label.getComputedTransform?.() ?? label.transform
+          if (transform) bounds.applyTransform(transform)
+          expect(bounds.x).toBeGreaterThanOrEqual(0)
+          expect(bounds.x + bounds.width).toBeLessThanOrEqual(320)
+        }
+      } finally { chart.dispose() }
+    }
     expect(expanded.left).toBe(expanded.right)
     expect(expanded.orient).toBe(option.series[0].orient)
     expect(expanded.data).toBe(option.series[0].data)
@@ -284,4 +307,321 @@ test('duplicate positive observer sizes do not render the chart again', () => {
   handle.resize(480, 180)
   expect(sizes).toHaveLength(2)
   expect(sizes.map(({ width, height }) => [width, height])).toEqual([[320, 180], [480, 180]])
+})
+
+
+test('dense Sankey nodes remain inside the plot through resizing and recover authored spacing', () => {
+  for (const orientation of ['horizontal', 'vertical'] as const) {
+    for (const authoredGap of [undefined, 18]) {
+      const envelope = networkFixture('sankey') as any
+      envelope.spec.presentation.orientation = orientation
+      envelope.spec.presentation.nodeGap = authoredGap
+      envelope.dataState.datasets[0].rows = Array.from({ length: 50 }, (_, index) => [
+        `Product category ${index}`, `Delivery status ${index % 8}`, index + 1,
+      ])
+      const option = echartsOption(envelope, defaultRendererContext) as any
+      const source = option.series[0]
+      const initialGap = authoredGap ?? 8
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 1400, height: 1400 })
+      // Execute lazy responsive patches immediately in SSR, where there is no
+      // browser animation frame to flush them between observer notifications.
+      const setOption = chart.setOption.bind(chart)
+      chart.setOption = ((value: any, settings: any) => setOption(value, { ...settings, lazyUpdate: false })) as typeof chart.setOption
+      const handle = new EChartsHandle({} as HTMLElement, {} as HTMLElement, chart, new CategoryColorRegistry())
+      try {
+        handle.mount(envelope, defaultRendererContext)
+        const widths = orientation === 'vertical' ? [[760, 760], [500, 760], [432, 457], [375, 457], [1400, 1400]]
+          : [[760, 760], [760, 400], [432, 457], [432, 375], [1400, 1400]]
+        for (const [width, height] of widths) {
+          handle.resize(width!, height!)
+          const model = (chart as any).getModel().getSeriesByIndex(0)
+          const data = model.getData()
+          expect(data.count()).toBe(58)
+          for (let index = 0; index < data.count(); index++) {
+            const node = data.getItemLayout(index)
+            expect(node.dx).toBeGreaterThan(0)
+            expect(node.dy).toBeGreaterThan(0)
+            expect(node.x).toBeGreaterThanOrEqual(-0.001)
+            expect(node.y).toBeGreaterThanOrEqual(-0.001)
+            expect(node.x + node.dx).toBeLessThanOrEqual(model.layoutInfo.width + 0.001)
+            expect(node.y + node.dy).toBeLessThanOrEqual(model.layoutInfo.height + 0.001)
+          }
+          const responsive = (responsiveEChartsPatch(option, width!, height!).series ?? option.series)[0]
+          expect(responsive.data).toBe(source.data)
+          expect(responsive.links).toBe(source.links)
+          expect(responsive.tooltip).toBe(source.tooltip)
+          expect(source.nodeGap).toBe(authoredGap)
+          expect(model.get('nodeGap')).toBeLessThanOrEqual(initialGap)
+          if (width === 1400) expect(model.get('nodeGap')).toBe(initialGap)
+          expect(() => chart.renderToSVGString()).not.toThrow()
+        }
+        const wideKey = responsiveEChartsLayoutKey(envelope, 760, 760, false, option)
+        const shrunkKey = responsiveEChartsLayoutKey(envelope, orientation === 'vertical' ? 500 : 760,
+          orientation === 'vertical' ? 760 : 400, false, option)
+        expect(wideKey).not.toBe(shrunkKey)
+      } finally { handle.dispose() }
+    }
+  }
+})
+
+
+test('long funnel side legends remain bounded and separate from plot labels', () => {
+  for (const side of ['left', 'right'] as const) {
+    const envelope = proportionalFixture('funnel') as any
+    envelope.spec.presentation.legend = side
+    envelope.dataState.datasets[0].rows = Array.from({ length: 8 }, (_, index) => [
+      `Region ${index + 1} — enterprise customers and strategic accounts with an unusually long name`, 100 - index * 10,
+    ])
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    for (const [width, height] of [[351, 384], [768, 384], [1416, 384]]) {
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+      try {
+        const patch = responsiveEChartsPatch(option, width!, height!) as any
+        chart.setOption({ ...option, ...patch, animation: false })
+        chart.renderToSVGString()
+        const labels = chart.getZr().storage.getDisplayList().filter((item: any) =>
+          item.type === 'tspan' && typeof item.style?.text === 'string' && item.style.text.includes('Region'))
+        expect(labels.length).toBeGreaterThan(0)
+        const bounds = labels.flatMap((label: any) => {
+          const bounds = label.getBoundingRect().clone()
+          const transform = label.getComputedTransform?.() ?? label.transform
+          if (transform) bounds.applyTransform(transform)
+          // Scroll legends retain offscreen pages in the display list. Only
+          // visible text contributes to the rendered containment contract.
+          for (const clip of label.__clipPaths ?? []) {
+            const clipBounds = clip.getBoundingRect().clone()
+            const clipTransform = clip.getComputedTransform?.() ?? clip.transform
+            if (clipTransform) clipBounds.applyTransform(clipTransform)
+            if (bounds.x >= clipBounds.x + clipBounds.width || bounds.x + bounds.width <= clipBounds.x
+              || bounds.y >= clipBounds.y + clipBounds.height || bounds.y + bounds.height <= clipBounds.y) return []
+          }
+          expect(bounds.x, label.style.text).toBeGreaterThanOrEqual(-0.001)
+          expect(bounds.x + bounds.width, label.style.text).toBeLessThanOrEqual(width! + 0.001)
+          expect(bounds.y + bounds.height, label.style.text).toBeLessThanOrEqual(height! + 0.001)
+          return [{ ...bounds, text: label.style.text }]
+        })
+        for (let index = 0; index < bounds.length; index++) {
+          for (const other of bounds.slice(index + 1)) {
+            const label = bounds[index]!
+            const overlapWidth = Math.min(label.x + label.width, other.x + other.width) - Math.max(label.x, other.x)
+            const overlapHeight = Math.min(label.y + label.height, other.y + other.height) - Math.max(label.y, other.y)
+            expect(overlapWidth > 1 && overlapHeight > 1, `${label.text} overlaps ${other.text}`).toBe(false)
+          }
+        }
+        expect(chart.getZr().storage.getDisplayList().some((label: any) => label.type === 'tspan' && /\b100\b/.test(String(label.style?.text)))).toBe(true)
+        expect(patch.legend.data).toBe(option.legend.data)
+        expect(patch.legend.formatter).toBe(option.legend.formatter)
+        expect(patch.legend.tooltip.formatter({ name: option.legend.data[0].name })).toContain('unusually long name')
+        const data = (chart as any).getModel().getSeriesByIndex(0).getData()
+        for (let index = 0; index < data.count(); index++) {
+          const points = data.getItemLayout(index).points
+          expect(points.every((point: number[]) => point.every(Number.isFinite))).toBe(true)
+          expect(Math.max(...points.map((point: number[]) => point[0]!)) - Math.min(...points.map((point: number[]) => point[0]!))).toBeGreaterThan(0)
+          expect(Math.max(...points.map((point: number[]) => point[1]!)) - Math.min(...points.map((point: number[]) => point[1]!))).toBeGreaterThan(0)
+        }
+      } finally { chart.dispose() }
+    }
+  }
+})
+
+
+test('funnel resize restores fitting authored side legends and retains native selection', () => {
+  for (const side of ['left', 'right'] as const) {
+    for (const longNames of [false, true]) {
+      const envelope = proportionalFixture('funnel') as any
+      envelope.spec.presentation.legend = side
+      envelope.dataState.datasets[0].rows = [
+        [longNames ? 'North — enterprise customers and strategic accounts with an unusually long name' : 'North', 100],
+        ['South', 50],
+      ]
+      const option = echartsOption(envelope, defaultRendererContext) as any
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 3000, height: 500 })
+      const setOption = chart.setOption.bind(chart)
+      chart.setOption = ((value: any, settings: any) => setOption(value, { ...settings, lazyUpdate: false })) as typeof chart.setOption
+      const handle = new EChartsHandle({} as HTMLElement, {} as HTMLElement, chart, new CategoryColorRegistry())
+      try {
+        handle.mount(envelope, defaultRendererContext)
+        handle.resize(3000, 500)
+        expect((chart.getOption() as any).legend[0].orient).toBe('vertical')
+        chart.dispatchAction({ type: 'legendUnSelect', name: option.legend.data[0].name })
+        handle.resize(351, 384)
+        expect((chart.getOption() as any).legend[0]).toMatchObject({ orient: 'horizontal', bottom: 0 })
+        if (longNames) {
+          handle.resize(1416, 500)
+          expect((chart.getOption() as any).legend[0].orient).toBe('horizontal')
+          expect(responsiveEChartsLayoutKey(envelope, 1416, 500, false, option))
+            .not.toBe(responsiveEChartsLayoutKey(envelope, 3000, 500, false, option))
+        }
+        handle.resize(3000, 500)
+        const restored = (chart.getOption() as any).legend[0]
+        expect(restored.orient).toBe('vertical')
+        expect(restored[side]).toBe(option.legend[side])
+        expect(restored.textStyle.width).toBeNull()
+        expect(restored.selected[option.legend.data[0].name]).toBe(false)
+        expect(option.legend.orient).toBe('vertical')
+      } finally { handle.dispose() }
+    }
+  }
+})
+
+
+for (const mark of ['radar', 'tree', 'graph'] as const) {
+  test(`${mark} long category names remain inside the chart while resizing`, () => {
+    const longName = (index: number) => `Region ${index + 1} — enterprise customers and strategic accounts with an unusually long name`
+    let envelope: any
+    if (mark === 'radar') {
+      envelope = cartesianFixture('line') as any
+      envelope.spec = { ...envelope.spec, kind: 'polar', mark, category: envelope.spec.x, value: envelope.spec.y[0],
+        presentation: { ...envelope.spec.presentation, legend: 'hidden', showPointer: false, area: true } }
+      envelope.dataState.datasets[0].rows = Array.from({ length: 8 }, (_, index) => [longName(index), index + 1])
+    } else if (mark === 'tree') {
+      envelope = hierarchyFixture('tree') as any
+      envelope.spec.presentation.orientation = 'horizontal'
+      envelope.dataState.datasets[0].rows = [ ['All regions', null, 100],
+        ...Array.from({ length: 8 }, (_, index) => [longName(index), 'All regions', index + 1]) ]
+    } else {
+      envelope = networkFixture('graph') as any
+      envelope.spec.presentation.layout = 'circular'
+      envelope.dataState.datasets[0].rows = Array.from({ length: 4 }, (_, index) => [
+        index === 0 ? 'Acquisition' : longName(index), `Outcome ${index} with a long category name`, index + 1,
+      ])
+    }
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    const originalSeries = option.series[0]
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 1416, height: 384 })
+    const setOption = chart.setOption.bind(chart)
+    chart.setOption = ((value: any, settings: any) => setOption(value, { ...settings, lazyUpdate: false })) as typeof chart.setOption
+    const handle = new EChartsHandle({} as HTMLElement, {} as HTMLElement, chart, new CategoryColorRegistry())
+    try {
+      handle.mount(envelope, defaultRendererContext)
+      for (const width of [351, 408, 744, 1416]) {
+        handle.resize(width, 384)
+        chart.renderToSVGString()
+        const labels = chart.getZr().storage.getDisplayList().filter((label: any) => label.type === 'tspan' && label.style?.text)
+        expect(labels.length).toBeGreaterThan(0)
+        for (const label of labels) {
+          const bounds = label.getBoundingRect().clone()
+          const transform = label.getComputedTransform?.() ?? label.transform
+          if (transform) bounds.applyTransform(transform)
+          expect(bounds.x, `${mark} ${label.style.text} at ${width}px`).toBeGreaterThanOrEqual(-0.001)
+          expect(bounds.x + bounds.width, `${mark} ${label.style.text} at ${width}px`).toBeLessThanOrEqual(width + 0.001)
+          expect(bounds.y).toBeGreaterThanOrEqual(-0.001)
+          expect(bounds.y + bounds.height).toBeLessThanOrEqual(384.001)
+        }
+        if (mark === 'tree') {
+          const layout = (chart as any).getModel().getSeriesByIndex(0).layoutInfo
+          expect(layout.width).toBeGreaterThan(width * 0.3)
+          expect(layout.height).toBeGreaterThan(384 * 0.3)
+        }
+        const patch = responsiveEChartsPatch(option, width, 384) as any
+        const responsive = (patch.series ?? option.series)[0]
+        expect(responsive.data).toBe(originalSeries.data)
+        expect(responsive.tooltip).toBe(originalSeries.tooltip)
+        if (mark !== 'radar') expect(responsive.label.formatter).toBe(originalSeries.label.formatter)
+        else expect(patch.radar.indicator.map((indicator: any) => [indicator.name, indicator.max]))
+          .toEqual(option.radar.indicator.map((indicator: any) => [indicator.name, indicator.max]))
+      }
+      expect(option.series[0]).toBe(originalSeries)
+      const restored = chart.getOption() as any
+      if (mark === 'radar') {
+        expect(restored.radar[0].radius).toBe(option.radar.radius ?? '50%')
+        expect(restored.radar[0].indicator.every((indicator: any) => indicator.nameTruncate.maxWidth === null)).toBe(true)
+        expect(option.radar.indicator.every((indicator: any) => indicator.nameTruncate === undefined)).toBe(true)
+      } else if (mark === 'tree') {
+        expect(restored.series[0].label.width).toBeNull()
+        expect(restored.series[0].leaves.label.width).toBeNull()
+      } else {
+        expect(restored.series[0].left).toBe(originalSeries.left)
+        expect(restored.series[0].right).toBe(originalSeries.right)
+      }
+    } finally { handle.dispose() }
+  })
+}
+
+
+test('boxplot label budgets update within compact widths and restore useful plot space', () => {
+  const envelope = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
+  envelope.dataState.datasets[0].rows = Array.from({ length: 8 }, (_, index) => [
+    `Region ${index + 1} with an unusually long category name`, index, index + 1, index + 2, index + 3, index + 4,
+  ])
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 500 })
+  const setOption = chart.setOption.bind(chart)
+  chart.setOption = ((value: any, settings: any) => setOption(value, { ...settings, lazyUpdate: false })) as typeof chart.setOption
+  const handle = new EChartsHandle({} as HTMLElement, {} as HTMLElement, chart, new CategoryColorRegistry())
+  try {
+    handle.mount(envelope, defaultRendererContext)
+    let narrowBudget = 0
+    for (const width of [300, 400, 800]) {
+      handle.resize(width, 400)
+      const model = (chart as any).getModel()
+      const plot = model.getComponent('grid').coordinateSystem.getRect()
+      expect(plot.width).toBeGreaterThan(width * 0.3)
+      expect(plot.height).toBeGreaterThan(120)
+      const budget = model.getComponent('xAxis').get('axisLabel.width')
+      if (width === 300) narrowBudget = budget
+      else expect(budget).toBeGreaterThan(narrowBudget)
+      expect(option.xAxis.axisLabel.width).toBeUndefined()
+      expect(model.getComponent('xAxis').get('axisLabel.rotate')).toBe(option.xAxis.axisLabel.rotate)
+    }
+    expect(responsiveEChartsLayoutKey(envelope, 300, 400, false, option))
+      .not.toBe(responsiveEChartsLayoutKey(envelope, 400, 400, false, option))
+  } finally { handle.dispose() }
+})
+
+
+test('automatic dense radar names avoid overlap and recover visible labels as the chart grows', () => {
+  for (const density of ['automatic', 'always', 'dense'] as const) {
+    const envelope = cartesianFixture('line') as any
+    envelope.spec = { ...envelope.spec, kind: 'polar', mark: 'radar', category: envelope.spec.x, value: envelope.spec.y[0],
+      presentation: { ...envelope.spec.presentation, legend: 'hidden', showPointer: false, area: true,
+        labelPolicy: { ...envelope.spec.presentation.labelPolicy, density } } }
+    envelope.dataState.datasets[0].rows = Array.from({ length: 80 }, (_, index) => [`Region ${index + 1}`, index + 1])
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    const names = option.radar.indicator.map((indicator: any) => indicator.name)
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 351, height: 384 })
+    const setOption = chart.setOption.bind(chart)
+    chart.setOption = ((value: any, settings: any) => setOption(value, { ...settings, lazyUpdate: false })) as typeof chart.setOption
+    const handle = new EChartsHandle({} as HTMLElement, {} as HTMLElement, chart, new CategoryColorRegistry())
+    let compactCount = 0
+    try {
+      handle.mount(envelope, defaultRendererContext)
+      for (const [width, height] of [[351, 384], [3000, 2000], [351, 384]]) {
+        handle.resize(width!, height!)
+        chart.renderToSVGString()
+        const labels = chart.getZr().storage.getDisplayList().filter((label: any) =>
+          label.type === 'tspan' && /^Region \d+$/.test(String(label.style?.text)))
+        if (density !== 'automatic') expect(labels.length).toBe(80)
+        else {
+          expect(labels.length).toBeGreaterThanOrEqual(4)
+          if (width === 351) {
+            expect(labels.length).toBeLessThan(80)
+            if (compactCount === 0) compactCount = labels.length
+            else expect(labels.length).toBe(compactCount)
+          } else expect(labels.length).toBeGreaterThan(compactCount)
+          const bounds = labels.map((label: any) => {
+            const bounds = label.getBoundingRect().clone()
+            const transform = label.getComputedTransform?.() ?? label.transform
+            if (transform) bounds.applyTransform(transform)
+            expect(bounds.x).toBeGreaterThanOrEqual(-0.001)
+            expect(bounds.x + bounds.width).toBeLessThanOrEqual(width! + 0.001)
+            expect(bounds.y).toBeGreaterThanOrEqual(-0.001)
+            expect(bounds.y + bounds.height).toBeLessThanOrEqual(height! + 0.001)
+            return bounds
+          })
+          for (let index = 0; index < bounds.length; index++) for (const other of bounds.slice(index + 1)) {
+            const label = bounds[index]!
+            const overlapWidth = Math.min(label.x + label.width, other.x + other.width) - Math.max(label.x, other.x)
+            const overlapHeight = Math.min(label.y + label.height, other.y + other.height) - Math.max(label.y, other.y)
+            expect(overlapWidth > 1 && overlapHeight > 1).toBe(false)
+          }
+        }
+        const current = chart.getOption() as any
+        expect(current.radar[0].indicator.map((indicator: any) => indicator.name)).toEqual(names)
+        expect(current.series[0].data[0].value).toHaveLength(80)
+        expect(option.series[0].tooltip.formatter({ value: current.series[0].data[0].value })).toContain('Region 80')
+      }
+      expect(option.radar.indicator.every((indicator: any) => indicator.showName === undefined)).toBe(true)
+    } finally { handle.dispose() }
+  }
 })

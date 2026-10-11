@@ -19,6 +19,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
 import { uuidv7 } from '../shared/command-identity'
+import { browserCommandFailure, ownsBrowserCommandFetch } from '../shared/command-failure'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
@@ -499,6 +500,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     window.addEventListener('popstate', this.syncPreviewLocation)
     window.addEventListener('message', this.handleBuilderMessage)
     document.addEventListener('datastar-signal-patch', this.invalidateVisualCache)
+    document.addEventListener('datastar-fetch', this.handleCommandFetch)
   }
 
   disconnectedCallback(): void {
@@ -508,6 +510,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     window.removeEventListener('popstate', this.syncPreviewLocation)
     window.removeEventListener('message', this.handleBuilderMessage)
     document.removeEventListener('datastar-signal-patch', this.invalidateVisualCache)
+    document.removeEventListener('datastar-fetch', this.handleCommandFetch)
     window.clearTimeout(this.saveTimer)
     super.disconnectedCallback()
   }
@@ -643,6 +646,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   @state() private references: AgentReferenceSignal[] = []
 	@state() private editMessageId = ''
 	@state() private optimisticTurn: ChatTranscriptItemSignal | null = null
+  @state() private commandError = ''
+  @state() private submittedInput = ''
 	private optimisticConversationID = ''
 	private optimisticEditMessageID = ''
 	private optimisticBaselineMessageIDs = new Set<string>()
@@ -742,18 +747,28 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.wasAgentRunning = running
   }
 
-	private syncOptimisticTurn(): void {
-		if (!this.optimisticTurn) return
-		const conversationID = this.agent.activeConversationId?.trim() ?? ''
-		const accepted = (this.agent.transcript ?? []).some((item) =>
-			item.kind === 'user'
-			&& Boolean(item.id?.trim())
-			&& !this.optimisticBaselineMessageIDs.has(item.id.trim()),
-		)
-		if (conversationID !== this.optimisticConversationID || accepted || Boolean(this.agent.status?.error)) {
-			this.clearOptimisticTurn()
-		}
-	}
+  private submittedTurnAccepted(): boolean {
+    return (this.agent.activeConversationId?.trim() ?? '') !== this.optimisticConversationID
+      || Boolean(this.agent.status?.running)
+      || (this.agent.transcript ?? []).some(item => item.kind === 'user'
+        && Boolean(item.id?.trim()) && !this.optimisticBaselineMessageIDs.has(item.id.trim()))
+  }
+
+  private syncOptimisticTurn(): void {
+    if (!this.submittedInput && !this.optimisticTurn) return
+    if (this.submittedTurnAccepted() || this.agent.status?.error) this.clearOptimisticTurn()
+  }
+
+  private handleCommandFetch = (event: Event): void => {
+    if (!this.submittedInput || !ownsBrowserCommandFetch(this, event)) return
+    if (this.submittedTurnAccepted()) return
+    const failure = browserCommandFailure(event, 'Sending your message')
+    if (!failure) return
+    const input = this.submittedInput
+    this.commandError = failure.message
+    this.clearOptimisticTurn()
+    this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string, focus?: boolean): void }>('lv-chat-composer')?.setDraft(input, false)
+  }
 
 	private syncEditState(): void {
 		const conversationID = this.agent.activeConversationId?.trim() ?? ''
@@ -763,6 +778,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 			this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft('')
 		}
 		if (this.trackedConversationID !== null && this.trackedConversationID !== conversationID) {
+      this.commandError = ''
       this.closeVisual(false)
       this.dashboardDestination = undefined
     }
@@ -825,7 +841,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   get pending(): boolean {
-    return this.signal<boolean>('agentTurnPending', false) || Boolean(this.agent.status?.running) || Boolean(this.optimisticTurn)
+    return this.signal<boolean>('agentTurnPending', false) || Boolean(this.agent.status?.running) || Boolean(this.submittedInput)
   }
 
 	get referenceSearch(): AgentReferenceSearchSignal {
@@ -865,7 +881,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             ${this.renderDashboardPreview(title, !isList && !isNew && this.dashboardPreview && !this.builderOpen)}
             <section class="builder-stage" aria-label="Dashboard builder" ?hidden=${!this.dashboardPreview || !this.builderOpen}>
               ${this.dashboardSaveError ? html`<p class="save-error" role="alert">${this.dashboardSaveError}</p>` : null}
-              ${this.generationPrompt && !this.savedBuilderHref && !this.savingDashboard ? html`<lv-dashboard-generation .running=${this.pending} .transcript=${this.agent.transcript ?? []} .runId=${this.optimisticTurn ? '' : this.agent.status.runId ?? ''} .prompt=${this.generationPrompt} .error=${this.agent.status.error ?? ''}></lv-dashboard-generation>` : null}
+              ${this.generationPrompt && !this.savedBuilderHref && !this.savingDashboard ? html`<lv-dashboard-generation .running=${this.pending} .transcript=${this.agent.transcript ?? []} .runId=${this.optimisticTurn ? '' : this.agent.status.runId ?? ''} .prompt=${this.generationPrompt} .error=${this.commandError || this.agent.status.error || ''}></lv-dashboard-generation>` : null}
               <iframe class="builder-frame" name=${this.builderFrameName} title="Dashboard builder" src=${ifDefined(this.restoredBuilderHref)} @load=${this.handleBuilderLoad} ?hidden=${Boolean(this.dashboardSaveError) || Boolean(this.generationPrompt && !this.savedBuilderHref && !this.savingDashboard)}></iframe>
             </section>
             <div class=${`body${this.builderOpen ? ' with-chat-header' : ''}`}>
@@ -1136,6 +1152,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private renderComposer(composer: ChatSignal['composer'], status: ChatSignal['status'], hideContextAction = false) {
     return html`
+      ${this.commandError ? html`<p role="alert">${this.commandError}</p>` : null}
       <lv-chat-composer
         ?hide-context-action=${hideContextAction}
         .value=${composer.value ?? ''}
@@ -1175,6 +1192,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
 	private showOptimisticTurn = (event: CustomEvent<{ input?: string; references?: AgentReferenceSignal[]; editMessageId?: string; surface?: string }>): void => {
     const submittedInput = event.detail?.input?.trim() ?? ''
+    if (!submittedInput) return
+    this.commandError = ''
+    // Generation progress opens a builder-shaped preview, but only a selected
+    // dashboard page can supply an authorized builder turn context.
+    const surface = this.builderOpen && this.context?.dashboardId?.trim() && this.context?.pageId?.trim() ? 'builder' : 'chat'
     if (!isDashboardBuildPrompt(submittedInput) && this.generationPrompt) this.clearDashboardGeneration()
     this.generationPrompt = isDashboardBuildPrompt(submittedInput) ? submittedInput : ''
     this.generationRunId = ''
@@ -1184,14 +1206,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
     // Set intent on this exact submit event before the shell dispatches it.
     // Expanding chat must immediately stop automatic dashboard authoring.
-    event.detail.surface = this.builderOpen ? 'builder' : 'chat'
+    event.detail.surface = surface
 		const conversationID = this.agent.activeConversationId?.trim() ?? ''
 		const input = event.detail?.input?.trim() ?? ''
-		if (!conversationID || !input) return
 		const transcript = this.agent.transcript ?? []
 		this.optimisticConversationID = conversationID
 		this.optimisticEditMessageID = event.detail?.editMessageId?.trim() ?? ''
 		this.optimisticBaselineMessageIDs = new Set(transcript.map(item => item.id?.trim()).filter((id): id is string => Boolean(id)))
+    this.submittedInput = input
+    if (!conversationID) return
 		this.optimisticTurn = {
 			id: `optimistic-${crypto.randomUUID()}`,
 			kind: 'user',
@@ -1212,6 +1235,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 	}
 
 	private clearOptimisticTurn(): void {
+    this.submittedInput = ''
 		this.optimisticTurn = null
 		this.optimisticConversationID = ''
 		this.optimisticEditMessageID = ''

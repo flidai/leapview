@@ -19,7 +19,10 @@ import (
 // DataExplorerAgentBootstrap is agent-owned state projected into the data
 // explorer without making the project module depend on agent signal types.
 type DataExplorerAgentBootstrap struct {
-	Agent   any
+	Agent any
+	// Refresh contains only conversation history and availability, which may
+	// change without replacing the browser's active conversation or draft.
+	Refresh any
 	Visuals any
 }
 
@@ -84,8 +87,10 @@ func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPag
 	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
 }
 
-func DataExplorerPageWithSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
-	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, dashboard, csrfToken, providers...)
+// DataExplorerPageWithAgentAndSavedExplorationsAndDashboard composes the agent
+// projection with exploration authoring features without importing the agent domain.
+func DataExplorerPageWithAgentAndSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
+	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, saved, dashboard, csrfToken, providers...)
 }
 
 func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
@@ -253,6 +258,10 @@ func DataExplorerBootstrapSignalsWithSavedExplorations(_ catalog.Catalog, page u
 	return dataExplorerBootstrapSignalsWithSaved(page, explorer, DataExplorerAgentBootstrap{}, saved, providers...)
 }
 
+func DataExplorerBootstrapSignalsWithAgentAndSavedExplorations(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, saved DataExplorerSavedExplorationBootstrap, providers ...webpage.Provider) map[string]any {
+	return dataExplorerBootstrapSignalsWithSaved(page, explorer, agent, saved, providers...)
+}
+
 func dataExplorerBootstrapSignalsWithSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, saved DataExplorerSavedExplorationBootstrap, providers ...webpage.Provider) map[string]any {
 	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
 	context := DataExplorerAgentContext(page, explorer)
@@ -287,7 +296,7 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 	spec := dataExplorerCanonicalSpec(command)
 	modelID := spec.ModelID
 	datasetID := uisignals.ValueOrZero(spec.DatasetID)
-	return uisignals.AgentContextSignal{
+	context := uisignals.AgentContextSignal{
 		Surface: "data", ModelID: modelID, DatasetID: &datasetID,
 		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "",
 		Exploration: &spec,
@@ -297,4 +306,12 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 		},
 		ReferenceLimit: 12, References: []uisignals.AgentReferenceSignal{},
 	}
+	// A data turn requires a governed semantic exploration. Raw source rows
+	// must not borrow an unrelated default semantic model's context.
+	if strings.TrimSpace(modelID) == "" || (uisignals.ValueOrZero(explorer.Command.Mode) != "explore" && explorer.SelectedObject != nil && explorer.SelectedObject.Layer == "source") {
+		context.ModelID = ""
+		context.DatasetID = nil
+		context.Exploration = nil
+	}
+	return context
 }
