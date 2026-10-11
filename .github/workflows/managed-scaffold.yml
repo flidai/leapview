@@ -7,12 +7,30 @@ on:
       - deploy/managed/**
       - .github/workflows/managed-scaffold.yml
       - Taskfile.yml
+      - flake.nix
+      - flake.lock
+      - nix/managed-recovery-test-tools.nix
+      - nix/application.nix
+      - nix/dependencies.nix
+      - scripts/qualify_managed_coordinator_ci.sh
+      - internal/app/**
+      - go.mod
+      - go.sum
   push:
     branches: [main]
     paths:
       - deploy/managed/**
       - .github/workflows/managed-scaffold.yml
       - Taskfile.yml
+      - flake.nix
+      - flake.lock
+      - nix/managed-recovery-test-tools.nix
+      - nix/application.nix
+      - nix/dependencies.nix
+      - scripts/qualify_managed_coordinator_ci.sh
+      - internal/app/**
+      - go.mod
+      - go.sum
   workflow_dispatch:
     inputs:
       boot_test:
@@ -63,6 +81,8 @@ jobs:
       - name: Check Nix formatting
         working-directory: deploy/managed/nixos
         run: nix fmt -- --check flake.nix inventory.example.nix modules/*.nix tests/*.nix
+      - name: Exercise fresh native PostgreSQL role bootstrap
+        run: nix develop --no-update-lock-file .#managed-recovery -c task managed:postgres:bootstrap-test
       - name: Build both locked host closures and deploy-rs checks
         working-directory: deploy/managed/nixos
         run: |
@@ -75,13 +95,15 @@ jobs:
           probe_image="$(nix build path:./deploy/managed/nixos#port-probe --no-link --no-update-lock-file --print-out-paths)"
           docker_package="$(nix build path:./deploy/managed/nixos#nixosConfigurations.example-app.config.virtualisation.docker.package --no-link --no-update-lock-file --print-out-paths)"
           sudo python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package"
+      - name: Exercise installed PostgreSQL promotion, private TLS and reboot retry
+        run: nix build path:./deploy/managed/nixos#postgres-promotion-test --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
       - name: Exercise pinned Kamal handoff and offline recovery in isolated namespaces
         run: |
           python3 deploy/managed/nixos/tests/kamal_transport_contract_test.py
           bash deploy/managed/nixos/tests/run-kamal-transport.sh "$RUNNER_TEMP/kamal-transport"
       - name: Retain transport-only evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-kamal-transport
           path: ${{ runner.temp }}/kamal-transport/
@@ -90,6 +112,23 @@ jobs:
       - name: Exercise managed-host updates, rollback, reboot and coordinated recovery components
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
         run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+  installed-coordinator:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Exercise private installed coordinator, replay and independent admission
+        run: nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh
+      # Raw exports/provider errors include disposable private credentials and
+      # must not be uploaded. The script prints only bounded component evidence.
   fresh-install:
     if: ${{ github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.boot_test }}
     runs-on: ubuntu-24.04
@@ -119,7 +158,7 @@ jobs:
             --max-jobs 1 --cores 2 -L 2>&1 | tee "$RUNNER_TEMP/fresh-install.log"
       - name: Retain exact common-OS installation test logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-fresh-install-${{ matrix.boot-mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -132,7 +171,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     container:
-      image: ruby:3.4@sha256:c4428c90c4e80ee5848c31912969e73c9f48ac45ec45dfb5f76d1a821358771e
+      image: public.ecr.aws/docker/library/ruby:3.4@sha256:c4428c90c4e80ee5848c31912969e73c9f48ac45ec45dfb5f76d1a821358771e
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Validate with pinned Kamal (no SSH or registry access)

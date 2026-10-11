@@ -107,6 +107,7 @@ type Config struct {
 	RoleBindingMutation                 func(*http.Request, access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error)
 	CurrentEffectiveCapabilities        func(context.Context, string) ([]access.Capability, error)
 	CurrentEffectivePermissionOptions   func(context.Context, string) ([]access.PermissionPair, error)
+	PersonalTokenIssuer                 personalsettings.TokenIssuer
 	AuthorizeTypedDashboardAction       func(context.Context, string, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, error)
 	PlatformAdmin                       func(context.Context, string) (bool, error)
 	CurrentProjectID                    func(context.Context) (projectgraph.ResourceID, error)
@@ -193,6 +194,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
 			CurrentEffectivePermissionOptions: config.CurrentEffectivePermissionOptions,
+			TokenIssuer:                       config.PersonalTokenIssuer,
 			LocalPasswordEnabled:              config.LocalPasswordEnabled,
 		}
 		m.handler.PersonalSettings = &personalsettings.Handler{

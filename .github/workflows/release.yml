@@ -160,7 +160,7 @@ jobs:
       - name: Retain canonical native admission and verified evidence
         id: admission-bundle
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/managed-admission
@@ -175,7 +175,7 @@ jobs:
           printf '%s\n' "$IMAGE_REFERENCE" > "platform-digests/${{ matrix.arch }}.txt"
 
       - name: Upload native image digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-platform-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           retention-days: 7
@@ -231,7 +231,7 @@ jobs:
             type=raw,value=candidate-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Download native image digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-platform-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: platform-digests
@@ -351,7 +351,7 @@ jobs:
             "darwin amd64"
             "darwin arm64"
           )
-          mkdir -p "$RUNNER_TEMP/compose-controllers"
+          mkdir -p "$RUNNER_TEMP/compose-controllers" "$RUNNER_TEMP/compose-controller-identities"
           for target in "${targets[@]}"; do
             read -r os arch <<<"$target"
             package="leapview-compose-${RELEASE_TAG}-${os}-${arch}"
@@ -376,6 +376,9 @@ jobs:
               --controller "$controller" --platform "$os/$arch" \
               --image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json \
               --output "$controller.identity.json"
+            if [ "$os" = linux ]; then
+              cp -- "$controller.identity.json" "$RUNNER_TEMP/compose-controller-identities/linux-$arch.json"
+            fi
             python3 scripts/package_compose_bundle.py assemble \
               --source-root . --controller "$controller" --platform "$os/$arch" \
               --controller-build-identity "$controller.identity.json" \
@@ -383,8 +386,16 @@ jobs:
               --package-name "$package" --output-dir dist
           done
 
+      - name: Retain original conventional controller builder receipts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compose-controller-build-identities-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: error
+          path: ${{ runner.temp }}/compose-controller-identities/*.json
+
       - name: Upload unpublished candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-candidate-${{ needs.identity.outputs.release_tag }}
           retention-days: 7
@@ -574,7 +585,7 @@ jobs:
           subject-path: dist/leapview-cli-*.tar.gz
 
       - name: Upload qualified authoring archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: authoring-cli-${{ needs.image.outputs.release_tag }}-${{ matrix.os }}-${{ matrix.arch }}
           retention-days: 7
@@ -586,7 +597,7 @@ jobs:
 
       - name: Upload authoring qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: authoring-qualification-${{ needs.image.outputs.release_tag }}-${{ matrix.os }}-${{ matrix.arch }}
           retention-days: 14
@@ -640,7 +651,7 @@ jobs:
           source-revision: ${{ needs.image.outputs.revision }}
 
       - name: Download unpublished candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-candidate-${{ needs.image.outputs.release_tag }}
           path: candidate
@@ -672,7 +683,7 @@ jobs:
 
       - name: Upload bounded qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: prepublication-${{ needs.image.outputs.release_tag }}-${{ matrix.arch }}
           retention-days: 14
@@ -773,7 +784,7 @@ jobs:
 
       - name: Upload MinIO conformance evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: minio-conformance-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 30
@@ -810,7 +821,7 @@ jobs:
 
       - name: Upload plan-to-GC conformance evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: plan-gc-conformance-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 30
@@ -858,13 +869,13 @@ jobs:
           source-revision: ${{ needs.image.outputs.revision }}
 
       - name: Download qualified candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-candidate-${{ needs.image.outputs.release_tag }}
           path: candidate
 
       - name: Download qualified authoring archives
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: authoring-cli-${{ needs.image.outputs.release_tag }}-*
           path: candidate/authoring

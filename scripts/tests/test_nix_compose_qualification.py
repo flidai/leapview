@@ -100,6 +100,92 @@ def timestamp(value):
 
 
 class ComposeQualificationTests(unittest.TestCase):
+    def test_conventional_receipt_artifact_requires_exact_successful_release_binding(self):
+        binding = self._release_binding()
+        artifact = {"id": 552, "name": "compose-controller-build-identities-1001-2",
+                    "digest": "sha256:" + "b" * 64, "expired": False,
+                    "workflow_run": {"id": 1001, "head_branch": "main", "head_sha": self.revision}}
+        self.assertEqual(qualification.select_conventional_receipt_artifact([artifact], binding), artifact)
+        for field, value in (("id", True), ("expired", True), ("name", "compose-controller-build-identities-1001-1")):
+            with self.subTest(field=field), self.assertRaises(qualification.QualificationError):
+                qualification.select_conventional_receipt_artifact([{**artifact, field: value}], binding)
+        for field, value in (("id", 1002), ("head_branch", "feature"), ("head_sha", "c" * 40)):
+            changed = {**artifact, "workflow_run": {**artifact["workflow_run"], field: value}}
+            with self.subTest(field=field), self.assertRaises(qualification.QualificationError):
+                qualification.select_conventional_receipt_artifact([changed], binding)
+        with self.assertRaises(qualification.QualificationError):
+            qualification.select_conventional_receipt_artifact([artifact, artifact], binding)
+
+    def _conventional_inputs(self, *, wrong_receipt=False):
+        files = {}
+        receipts = {}
+        for arch in ("amd64", "arm64"):
+            controller = self.root / ("controller-" + arch)
+            controller.write_bytes(("controller " + arch).encode())
+            controller.chmod(0o755)
+            receipt = self.root / (arch + ".json")
+            args = type("Args", (), {
+                "platform": "linux/" + arch, "image_reference": IMAGE,
+                "release_identity": self.release_identity, "controller": controller, "output": receipt,
+                "controller_build_identity": receipt, "source_root": self.source,
+                "package_name": f"leapview-compose-candidate-1001-2-linux-{arch}",
+                "output_dir": self.root / ("assembled-" + arch),
+            })()
+            reader = lambda _path, arch=arch: go_metadata("linux/" + arch)
+            composer.record_build_identity(args, metadata_reader=reader)
+            _, archive, sidecar = composer.assemble(args, metadata_reader=reader)
+            files["dist/" + archive.name] = archive.read_bytes()
+            files["dist/" + sidecar.name] = sidecar.read_bytes()
+            receipts[f"linux-{arch}.json"] = receipt.read_bytes()
+        with zipfile.ZipFile(self.release_artifact_zip) as archive:
+            files.update({name: archive.read(name) for name in archive.namelist() if name not in files})
+        with zipfile.ZipFile(self.release_artifact_zip, "w") as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+        if wrong_receipt:
+            altered = json.loads(receipts["linux-amd64.json"])
+            altered["binarySHA256"] = "sha256:" + "f" * 64
+            receipts["linux-amd64.json"] = json.dumps(altered).encode()
+        receipt_zip = self.root / "receipts.zip"
+        with zipfile.ZipFile(receipt_zip, "w") as archive:
+            for name, data in receipts.items():
+                archive.writestr(name, data)
+        artifact = {"id": 552, "name": "compose-controller-build-identities-1001-2",
+                    "digest": qualification._digest_bytes(receipt_zip.read_bytes()), "expired": False,
+                    "workflow_run": {"id": 1001, "head_branch": "main", "head_sha": self.revision}}
+        return receipt_zip, artifact, files, receipts
+
+    def test_conventional_original_archives_and_receipts_survive_without_rebuilding(self):
+        receipt_zip, artifact, files, receipts = self._conventional_inputs()
+        output = self.root / "conventional"
+        qualification.extract_conventional_bundles(self.release_artifact_zip, receipt_zip, artifact,
+            self._release_binding(), self.source, output,
+            metadata_reader=lambda path: go_metadata("linux/arm64" if b"arm64" in path.read_bytes() else "linux/amd64"))
+        for arch in ("amd64", "arm64"):
+            path = output / arch
+            name = f"leapview-compose-candidate-1001-2-linux-{arch}.tar.gz"
+            self.assertEqual((path / name).read_bytes(), files["dist/" + name])
+            self.assertEqual((path / "controller-build-identity.json").read_bytes(), receipts[f"linux-{arch}.json"])
+            producer = json.loads((path / "bundle-producer.json").read_bytes())
+            self.assertEqual(producer["producer"], "conventional")
+            self.assertFalse(producer["nixQualification"])
+            self.assertFalse(producer["releaseAdmission"])
+            self.assertEqual(producer["receiptArtifactDigest"], artifact["digest"])
+
+    def test_conventional_receipt_must_match_actual_archived_controller(self):
+        receipt_zip, artifact, _, _ = self._conventional_inputs(wrong_receipt=True)
+        with self.assertRaisesRegex(qualification.QualificationError, "hash differs"):
+            qualification.extract_conventional_bundles(self.release_artifact_zip, receipt_zip, artifact,
+                self._release_binding(), self.source, self.root / "conventional",
+                metadata_reader=lambda path: go_metadata())
+
+    def test_conventional_receipt_zip_must_match_authenticated_api_digest(self):
+        receipt_zip, artifact, _, _ = self._conventional_inputs()
+        receipt_zip.write_bytes(receipt_zip.read_bytes() + b"changed")
+        with self.assertRaisesRegex(qualification.QualificationError, "API digest"):
+            qualification.extract_conventional_bundles(self.release_artifact_zip, receipt_zip, artifact,
+                self._release_binding(), self.source, self.root / "conventional")
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

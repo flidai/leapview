@@ -1513,18 +1513,22 @@
       "properties": {
         "columns": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "gap": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "padding": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "rowHeight": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -1541,18 +1545,22 @@
       "properties": {
         "columns": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "gap": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "padding": {
           "format": "int32",
+          "minimum": 0,
           "type": "integer"
         },
         "rowHeight": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -2075,18 +2083,22 @@
       "properties": {
         "column": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "columnSpan": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "row": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         },
         "rowSpan": {
           "format": "int32",
+          "minimum": 1,
           "type": "integer"
         }
       },

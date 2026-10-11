@@ -370,6 +370,9 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 		report.Admission = admission
 	}
 	if HandoffPresent(report.Handoff) {
+		if err := report.Handoff.validateOccurrence(occurrence.ID); err != nil {
+			return coordinator.abort(ctx, request, report, "replacement_handoff_checkpoint_mismatch", err, false)
+		}
 		if err := report.Handoff.Validate(normalized, occurrence.ArtifactIdentity); err != nil {
 			return coordinator.abort(ctx, request, report, "replacement_handoff_checkpoint_mismatch", err, false)
 		}
@@ -380,12 +383,15 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 		if _, err := coordinator.activeOccurrence(ctx, request); err != nil {
 			return report, err
 		}
-		handoff, err := coordinator.dependencies.Handoff.CreateHandoff(ctx, HandoffRequest{Set: normalized, ArtifactIdentity: occurrence.ArtifactIdentity, Databases: slices.Clone(report.Databases), Objects: slices.Clone(report.Objects)})
+		handoff, err := coordinator.dependencies.Handoff.CreateHandoff(ctx, HandoffRequest{OccurrenceID: occurrence.ID, Set: normalized, ArtifactIdentity: occurrence.ArtifactIdentity, Databases: slices.Clone(report.Databases), Objects: slices.Clone(report.Objects)})
 		if err != nil {
 			return coordinator.abort(ctx, request, report, "replacement_handoff_failed", err, false)
 		}
 		if _, err := coordinator.activeOccurrence(ctx, request); err != nil {
 			return report, fmt.Errorf("%w: replacement handoff completed after lease loss: %v", ErrIndeterminate, err)
+		}
+		if err := handoff.validateOccurrence(occurrence.ID); err != nil {
+			return coordinator.abort(ctx, request, report, "replacement_handoff_mismatch", err, false)
 		}
 		if err := handoff.Validate(normalized, occurrence.ArtifactIdentity); err != nil {
 			return coordinator.abort(ctx, request, report, "replacement_handoff_mismatch", err, false)
@@ -724,6 +730,9 @@ func validateCheckpoint(set recoveryset.RecoverySet, request Request, artifactId
 		return fmt.Errorf("%w: durable admission checkpoint is inconsistent", ErrInconsistent)
 	}
 	if HandoffPresent(report.Handoff) {
+		if err := report.Handoff.validateOccurrence(request.OccurrenceID); err != nil {
+			return err
+		}
 		if err := report.Handoff.Validate(normalized, artifactIdentity); err != nil {
 			return err
 		}

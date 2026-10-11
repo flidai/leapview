@@ -19,11 +19,11 @@ export async function copyText(value: string): Promise<boolean> {
 
 class PlaygroundReviewTools extends LitElement {
   @property({ attribute: false }) getSnapshot?: () => ExampleSnapshot
-  @property({ attribute: false }) getCode?: () => string
+  @property({ attribute: false }) getCode?: () => string | undefined
   @property({ attribute: false }) getExample?: () => StatefulExample | null
   @property() route = ''
   @property({ attribute: false }) exampleReady = false
-  @state() private code = ''
+  @state() private code: string | undefined
   @state() private message = ''
   @state() private pinned = ''
   @state() private pinnedLabel = ''
@@ -35,7 +35,7 @@ class PlaygroundReviewTools extends LitElement {
   @state() private coverage: FixtureControl[] = []
 
   protected willUpdate(changed: Map<PropertyKey, unknown>) {
-    if (changed.has('route')) { this.code = ''; this.message = ''; this.coverage = [] }
+    if (changed.has('route')) { this.code = undefined; this.message = ''; this.coverage = [] }
   }
 
   protected updated(changed: Map<PropertyKey, unknown>) {
@@ -76,7 +76,7 @@ class PlaygroundReviewTools extends LitElement {
 
   private showCode = async () => {
     if (!this.exampleReady) return
-    this.code = this.getCode?.() || '// See Usage & events for this component.'
+    this.code = this.getCode?.() ?? '// See Usage & events for this component.'
     this.message = await copyText(this.code) ? 'Code copied.' : 'Clipboard unavailable. Select and copy the code below.'
   }
 
@@ -134,7 +134,7 @@ class PlaygroundReviewTools extends LitElement {
       </details>
       ${chart ? html`<a href=${`https://github.com/flidai/leapview/blob/main/docs/visuals/${encodeURIComponent(chart)}.md`}>Authored ${chart} YAML examples</a>` : nothing}
       ${this.message ? html`<span role="status">${this.message}</span>` : nothing}
-      ${this.code ? html`<pre tabindex="0" aria-label="Current component code">${this.code}</pre>` : nothing}
+      ${this.code !== undefined ? html`${this.code === '' ? html`<p class="note">The current source is empty.</p>` : nothing}<pre tabindex="0" aria-label="Current component code">${this.code}</pre>` : nothing}
       ${this.pinned ? html`<div class="reference"><strong>Pinned reference · ${this.pinnedLabel}</strong>${keyed(this.pinRevision, html`<iframe title="Pinned example comparison" src=${this.pinned}></iframe>`)}</div>` : nothing}
       ${keyed(this.route, html`<div class="checks" role="group" aria-label="Manual review checklist">
         <label><input type="checkbox">Keyboard: Tab order, visible focus, Enter, arrows, and Escape.</label>

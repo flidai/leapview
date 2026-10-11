@@ -19,7 +19,7 @@ export async function openExample(page: Page, route: string, options: ExampleOpt
   await page.goto('about:blank')
   await page.goto(`/?${parameters}#${route}`)
   // The lazy-load status is visible before the example module is ready.
-  const example = page.locator('playground-app .workspace > main > .viewport > :not([role="status"])')
+  const example = page.locator('playground-app .workspace > main > .viewport > :not([role="status"]):not(.example-loading)')
   await example.waitFor({ state: 'visible' })
   await example.evaluate(async (element) => {
     await (element as HTMLElement & { updateComplete?: Promise<unknown> }).updateComplete

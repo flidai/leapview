@@ -135,7 +135,15 @@ export class RendererRegistry {
   }
 
   load(registration: LoadedRegistration): Promise<RendererAdapter> {
-    registration.adapter ??= registration.load()
+    if (!registration.adapter) {
+      const pending = registration.load()
+      registration.adapter = pending
+      // A failed chunk request must not poison every later host and retry.
+      // Return the original promise so successful loads keep their timing.
+      void pending.catch(() => {
+        if (registration.adapter === pending) registration.adapter = undefined
+      })
+    }
     return registration.adapter
   }
 }

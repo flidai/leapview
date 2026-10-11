@@ -1,6 +1,6 @@
 import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { loadMonacoRuntime } from './monaco-runtime'
+import type { loadMonacoRuntime } from './monaco-runtime'
 
 type MonacoApi = Awaited<ReturnType<typeof loadMonacoRuntime>>
 type MonacoEditor = ReturnType<MonacoApi['editor']['create']>
@@ -21,6 +21,7 @@ class CodeEditor extends LitElement {
   private editor: MonacoEditor | null = null
   private model: MonacoModel | null = null
   private contentChangeDisposable: MonacoDisposable | null = null
+  private initialization: AbortController | null = null
   private suppressChange = false
   private hasLocalValueChange = false
 
@@ -49,6 +50,7 @@ class CodeEditor extends LitElement {
     .monaco-host {
       box-sizing: border-box;
       width: 100%;
+      min-width: 0;
       height: 100%;
       min-height: 22rem;
     }
@@ -107,6 +109,11 @@ class CodeEditor extends LitElement {
   connectedCallback(): void {
     super.connectedCallback()
     this.adoptValueAttribute()
+    if (!this.error) {
+      this.loading = true
+      this.initialization = new AbortController()
+      void this.initializeEditor(this.initialization)
+    }
   }
 
   attributeChangedCallback(name: string, oldValue: string | null, value: string | null): void {
@@ -116,10 +123,6 @@ class CodeEditor extends LitElement {
     }
   }
 
-  firstUpdated(): void {
-    void this.initializeEditor()
-  }
-
   protected updated(changed: PropertyValues<this>): void {
     if (changed.has('value')) this.syncValueToEditor()
     if (changed.has('language')) this.syncLanguageToEditor()
@@ -127,6 +130,8 @@ class CodeEditor extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.initialization?.abort()
+    this.initialization = null
     this.disposeEditor()
     super.disconnectedCallback()
   }
@@ -151,14 +156,19 @@ class CodeEditor extends LitElement {
     `
   }
 
-  private async initializeEditor(): Promise<void> {
+  private async initializeEditor(initialization: AbortController): Promise<void> {
+    const { signal } = initialization
     try {
+      await this.updateComplete
+      if (signal.aborted || !this.isConnected) return
       const host = this.shadowRoot?.querySelector<HTMLElement>('.monaco-host')
       if (!host) return
-      await this.waitForMonacoStyles()
-      if (!this.isConnected) return
+      // Keep the editor runtime outside the initial page graph, and load it
+      // alongside its stylesheet once this editor has mounted.
+      const [{ loadMonacoRuntime }] = await Promise.all([import('./monaco-runtime'), this.waitForMonacoStyles(signal)])
+      if (signal.aborted || !this.isConnected) return
       const monaco = await loadMonacoRuntime()
-      if (!this.isConnected) return
+      if (signal.aborted || !this.isConnected) return
       this.monaco = monaco
       const typography = this.editorTypography()
       this.model = monaco.editor.createModel(this.sourceValue, this.languageID)
@@ -196,9 +206,12 @@ class CodeEditor extends LitElement {
       this.loading = false
       this.error = ''
     } catch {
+      if (signal.aborted || !this.isConnected) return
       this.disposeEditor()
       this.loading = false
       this.error = 'Editor failed to load. Using basic text editing.'
+    } finally {
+      if (this.initialization === initialization) this.initialization = null
     }
   }
 
@@ -271,7 +284,8 @@ class CodeEditor extends LitElement {
     return { fontFamily, fontSize, lineHeight }
   }
 
-  private waitForMonacoStyles(): Promise<void> {
+  private waitForMonacoStyles(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(signal.reason)
     const link = this.shadowRoot?.querySelector<HTMLLinkElement>('link[data-monaco-styles]')
     if (!link) return Promise.resolve()
     if (link.sheet) return Promise.resolve()
@@ -279,6 +293,7 @@ class CodeEditor extends LitElement {
       const cleanup = () => {
         link.removeEventListener('load', handleLoad)
         link.removeEventListener('error', handleError)
+        signal.removeEventListener('abort', handleAbort)
       }
       const handleLoad = () => {
         cleanup()
@@ -288,8 +303,13 @@ class CodeEditor extends LitElement {
         cleanup()
         reject(new Error('Monaco stylesheet failed to load'))
       }
+      const handleAbort = () => {
+        cleanup()
+        reject(signal.reason)
+      }
       link.addEventListener('load', handleLoad, { once: true })
       link.addEventListener('error', handleError, { once: true })
+      signal.addEventListener('abort', handleAbort, { once: true })
     })
   }
 }

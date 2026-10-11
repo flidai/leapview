@@ -548,3 +548,52 @@ does not contain these target-owned grants.
 After a successful runtime deploy, the workflow publishes from that verified
 deployed revision. Dispatch `publish` to retry a content-only failure. It uses
 the deployed revision, not an unrelated newer main revision.
+
+An enabled agent configuration retained from an older image may require an
+explicit customer credential transition before the new image can become ready.
+For that case the credential custodian stages a versioned JSON object at
+`/etc/leapview-provider-cfo/agent-credential-transitions/<reference>.json`. The
+provider root and transition directory must be root-owned mode `0700`; the file
+must be root-owned mode `0600`, regular, singly linked, and have no symlink
+ancestors. Ancestors above the private root must be root-owned and not writable
+by group or others. This source stays with the custodian after success; withdraw
+it explicitly when it is no longer needed.
+
+The object contains `version: 1`, a UUID `transitionVersion`, a fresh 32-byte
+hexadecimal `nonce`, the installation's `installationId`, the product
+`instanceId`, `customerOwnerId`, `expectedRevision`, administrator `actorId`,
+`loginEmail`, `adminPassword`, `apiKey`, and `provider` containing `enabled`,
+`model`, `baseUrl`, `apiMode`, and `reasoningEffort`. The provider settings must
+retain the currently stored enabled configuration. The endpoint must use HTTPS
+on port 443 with a DNS hostname resolving to public IPv4; credential replacement during deployment
+does not authorize an endpoint or model change. Stage this through the
+custodian's private secret handoff, never a workflow input, terminal output,
+repository file, or artifact.
+
+Use only the safe reference (letters, digits, `_` or `-`, at most 64 characters)
+in the optional `agent_credential_transition` dispatch input. Run a fresh
+`prepare`, then `upgrade` with the same reference and unchanged staged object.
+The private request binds its whole-file digest, version, identities, expected
+revision, settings, and a fixed public provider address. Changed inputs require
+new preparation; no transition occurs without this opt-in.
+
+Each candidate performs an authenticated administrator Test followed by Save
+before its readiness deadline begins. The clone remains on its internal Docker
+network: an operation-owned sidecar accepts only its app and authenticated
+host-initiated channels to the fixed provider address. Original TLS hostname and
+certificate validation remain enabled. The controller closes and joins every
+provider channel and removes the sidecar before releasing Save, then restarts
+the cloned app without the temporary hostname alias and verifies readiness and
+the existing browser gates. The live candidate uses its normal provider route
+behind the existing traffic fence. Administrator credentials and the provider
+key travel directly from authenticated SSH into the private browser driver's
+stdin; no credential environment variable or workflow artifact is created.
+
+If Test, cleanup, Save, or acknowledgment fails, the operation remains fenced
+and follows the existing paired recovery. A lost Save acknowledgment is retried
+only inside the same driver with the original Test receipt, exact input,
+original expected revision, and current ETag. A disconnected driver is not
+resumed with a new Test or inferred activation. Use the original persisted
+operation for explicit recovery; terminal recovery never requires rereading the
+custodian's plaintext source. Per-operation relay and checkpoint files are
+removed on completion or cleanup; the original staged source is retained.

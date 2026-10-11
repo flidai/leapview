@@ -1,0 +1,11 @@
+apiVersion: leapview.dev/v1
+kind: Connection
+metadata:
+  id: connection:olist
+  name: olist
+  displayName: Olist CSV files
+spec:
+  type: managed
+  defaults:
+    csv:
+      header: true

@@ -2827,19 +2827,22 @@ test('dashboard builder keeps an accessible responsive surface and exposes loadi
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: undefined, status: { loading: true, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 0 } })
       await element.updateComplete
-      const loadingState = root.querySelector('.state') as HTMLElement | null
+      const loadingState = root.querySelector('lv-dashboard-generation') as any
+      await loadingState?.updateComplete
       return {
         display: responsiveDisplay,
         hasSearchLabel,
         buttonLabels,
-        loading: loadingState?.textContent?.trim(),
+        loading: loadingState?.shadowRoot?.querySelector('[role=status]')?.textContent?.trim(),
+        loadingBusy: loadingState?.shadowRoot?.querySelector('[aria-busy]')?.getAttribute('aria-busy'),
         nestedMainCount,
       }
     })
     expect(state.display).toBe('block')
     expect(state.hasSearchLabel).toBe(true)
     expect(state.buttonLabels).toContain('Publish')
-    expect(state.loading).toContain('Loading dashboard builder')
+    expect(state.loading).toContain('Opening dashboard builder')
+    expect(state.loadingBusy).toBe('true')
     expect(state.nestedMainCount).toBe(0)
   } finally {
     await page.close()

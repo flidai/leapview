@@ -44,6 +44,10 @@ func (firstSourceAuthorityAudit) RecordAuditEvent(ctx context.Context, tx pgx.Tx
 }
 
 func newFirstSourceAuthorityFixture(t *testing.T) *firstSourceAuthorityFixture {
+	return newFirstSourceAuthorityFixtureWithPublisher(t, false)
+}
+
+func newFirstSourceAuthorityFixtureWithPublisher(t *testing.T, publisher bool) *firstSourceAuthorityFixture {
 	t.Helper()
 	h := postgrestest.Start(t)
 	db := h.NewDatabase(t, "first_source_authority")
@@ -75,15 +79,36 @@ func newFirstSourceAuthorityFixture(t *testing.T) *firstSourceAuthorityFixture {
 	require.NoError(t, err)
 	operator, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{Email: "first-operator@example.com"})
 	require.NoError(t, err)
+	if publisher {
+		operator = owner
+	}
 	_, err = repository.ChangeLocalPassword(t.Context(), operator.Principal.ID, operator.Password, "A-real-first-source-password-42!")
 	require.NoError(t, err)
 	_, err = bootstrap.ClaimProject(t.Context(), platformbootstrap.ProjectClaimInput{ProjectID: "project:first", Environment: "prod", ClaimedBy: owner.Principal.ID, ClaimedAt: time.Now().UTC()})
 	require.NoError(t, err)
-	role, err := access.NewTypedRoleBinding("initial-owner", "Owner", access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: owner.Principal.ID}, access.PermissionRoleProjectAdmin, "project:first")
+	ownerID, ownerName := "initial-owner", "Owner"
+	if publisher {
+		ownerID, ownerName = access.BootstrapOwnerBindingID, access.BootstrapOwnerBindingName
+	}
+	role, err := access.NewTypedRoleBinding(ownerID, ownerName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: owner.Principal.ID}, access.PermissionRoleProjectAdmin, "project:first")
 	require.NoError(t, err)
 	scope := access.AuthorizationPolicyScope{TargetID: target, ProjectID: "project:first", Environment: "prod"}
 	policy, err := repository.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{Scope: scope, Binding: role, IdempotencyKey: "initial-owner"})
 	require.NoError(t, err)
+	if publisher {
+		for _, spec := range []struct {
+			id, name string
+			role     access.PermissionRole
+		}{
+			{access.BootstrapEditorBindingID, access.BootstrapEditorBindingName, access.PermissionRoleEditor},
+			{access.BootstrapReleaseOperatorBindingID, access.BootstrapReleaseOperatorBindingName, access.PermissionRoleReleaseOperator},
+		} {
+			binding, err := access.NewTypedRoleBinding(spec.id, spec.name, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: owner.Principal.ID}, spec.role, "project:first")
+			require.NoError(t, err)
+			policy, err = repository.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{Scope: scope, Binding: binding, ExpectedRevision: policy.Revision, IdempotencyKey: spec.id})
+			require.NoError(t, err)
+		}
+	}
 	intent := credentialmodule.FirstSourceAdmissionIntent{Version: 1, OperationID: "0198f2c0-7c7a-7f00-8a11-000000000301", TargetID: target, ProjectID: scope.ProjectID, Environment: scope.Environment, CustomerOwnerID: "customer:first", OperatorPrincipalID: operator.Principal.ID, ConnectionID: "connection:warehouse", BindingID: "binding:first", ExpectedPolicyRevision: policy.Revision, ExpectedPolicyDigest: policy.Digest,
 		Endpoint:            credentialmodule.FirstSourceEndpoint{Host: "postgres.internal", Port: 5432, Database: "analytics", TLSMode: "require"},
 		CredentialReference: credentialmodule.FirstSourceCredentialReference{ProjectID: "project:first", Environment: "prod", SecretPath: "/customer/warehouse", SecretKey: "password"}}
@@ -369,9 +394,22 @@ func TestFirstSourceCredentialAuthorityHoldsSessionAndTargetUntilCallbackEnds(t 
 		var postgresErr *pgconn.PgError
 		require.ErrorAs(t, err, &postgresErr)
 		require.Equal(t, "55P03", postgresErr.Code, "publication must wait until the bounded callback finishes")
-		revokeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		defer cancel()
-		require.Error(t, f.repository.DeleteSession(revokeCtx, f.session), "the live session row is locked through credential work")
+		require.NoError(t, competing.Rollback(ctx))
+
+		revocation, err := f.pool.Begin(ctx)
+		require.NoError(t, err)
+		defer revocation.Rollback(context.Background())
+		_, err = revocation.Exec(ctx, "SET LOCAL lock_timeout='200ms'")
+		require.NoError(t, err)
+		revoker, err := accesspostgres.NewAccess(revocation, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("k", 32))})
+		require.NoError(t, err)
+		err = revoker.DeleteSession(ctx, f.session)
+		var revocationErr *pgconn.PgError
+		require.ErrorAs(t, err, &revocationErr)
+		require.Equal(t, "55P03", revocationErr.Code, "the live session row is locked through credential work")
+		// Client cancellation can return before an autocommit DELETE finishes on
+		// the server. Roll back this failed transaction before releasing the lock.
+		require.NoError(t, revocation.Rollback(ctx))
 		return nil
 	})
 	require.NoError(t, err)

@@ -56,6 +56,20 @@ function accessSubjectHref(assignment: AccessRoleAssignmentSignal, principals: A
   return `/admin/principals/${encodeURIComponent(assignment.subjectId)}`
 }
 
+type RolePreset = AccessAdministrationSignal['rolePresets'][number]
+
+// This grouping is presentation only. Keep unfamiliar server presets visible;
+// the server remains the authority for role definitions and grant validation.
+function groupRolePresets(presets: RolePreset[]) {
+  const specialistIDs = new Set(['publisher', 'release_approver', 'release_operator', 'auditor'])
+  return {
+    common: presets.filter((preset) => !specialistIDs.has(preset.role)),
+    specialist: presets.filter((preset) => specialistIDs.has(preset.role)),
+  }
+}
+
+const specialistRolePurpose = 'Dashboard publishing, release approval and operation, and audit review.'
+
 function rolePermissionSummary(permissions: string[]): string {
   if (!permissions.length) return 'Legacy role permissions'
   const nouns = new Set(permissions.map((permission) => permission.split('.')[0]).filter(Boolean))
@@ -121,6 +135,8 @@ class LeapViewRoleGrantDialog extends DatastarLit(LitElement) {
     const principals = signal.principals.map((principal) => ({ value: `principal:${principal.id}`, label: principal.displayName || principal.email || principal.id, kind: principal.kind === 'service_principal' || principal.kind === 'service' ? 'Service account' : 'User' }))
     const groups = signal.groups.map((group) => ({ value: `group:${group.id}`, label: group.name || group.id, kind: 'Group' }))
     const subjects = [...groups, ...principals]
+    const roles = groupRolePresets(signal.rolePresets)
+    const selectedSpecialist = roles.specialist.find((preset) => preset.role === this.selectedRole)
     return html`<dialog class="role-grant-dialog" aria-labelledby="grant-role-title" @cancel=${this.close} @click=${this.closeOnBackdrop}>
       <section class="modal role-grant-modal">
         <header class="modal-header"><div class="modal-title"><h2 id="grant-role-title">Grant project access</h2><p class="muted">Assign a maintained role to an identity. The exact permissions are captured with the grant.</p></div><button class="modal-close" type="button" aria-label="Close" @click=${this.close}>${lucideIcon(X, { size: 18 })}</button></header>
@@ -128,25 +144,34 @@ class LeapViewRoleGrantDialog extends DatastarLit(LitElement) {
           <div class="role-scope"><span>Scope</span><strong>Current project</strong></div>
           ${this.subjectId ? html`<div class="role-scope"><span>Identity</span><strong>${this.subjectName || this.subjectId}</strong></div>` : html`
             <label>Identity<select required .value=${this.selectedSubject} @change=${(event: Event) => { this.selectedSubject = (event.target as HTMLSelectElement).value }}><option value="">Select a user, group, or service account</option>${subjects.map((subject) => html`<option value=${subject.value}>${subject.label} · ${subject.kind}</option>`)}</select></label>`}
-          <fieldset class="role-options"><legend>Role</legend>${signal.rolePresets.map((preset) => html`
-            <div class="role-option-card">
-              <label class=${`role-option ${this.selectedRole === preset.role ? 'selected' : ''}`}>
-                <input type="radio" name="role" value=${preset.role} .checked=${this.selectedRole === preset.role} @change=${() => { this.selectedRole = preset.role }}>
-                <span><strong>${preset.name}</strong><small>${preset.description}</small><small class="role-permission-summary">${rolePermissionSummary(preset.permissions)}</small></span>
-              </label>
-              <details class="role-inspector"><summary>Inspect exact included permissions</summary>
-                <div class="role-definition-facts"><span>Permission profile</span><strong>${presetProfile(preset)}</strong><span>Grant scope</span><strong>Current project</strong></div>
-                ${rolePermissionList(preset)}
-                <p class="muted">Only the permissions listed here are included. The role description summarizes key boundaries; other permissions are not implied.</p>
-              </details>
-            </div>`)}
-          </fieldset>
+          <fieldset class="role-options"><legend>Common roles</legend>${roles.common.map((preset) => this.renderRoleOption(preset))}</fieldset>
+          ${roles.specialist.length ? html`<details class="role-specialists" ?open=${!!selectedSpecialist}>
+            <summary>Specialist roles (${roles.specialist.length})${selectedSpecialist ? html`<span class="role-specialist-selection">Selected: ${selectedSpecialist.name}</span>` : nothing}</summary>
+            <div class="role-specialists-body"><p class="muted">${specialistRolePurpose}</p>
+              <fieldset class="role-options" aria-label="Specialist roles">${roles.specialist.map((preset) => this.renderRoleOption(preset))}</fieldset>
+            </div>
+          </details>` : nothing}
           <p class="muted">Fine-grained access remains resource-owned. Use resource sharing for one dashboard or model; use roles for ongoing project responsibilities.</p>
           ${roleMutationNotice(signal)}
           <div class="modal-actions"><button type="button" @click=${this.close}>Cancel</button><button class="primary" type="submit" ?disabled=${!this.selectedRole || !(this.subjectId || this.selectedSubject) || signal.loading || !!signal.roleMutationUnavailableReason}>Grant access</button></div>
         </form>
       </section>
     </dialog>`
+  }
+
+  private renderRoleOption(preset: RolePreset) {
+    return html`
+      <div class="role-option-card">
+        <label class=${`role-option ${this.selectedRole === preset.role ? 'selected' : ''}`}>
+          <input type="radio" name="role" value=${preset.role} .checked=${this.selectedRole === preset.role} @change=${() => { this.selectedRole = preset.role }}>
+          <span><strong>${preset.name}</strong><small>${preset.description}</small><small class="role-permission-summary">${rolePermissionSummary(preset.permissions)}</small></span>
+        </label>
+        <details class="role-inspector"><summary>Inspect exact included permissions</summary>
+          <div class="role-definition-facts"><span>Permission profile</span><strong>${presetProfile(preset)}</strong><span>Grant scope</span><strong>Current project</strong></div>
+          ${rolePermissionList(preset)}
+          <p class="muted">Only the permissions listed here are included. The role description summarizes key boundaries; other permissions are not implied.</p>
+        </details>
+      </div>`
   }
 
   private submit = (event: SubmitEvent): void => {
@@ -530,12 +555,13 @@ class LeapViewAccessOverview extends DatastarLit(LitElement) {
   static styles = [pageHeaderStyles, settingsSurfaceStyles, tabBarStyles]
   @state() private section: 'roles' | 'permissions' = 'roles'
   @state() private selectedCatalogRole = ''
+  @state() private roleSearch = ''
   get accessState(): AccessAdministrationSignal { return this.signal('adminAccess', emptyAccessAdministration) }
 
   render() {
     const signal = this.accessState
     return html`<section class="access-overview surface" aria-label="Roles and permissions">
-      ${renderPageHeader('Roles & permissions', 'Inspect built-in roles and the exact permissions they contain.')}
+      ${renderPageHeader('Roles & permissions', 'Common roles for everyday work. Specialist roles for publishing, releases, and audits.')}
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
       ${signal.message ? html`<p class="notice" role="status">${signal.message}</p>` : nothing}
       <div class="tab-bar" role="tablist" aria-label="Access section">
@@ -548,21 +574,31 @@ class LeapViewAccessOverview extends DatastarLit(LitElement) {
   }
 
   private renderRoleCatalogue(signal: AccessAdministrationSignal) {
-    const presets = signal.rolePresets
+    const query = this.roleSearch.trim().toLowerCase()
+    const presets = signal.rolePresets.filter((preset) => [preset.name, preset.role, preset.description, ...preset.permissions].join(' ').toLowerCase().includes(query))
+    const roles = groupRolePresets(presets)
     return html`<section class="role-catalogue" aria-label="Built-in project roles">
-      <header class="role-catalogue-heading"><div><h2>Built-in project roles</h2><p class="muted">Select a role to inspect its exact permissions.</p></div><span>${presets.length} role${presets.length === 1 ? '' : 's'}</span></header>
-      <lv-entity-list
-        .items=${presets.map((preset): EntityListItem => ({ id: preset.role, title: preset.name, icon: 'none', columns: { description: preset.description, permissions: rolePermissionSummary(preset.permissions) } }))}
-        .columns=${roleCatalogColumns}
-        catalog-table
-        row-action="inspect"
-        client-filter
-        list-label="Built-in project roles"
-        search-placeholder="Search roles"
-        empty-text="No built-in roles are available."
-        @lv-entity-list-row-action=${(event: CustomEvent<{ item: EntityListItem }>) => this.openCatalogRole(event.detail.item.id)}
-      ></lv-entity-list>
+      <header class="role-catalogue-heading"><div><h2>Built-in project roles</h2><p class="muted">Select a role to inspect its exact permissions.</p></div><span>${signal.rolePresets.length} role${signal.rolePresets.length === 1 ? '' : 's'}</span></header>
+      <input class="role-catalogue-search" type="search" aria-label="Search roles" placeholder="Search roles" .value=${this.roleSearch} @input=${(event: Event) => { this.roleSearch = (event.target as HTMLInputElement).value }}>
+      ${roles.common.length ? html`<section class="role-catalogue-group" aria-label="Common roles"><h3>Common roles</h3>${this.renderRoleList(roles.common, 'Common roles')}</section>` : nothing}
+      ${roles.specialist.length ? query
+        ? html`<section class="role-catalogue-group" aria-label="Specialist roles"><h3>Specialist roles</h3>${this.renderRoleList(roles.specialist, 'Specialist roles')}</section>`
+        : html`<details class="role-specialists"><summary>Specialist roles (${roles.specialist.length})</summary><div class="role-specialists-body"><p class="muted">${specialistRolePurpose}</p>${this.renderRoleList(roles.specialist, 'Specialist roles')}</div></details>`
+        : nothing}
+      ${!presets.length ? html`<p class="muted" role="status">${query ? 'No roles match your search.' : 'No built-in roles are available.'}</p>` : nothing}
     </section>`
+  }
+
+  private renderRoleList(presets: RolePreset[], label: string) {
+    return html`<lv-entity-list
+      .items=${presets.map((preset): EntityListItem => ({ id: preset.role, title: preset.name, icon: 'none', columns: { description: preset.description, permissions: rolePermissionSummary(preset.permissions) } }))}
+      .columns=${roleCatalogColumns}
+      catalog-table
+      row-action="inspect"
+      list-label=${label}
+      .showToolbar=${false}
+      @lv-entity-list-row-action=${(event: CustomEvent<{ item: EntityListItem }>) => this.openCatalogRole(event.detail.item.id)}
+    ></lv-entity-list>`
   }
 
   private renderPermissionCatalogue(signal: AccessAdministrationSignal) {

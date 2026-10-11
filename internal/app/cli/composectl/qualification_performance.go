@@ -333,6 +333,9 @@ func finalizeQualificationPerformanceReport(
 	report.Comparison.MinimumMeaningfulLatencyDeltaMs =
 		policy.Comparison.MinimumMeaningfulLatencyDeltaMs
 	report.Comparison.Failures = comparisonFailures
+	if report.Comparison.Failures == nil {
+		report.Comparison.Failures = []string{}
+	}
 	var environmentFailures []string
 	if report.Environment.LogicalCPUs < policy.Assumptions.MinimumLogicalCPUs {
 		environmentFailures = append(environmentFailures, fmt.Sprintf(
@@ -360,6 +363,11 @@ func finalizeQualificationPerformanceReport(
 	report.Failures = append(report.Failures, absoluteFailures...)
 	report.Failures = append(report.Failures, comparisonFailures...)
 	report.Failures = append(report.Failures, report.Reliability.Failures...)
+	// Finalized reports expose failure collections as JSON arrays, including
+	// successful bootstrap runs that have no baseline or recorded failures.
+	if report.Failures == nil {
+		report.Failures = []string{}
+	}
 	report.Result = "success"
 	if len(report.Failures) > 0 {
 		report.Result = "failure"

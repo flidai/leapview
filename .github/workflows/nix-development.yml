@@ -13,6 +13,14 @@ on:
       - 'bun.lock'
       - 'Taskfile.yml'
       - 'scripts/check_nix_development.mjs'
+      - 'scripts/prepare_sqlc_modules.sh'
+      - 'scripts/tests/test_prepare_sqlc_modules.py'
+      - 'scripts/prepare_ci_fixture_images.sh'
+      - 'scripts/tests/test_prepare_ci_fixture_images.py'
+      - 'scripts/postgres-conformance-tests.sh'
+      - 'scripts/postgres-app-shards.sh'
+      - 'internal/platform/postgres/postgrestest/**'
+      - 'internal/platform/testminio/**'
       - 'scripts/develop.sh'
       - 'desktop/**'
       - 'scripts/export_nix_ci_environment.py'
@@ -20,6 +28,13 @@ on:
       - 'scripts/tests/test_orchestration_cache.py'
       - '.github/workflows/orchestration-cache.yml'
       - 'scripts/nix_ci_contract.test.ts'
+      - 'scripts/qualify_managed_replacement_ci.sh'
+      - 'scripts/ci_dependency_acquisition_contract.test.ts'
+      - 'scripts/ci_docker_contract.test.ts'
+      - 'scripts/configure_ci_docker_mirror.py'
+      - 'scripts/mask_ci_docker_credentials.py'
+      - 'scripts/tests/test_ci_docker_credentials.py'
+      - 'scripts/tests/test_ci_docker_mirror.py'
       - 'scripts/nix_desktop_candidate_contract.test.ts'
       - 'scripts/nix_compose_candidate_contract.test.ts'
       - 'scripts/tests/test_nix_ci_environment.py'
@@ -165,7 +180,7 @@ jobs:
             --evidence-dir .tmp/native-desktop/evidence
       - name: Retain native Desktop candidate and qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-desktop-${{ github.run_id }}-${{ github.run_attempt }}-amd64
           path: .tmp/native-desktop/
@@ -212,7 +227,7 @@ jobs:
           python3 scripts/check_nix_site_image.py --archive .tmp/native-site/image.tar \
             --source-root "$PWD" --evidence-dir .tmp/native-site
       - name: Retain the image and native runtime receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-site-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .tmp/native-site/
@@ -278,7 +293,7 @@ jobs:
           PY
       - name: Retain native derivation evidence and exact extension bytes
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-application-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .tmp/native-application/
@@ -323,14 +338,14 @@ jobs:
           done
       - name: Retain immutable candidate archives
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}
           path: cli-candidates/
           retention-days: 14
           if-no-files-found: error
       - name: Retain separate Compose controller candidates and static reports
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}
           path: compose-candidates/
@@ -359,7 +374,7 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Retrieve the exact candidate artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.cli-build.outputs.artifact_id }}
           merge-multiple: true
@@ -389,7 +404,7 @@ jobs:
           done
       - name: Retain raw Go reports and diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-go-evidence-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .tmp/nix-cli-go-evidence/
@@ -422,7 +437,7 @@ jobs:
         with:
           browser: 'false'
       - name: Retrieve the exact candidate artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.cli-build.outputs.artifact_id }}
           merge-multiple: true
@@ -441,7 +456,7 @@ jobs:
             --evidence-dir .tmp/nix-cli-evidence
       - name: Retain hash-bound compatibility evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-cli-compatibility-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .tmp/nix-cli-evidence/
@@ -504,7 +519,11 @@ jobs:
       - name: Exercise the pinned browser and sqlc toolchain
         run: nix develop --no-update-lock-file -c task nix:smoke
       - name: Prepare generated and embedded assets for the fresh checkout
-        run: nix develop --no-update-lock-file -c task ci:prepare
+        run: |
+          nix develop --no-update-lock-file -c bash scripts/prepare_sqlc_modules.sh
+          nix develop --no-update-lock-file -c task ci:prepare
+      - name: Qualify restored managed application component
+        run: nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_replacement_ci.sh
       - name: Set up Terraform for deployment validation
         if: inputs.contract == 'full' || inputs.contract == 'nightly'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
@@ -601,7 +620,7 @@ jobs:
             --verify .tmp/nix-runtime-security/oci-content-binding.json
       - name: Retain runtime inventory, matching controls and unresolved findings
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-runtime-security-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 14
@@ -623,7 +642,7 @@ jobs:
             .tmp/nix-runtime-security/grype-config.json
       - name: Retain bounded image qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-image-qualification-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 14

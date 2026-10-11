@@ -3,6 +3,7 @@ import { EllipsisVertical } from 'lucide'
 import { lucideIcon } from '../../shared/lucide-icons'
 import { toggleAnchoredPopover } from '../../shared/anchored-popover'
 import { property, query, state } from 'lit/decorators.js'
+import { keyed } from 'lit/directives/keyed.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
@@ -10,33 +11,21 @@ import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
 import type { VisualFocusPreview } from '../visual-modal-focus'
 import type { ReportTable } from '../table/report-table'
-import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
+import { VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
+import { resolveHostRendererContext } from './host-context'
 import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
-import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
+import { accessibleDataStatus, accessibleVisualizationSummary, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
 import { clearInteractionCommand } from './interaction-command'
-import { resolveVisualizationMetadata } from './metadata'
+import { resolveVisualizationMetadata, visualizationSharedHeader } from './metadata'
 import { visualizationHostStyles } from './host-styles'
+import { applyTableContentSize } from './host-layout'
+import { generatedEnvelopeValidator, loadEnvelopeValidator, prepareVisual, VisualPreparationTimeout } from './preparation'
 
 export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, supportsHostDataActions, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
 
 /** Start mounting within 600 CSS pixels above or below the viewport. */
 export const visualizationNearViewportRootMargin = '600px 0px'
-
-type GeneratedEnvelopeValidator = typeof import('../../../generated/visualization/validate')['default']
-let generatedEnvelopeValidator: GeneratedEnvelopeValidator | undefined
-let envelopeValidatorLoad: Promise<GeneratedEnvelopeValidator> | undefined
-
-function loadEnvelopeValidator(): Promise<GeneratedEnvelopeValidator> {
-  if (generatedEnvelopeValidator) return Promise.resolve(generatedEnvelopeValidator)
-  return envelopeValidatorLoad ??= import('../../../generated/visualization/validate').then(({ default: validate }) => {
-    generatedEnvelopeValidator = validate
-    return validate
-  }, (error: unknown) => {
-    envelopeValidatorLoad = undefined
-    throw error
-  })
-}
 
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
@@ -49,12 +38,19 @@ export class VisualizationHost extends LitElement {
     // identities (and may legitimately revert); data revisions order one spec.
     // Eager hosts retain their existing validation/error boundary.
     if (this.deferMount && !this.authoring) {
-      if (value && !validateEnvelopeBoundary(value)) return
+      if (value && !validateEnvelopeBoundary(value)) {
+        this.rejectInitialEnvelope()
+        return
+      }
       if (value && !generatedEnvelopeValidator) {
         this.queueEnvelopeValidation(value)
         return
       }
-      if (value && (!generatedEnvelopeValidator!(value) || this.isStaleEnvelope(value))) return
+      if (value && !generatedEnvelopeValidator!(value)) {
+        this.rejectInitialEnvelope()
+        return
+      }
+      if (value && this.isStaleEnvelope(value)) return
     }
     this.envelopeAssignmentGeneration++
     this.assignEnvelope(value)
@@ -62,14 +58,25 @@ export class VisualizationHost extends LitElement {
 
   private assignEnvelope(value: VisualizationEnvelope | undefined): void {
     const previous = this.envelopeValue
+    this.failedEnvelopeValidation = undefined
     if (Object.is(previous, value)) return
     if (!value || !['table', 'matrix', 'pivot'].includes(value.spec.kind)) {
       this.removeAttribute('data-table-fit')
       this.style.removeProperty('--lv-table-content-height')
     }
     this.envelopeValue = value
+    if (!previous && value) this.error = ''
     if (this.focusPreview) this.focusPreview.envelope = value
     this.requestUpdate('envelope', previous)
+  }
+
+  private rejectInitialEnvelope(): void {
+    // Retain a previously valid visual, but do not leave an initial malformed
+    // result spinning forever when there is no accepted envelope to render.
+    if (!this.envelopeValue) {
+      this.failedEnvelopeValidation = undefined
+      this.error = 'invalid visualization envelope'
+    }
   }
 
   private isStaleEnvelope(value: VisualizationEnvelope): boolean {
@@ -83,11 +90,17 @@ export class VisualizationHost extends LitElement {
     // last valid envelope available to the shell and actions.
     const pending = (this.pendingEnvelopeValidation ?? Promise.resolve()).then(async () => {
       if (generation !== this.envelopeAssignmentGeneration) return
-      const validate = await loadEnvelopeValidator()
+      const validate = await prepareVisual(loadEnvelopeValidator)
       if (generation !== this.envelopeAssignmentGeneration) return
-      if (validate(value) && !this.isStaleEnvelope(value)) this.assignEnvelope(value)
+      if (!validate(value)) this.rejectInitialEnvelope()
+      else if (!this.isStaleEnvelope(value)) this.assignEnvelope(value)
     }).catch((error: unknown) => {
-      if (generation === this.envelopeAssignmentGeneration) this.error = error instanceof Error ? error.message : String(error)
+      if (generation === this.envelopeAssignmentGeneration) {
+        // An initial validator load has no accepted envelope yet. Retain its
+        // input so recovery can validate it again without another signal patch.
+        this.failedEnvelopeValidation = value
+        this.error = error instanceof Error ? error.message : String(error)
+      }
     })
     this.pendingEnvelopeValidation = pending
     void pending.then(() => {
@@ -109,6 +122,7 @@ export class VisualizationHost extends LitElement {
   @property({ type: Boolean, attribute: 'actions-enabled' }) actionsEnabled = true
   @property({ type: Boolean, attribute: 'visual-options-open', reflect: true }) visualOptionsOpen = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
+  @state() private rendererGeneration = 0
   @state() private error = ''
   @state() private applying = false
   @state() private presented = false
@@ -116,6 +130,7 @@ export class VisualizationHost extends LitElement {
   @state() private optionsOpen = false
   private controller?: VisualizationController
   private resizeObserver?: ResizeObserver
+  private rendererHasSize = false
   private applyGeneration = 0
   private connectionGeneration = 0
   private presentedRendererID = ''
@@ -124,10 +139,12 @@ export class VisualizationHost extends LitElement {
   private mountObserver?: IntersectionObserver
   private mountRequested = false
   private pendingApply?: Promise<void>
+  private pendingApplyEnvelope?: VisualizationEnvelope
   private applyQueued = false
   private mountEpoch = 0
   private envelopeAssignmentGeneration = 0
   private pendingEnvelopeValidation?: Promise<void>
+  private failedEnvelopeValidation?: VisualizationEnvelope
   private focusPreview?: VisualizationHost
   private focusPreviewSource?: VisualizationHost
   private optionsScrollRoots: Array<Document | ShadowRoot> = []
@@ -208,7 +225,14 @@ export class VisualizationHost extends LitElement {
     try {
       this.resizeObserver = new ResizeObserver(([entry]) => {
         if (!entry) return
-        this.controller?.resize(entry.contentRect.width, entry.contentRect.height, window.devicePixelRatio || 1)
+        const { width, height } = entry.contentRect
+        const hasSize = width > 0 && height > 0
+        const becameVisible = hasSize && !this.rendererHasSize
+        this.rendererHasSize = hasSize
+        this.controller?.resize(width, height, window.devicePixelRatio || 1)
+        // A selected chart may be hidden while its adapter is preparing. If
+        // readiness failed at zero size, remount when it has usable layout.
+        if (becameVisible && this.error) this.scheduleApply(true)
       })
       this.resizeObserver.observe(this.rendererContainer)
     } catch {
@@ -246,9 +270,11 @@ export class VisualizationHost extends LitElement {
       this.disconnectContextListeners()
       this.applyGeneration++
       this.pendingApply = undefined
+      this.pendingApplyEnvelope = undefined
       this.applyQueued = false
       this.controller?.dispose()
       this.controller = undefined
+      this.rendererGeneration++
       this.mountRequested = false
       this.presented = false
       this.presentedRendererID = ''
@@ -325,7 +351,7 @@ export class VisualizationHost extends LitElement {
   protected render() {
     const statusError = this.envelope?.status.kind === 'error' ? this.envelope.status.message ?? 'Visualization error' : ''
     const error = this.error || statusError
-    const header = this.sharedHeader()
+    const header = visualizationSharedHeader(this.envelope)
     const metadata = this.envelope ? resolveVisualizationMetadata(this.envelope) : undefined
     const titleVisible = this.envelope?.spec.titleVisible !== false
     const showHeader = Boolean((header && titleVisible) || this.authoring)
@@ -350,15 +376,15 @@ export class VisualizationHost extends LitElement {
         </header>
       ` : !this.actionsEnabled ? html`<div class="headerless-actions"><div class="visual-actions"><slot name="focus-action"></slot></div></div>` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
-        <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation} @lv-table-size-change=${this.handleTableSizeChange}></div>
+        ${keyed(this.rendererGeneration, html`<div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation} @lv-table-size-change=${this.handleTableSizeChange}></div>`)}
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
           <lv-loading-spinner size="medium" aria-hidden="true"></lv-loading-spinner>
           <span>${loadingLabel}</span>
         </div>` : null}
       </div>
-      <div id="visualization-fallback" class="fallback">${this.accessibleFallback()}</div>
+      <div id="visualization-fallback" class="fallback">${accessibleVisualizationSummary(this.envelope, this.rendererContext())}</div>
       ${this.announcement ? html`<div class="announcement" role="status" aria-live="polite">${this.announcement}</div>` : null}
-      ${error ? html`<div class="error" role="alert">${error}</div>` : null}
+      ${error ? html`<div class="error" role="alert"><div><p>${error}</p>${this.error && (this.envelope || this.failedEnvelopeValidation) ? html`<button class="icon-action retry-action" type="button" data-visualization-retry ?disabled=${this.applying} @click=${this.retry}>Try again</button>` : null}</div></div>` : null}
     </div>`
   }
 
@@ -367,47 +393,51 @@ export class VisualizationHost extends LitElement {
     return kind === 'table' || kind === 'matrix' || kind === 'pivot'
   }
 
-  private requestMount(): void {
+  private requestMount(force = false): void {
     this.mountRequested = true
     try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
     this.mountObserver = undefined
-    // Eager callers retain the original firstUpdated timing. The explicit
-    // ensureMounted path below still waits for Lit to settle before observing
-    // the result, while event callbacks can start the renderer immediately.
+    // Event callbacks preserve eager firstUpdated timing. ensureMounted
+    // separately waits for Lit before observing the completed renderer.
     if (this.rendererContainer) {
       this.ensureController()
-      this.scheduleApply()
+      this.scheduleApply(force)
       return
     }
     void this.ensureMounted().catch(() => {})
   }
 
-  private scheduleApply(): void {
-    if (!this.mountRequested || !this.envelope || !this.controller) return
+  private retry = (): void => {
+    this.error = ''
+    const failedValidation = this.failedEnvelopeValidation
+    this.failedEnvelopeValidation = undefined
+    if (failedValidation) this.envelope = failedValidation
+    this.requestMount(true)
+  }
+
+  private scheduleApply(force = false): void {
+    if (!this.mountRequested || !this.envelope) return
     if (this.pendingApply) {
-      this.applyQueued = true
+      // firstUpdated and updated can request the same initial work. Queue
+      // only a replacement envelope, context change, or recovery request.
+      if (force || this.pendingApplyEnvelope !== this.envelope) this.applyQueued = true
       return
     }
+    this.ensureController()
+    if (!this.controller) return
+    this.pendingApplyEnvelope = this.envelope
     const pending = this.applyEnvelope()
     this.pendingApply = pending
-    void pending.then(
-      () => {
-        if (this.pendingApply !== pending) return
-        this.pendingApply = undefined
-        if (this.applyQueued) {
-          this.applyQueued = false
-          this.scheduleApply()
-        }
-      },
-      () => {
-        if (this.pendingApply !== pending) return
-        this.pendingApply = undefined
-        if (this.applyQueued) {
-          this.applyQueued = false
-          this.scheduleApply()
-        }
-      },
-    )
+    const settle = (): void => {
+      if (this.pendingApply !== pending) return
+      this.pendingApply = undefined
+      this.pendingApplyEnvelope = undefined
+      if (this.applyQueued) {
+        this.applyQueued = false
+        this.scheduleApply()
+      }
+    }
+    void pending.then(settle, settle)
   }
 
   private async waitForApply(): Promise<void> {
@@ -429,47 +459,43 @@ export class VisualizationHost extends LitElement {
     const generation = ++this.applyGeneration
     this.applying = true
     try {
-      if (!generatedEnvelopeValidator) await loadEnvelopeValidator()
-      if (generation !== this.applyGeneration || controller !== this.controller) return
-      await controller.apply(envelope, this.rendererContext())
+      await prepareVisual(async () => {
+        if (!generatedEnvelopeValidator) await loadEnvelopeValidator()
+        if (generation !== this.applyGeneration || controller !== this.controller) return
+        await controller.apply(envelope, this.rendererContext())
+      })
       if (generation === this.applyGeneration && envelope === this.envelope) {
         this.error = ''
-        this.presented = true
+        this.presented = controller.envelope !== undefined
         this.announcement = visualizationChangeAnnouncement(previous, envelope)
         void this.syncFocusPreviewTable()
         void this.focusPreview?.syncFocusPreviewTable()
       }
     } catch (error) {
+      if (error instanceof VisualPreparationTimeout && generation === this.applyGeneration && controller === this.controller) {
+        // The original work can still settle later. Dispose its generation so
+        // retrying creates an independent controller and cannot reuse its queue.
+        controller.dispose()
+        this.controller = undefined
+        // Late adapter mounts may still mutate their container. Detach that
+        // generation before any retry can attach a replacement renderer.
+        this.rendererGeneration++
+        this.resizeObserver?.disconnect()
+        this.resizeObserver = undefined
+        this.rendererHasSize = false
+        this.presented = false
+      }
       if (generation === this.applyGeneration && envelope === this.envelope) this.error = error instanceof Error ? error.message : String(error)
     } finally {
       if (generation === this.applyGeneration && envelope === this.envelope) this.applying = false
     }
   }
 
-  private sharedHeader(): 'chart' | 'map' | 'visualization' | undefined {
-    const kind = this.envelope?.spec.kind
-    if (!kind || kind === 'kpi' || kind === 'table' || kind === 'matrix' || kind === 'pivot') return undefined
-    if (kind === 'geographic') return 'map'
-    return 'chart'
-  }
-
-  private readonly handleTableSizeChange = (event: Event): void => {
-    const envelope = this.envelope
-    if (!envelope || !['table', 'matrix', 'pivot'].includes(envelope.spec.kind)) return
-    const { height, naturalHeight } = (event as CustomEvent<{ height: number; naturalHeight: number }>).detail
-    if (!Number.isFinite(height) || height < 0 || !Number.isFinite(naturalHeight) || naturalHeight < 0) return
-    event.stopPropagation()
-    this.setAttribute('data-table-fit', '')
-    this.style.setProperty('--lv-table-content-height', `${height}px`)
-    this.dispatchEvent(new CustomEvent('lv-visualization-size-change', {
-      bubbles: true, composed: true, detail: { visualID: envelope.visualID, height, naturalHeight },
-    }))
-  }
-
+  private readonly handleTableSizeChange = (event: Event): void => applyTableContentSize(this, this.envelope, event, this.rendererContainer)
 
   private expand = (): void => {
     const envelope = this.envelope
-    const visualType = this.sharedHeader()
+    const visualType = visualizationSharedHeader(this.envelope)
     if (!envelope || !visualType) return
     const detail: VisualActionDetail = {
       action: 'focus',
@@ -602,7 +628,7 @@ export class VisualizationHost extends LitElement {
       composed: true,
       detail: {
         action,
-        visualType: envelope.spec.kind === 'geographic' ? 'map' : this.sharedHeader() === 'chart' ? 'chart' : 'visualization',
+        visualType: envelope.spec.kind === 'geographic' ? 'map' : visualizationSharedHeader(this.envelope) === 'chart' ? 'chart' : 'visualization',
         visualId: envelope.visualID,
         title: metadata.title,
         columns: [...data.columns],
@@ -638,48 +664,10 @@ export class VisualizationHost extends LitElement {
     this.reducedMotionMedia = undefined
   }
 
-  private readonly handleRendererContextChange = (): void => { this.scheduleApply() }
+  private readonly handleRendererContextChange = (): void => { this.scheduleApply(true) }
 
   private rendererContext(): RendererContext {
-    const target = this.rendererContainer
-    if (!target) return defaultRendererContext
-    const root = this.getRootNode()
-    const builderPreview = root instanceof ShadowRoot && root.host.localName === 'lv-dashboard-builder'
-    const styles = getComputedStyle(target)
-    const color = (name: string, fallback: string): string => styles.getPropertyValue(name).trim() || fallback
-    const colorScheme = document.documentElement.style.colorScheme.trim()
-    const theme = colorScheme === 'dark' || (colorScheme !== 'light' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'
-    return {
-      locale: normalizeRendererLocale(document.documentElement.lang || 'en'),
-      theme,
-      echartsRenderer: builderPreview ? 'svg' : 'canvas',
-      authoringPreview: builderPreview,
-      reducedMotion: this.reducedMotionMedia?.matches ?? true,
-      devicePixelRatio: window.devicePixelRatio || 1,
-      fontFamily: styles.fontFamily || defaultRendererContext.fontFamily,
-      colors: {
-        foreground: color('--lv-fg-default', defaultRendererContext.colors.foreground),
-        muted: color('--lv-chart-axis', defaultRendererContext.colors.muted),
-        grid: color('--lv-chart-grid', defaultRendererContext.colors.grid),
-        surface: color('--lv-chart-surface', defaultRendererContext.colors.surface),
-        accent: color('--lv-fg-accent', defaultRendererContext.colors.accent),
-        success: color('--lv-fg-success', defaultRendererContext.colors.success),
-        attention: color('--lv-fg-warning', defaultRendererContext.colors.attention),
-        danger: color('--lv-fg-danger', defaultRendererContext.colors.danger),
-        data: primerCategoricalPalette.map(({ token }, index) => color(token, defaultRendererContext.colors.data[index]!)),
-      },
-    }
-  }
-
-  private accessibleFallback() {
-    const envelope = this.envelope
-    if (!envelope) return 'Visualization is loading.'
-    const data = accessibleVisualizationData(envelope, this.rendererContext(), 6)
-    const metadata = resolveVisualizationMetadata(envelope)
-    const summary = metadata.summary ?? metadata.description
-    const status = accessibleStatus(envelope)
-    const dataSummary = accessibleDataStatus(envelope, data)
-    return `${metadata.title}.${metadata.subtitle ? ` ${metadata.subtitle}.` : ''} ${summary}. ${status}. ${dataSummary}`
+    return resolveHostRendererContext(this, this.rendererContainer, this.reducedMotionMedia?.matches ?? true)
   }
 }
 

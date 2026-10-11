@@ -45,9 +45,9 @@ func testPathLocation(format, path string) *projectcontracts.PathSourceLocation 
 	case "excel":
 		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.ExcelPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultExcelReaderOptions()}}
 	case "text":
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultTextReaderOptions()}}
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: base, Format: format}}
 	case "blob":
-		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultBlobReaderOptions()}}
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: base, Format: format}}
 	case "vortex":
 		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: base, Format: format}}
 	case "delta":
@@ -113,7 +113,7 @@ func newDuckDBTestExtensionAdmission(t *testing.T, names ...string) extension.Ad
 		}
 		digest := sha256.Sum256(contents)
 		digestValue := "sha256:" + hex.EncodeToString(digest[:])
-		ownedPath := filepath.Join(setupRoot, name+".duckdb_extension")
+		ownedPath := filepath.Join(setupRoot, extension.ArtifactFilenameStem(name)+".duckdb_extension")
 		if err := os.WriteFile(ownedPath, contents, 0o600); err != nil {
 			t.Fatalf("stage test extension %q: %v", name, err)
 		}
@@ -158,7 +158,7 @@ func findDuckDBTestExtension(name, version, platform string) string {
 }
 
 func findDuckDBTestExtensionInRoot(root, name, version, platform string) string {
-	filename := name + ".duckdb_extension"
+	filename := extension.ArtifactFilenameStem(name) + ".duckdb_extension"
 	platformDir := strings.ReplaceAll(platform, "-", "_")
 	for _, path := range []string{filepath.Join(root, version, platformDir, filename), filepath.Join(root, version, platform, filename)} {
 		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {

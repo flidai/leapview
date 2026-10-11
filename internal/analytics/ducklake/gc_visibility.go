@@ -4,15 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/flidai/leapview/internal/analytics/ducklake/metadata"
 	"sort"
 )
 
-// BaseTable identifies one visible, non-temporary DuckLake base table. It is
-// intentionally value-only so callers cannot obtain a mutable SQL handle.
-type BaseTable struct {
-	Schema string `json:"schema"`
-	Table  string `json:"table"`
-}
+type BaseTable = metadata.BaseTable
 
 // CurrentFileClosure reads the current snapshot and every visible table's
 // data/delete closure on one pinned DuckDB connection. A GC mark must never
@@ -33,7 +29,7 @@ func (e *Environment) CurrentFileClosure(ctx context.Context, catalogID string, 
 	relationNamespace := ""
 	if len(relationNamespaces) == 1 {
 		relationNamespace = relationNamespaces[0]
-		if err := validateNativeRelationNamespace(relationNamespace); err != nil {
+		if err := metadata.ValidateNativeRelationNamespace(relationNamespace); err != nil {
 			return 0, nil, CatalogFileSet{}, err
 		}
 	}

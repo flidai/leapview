@@ -26,6 +26,46 @@ from docker_daemon_test import namespace_ids, verify_namespaces
 from managed_application_support import prepare_postgres
 
 HIDDEN = tuple(Path(path) for path in ("/root", "/run", "/var", "/opt", "/etc", "/usr"))
+CONTROL_ACTIONS = frozenset(("enroll", "run", "recover", "status"))
+CONTROL_PHASES = frozenset(("prepared", "closing-work", "closing-ingress", "stopping", "starting", "verifying",
+                            "opening-work", "opening-ingress", "committed", "succeeded", "recovered"))
+
+
+COMMAND_DIAGNOSTIC_PREFIX = "leapview-managed-failure-v1 "
+COMMAND_DIAGNOSTIC_STAGES = frozenset(("command", "gate-write", "proxy-reboot", "inventory", "proxy-running"))
+COMMAND_DIAGNOSTIC_REASONS = frozenset(("unknown", "start-failed", "canceled", "ssh-authentication", "ssh-host-key",
+    "ssh-connection", "connection-refused", "bundler-dependency", "ruby-load", "docker-daemon", "docker-image",
+    "docker-network", "docker-container", "controller-lock", "controller-deadline", "controller-process-group"))
+
+
+def command_diagnostic(stderr):
+    # Accept only one bounded controller marker; arbitrary process output and
+    # unrecognized schemas never become public qualification evidence.
+    if not isinstance(stderr, str) or len(stderr.encode("utf-8")) > 16384:
+        return None
+    lines = [line[len(COMMAND_DIAGNOSTIC_PREFIX):] for line in stderr.splitlines()
+             if line.startswith(COMMAND_DIAGNOSTIC_PREFIX)]
+    if len(lines) != 1 or len(lines[0]) > 512:
+        return None
+    try:
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate diagnostic field")
+                result[key] = value
+            return result
+        value = json.loads(lines[0], object_pairs_hook=unique)
+        if (not isinstance(value, dict) or set(value) != {"schemaVersion", "stage", "command", "reason", "exitCode"}
+                or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
+                or value["stage"] not in COMMAND_DIAGNOSTIC_STAGES
+                or value["command"] not in ("none", "other", "bundle", "docker")
+                or value["reason"] not in COMMAND_DIAGNOSTIC_REASONS
+                or type(value["exitCode"]) is not int or not -1 <= value["exitCode"] <= 255):
+            return None
+        return value
+    except (ValueError, TypeError):
+        return None
 
 
 def validate_visible_paths(paths):
@@ -290,7 +330,45 @@ class Runtime:
         os.environ["SSL_CERT_FILE"] = "/root/tls.crt"
 
     def control(self, action, request, **kwargs):
-        return run(self.controller, "host", "managed-release", action, "--profile", self.profile_path, "--request", request, timeout=1200, **kwargs)
+        if action not in CONTROL_ACTIONS:
+            raise ValueError("unsupported qualification controller action")
+        check = kwargs.pop("check", True)
+        try:
+            result = run(self.controller, "host", "managed-release", action, "--profile", self.profile_path,
+                         "--request", request, timeout=1200, check=False, **kwargs)
+        except subprocess.TimeoutExpired:
+            self.control_failure(action, request, "timeout", **kwargs)
+            raise RuntimeError("qualification controller command timed out") from None
+        if result.returncode:
+            self.control_failure(action, request, "exit", result.returncode, **kwargs)
+            diagnostic = command_diagnostic(result.stderr)
+            if diagnostic is not None:
+                self.evidence["failure"]["commandDiagnostic"] = diagnostic
+            if check:
+                raise RuntimeError("qualification controller command failed")
+        return result
+
+    def control_failure(self, action, request, outcome, exit_code=None, **kwargs):
+        # Never retain command output: it may contain private URLs or credentials.
+        failure = {"action": action, "controllerOutcome": outcome, "journalStatus": "unavailable"}
+        if type(exit_code) is int:
+            failure["controllerExitCode"] = exit_code
+        self.evidence["failure"] = failure
+        try:
+            result = run(self.controller, "host", "managed-release", "status", "--profile", self.profile_path,
+                         "--request", request, timeout=15, check=False, **kwargs)
+            if result.returncode or len(result.stdout.encode("utf-8")) > 16384:
+                return
+            status = json.loads(result.stdout)
+            if (not isinstance(status, dict) or status.get("phase") not in CONTROL_PHASES
+                    or type(status.get("recovering")) is not bool or type(status.get("commitEstablished")) is not bool):
+                return
+            failure.update(journalStatus="available", phase=status["phase"], recovering=status["recovering"],
+                           commitEstablished=status["commitEstablished"])
+        except Exception:
+            # Diagnostic failure must leave the original controller failure and
+            # the surrounding offline runner's cleanup/report publication intact.
+            pass
 
     def request(self, name, first, second, *, enrollment=False):
         selections = self.manifest["images"]

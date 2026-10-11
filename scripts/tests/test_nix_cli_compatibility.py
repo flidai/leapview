@@ -26,8 +26,13 @@ class CompatibilityTests(unittest.TestCase):
                 m.check_elf(elf(segments=(1, segment)), 'amd64')
 
     def test_rejects_store_data_dependencies_even_without_cgo(self):
-        with self.assertRaisesRegex(ValueError, 'Nix store'):
-            m.check_elf(elf() + b'/nix/store/0123456789abcdefghijklmnopqrstuvwxyz-tzdata/share/zoneinfo', 'amd64')
+        for machine, arch in ((62, 'amd64'), (183, 'arm64')):
+            for suffix in (b'tzdata/share/zoneinfo', b'glibc/lib/ld-linux.so.2'):
+                with self.subTest(arch=arch, suffix=suffix), self.assertRaisesRegex(ValueError, 'Nix store'):
+                    m.check_elf(elf(machine) + b'/nix/store/' + b'0' * 32 + b'-' + suffix, arch)
+
+    def test_accepts_store_namespace_validation_without_a_store_object_dependency(self):
+        m.check_elf(elf() + b'operator tool must use the /nix/store/ namespace', 'amd64')
 
     def test_rejects_wrong_architecture_and_malformed_headers(self):
         for data in (elf(183), b'not ELF', elf()[:63], elf()[:-1], elf(segments=()),

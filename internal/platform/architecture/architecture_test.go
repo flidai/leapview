@@ -3005,7 +3005,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"needs: build-production-image",
 		"if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}",
 		"uses: ./.github/actions/setup-ci",
-		"task image:qualify:production IMAGE=\"${immutable_image}\"",
+		"node scripts/run_performance_comparison.mjs \"${IMAGE_REVISION}\" \"${immutable_image}\"",
 	} {
 		if !strings.Contains(artifactText, want) {
 			t.Fatalf("main artifact workflow missing %q", want)

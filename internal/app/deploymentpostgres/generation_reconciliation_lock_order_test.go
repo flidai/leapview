@@ -2,7 +2,6 @@ package deploymentpostgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -63,8 +62,8 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 	defer cancel()
 
 	// Hold the canonical delivery attempt so admission has to queue after its
-	// lease lock. The mutation is rolled back, leaving the fixture running for
-	// the real completion and exact reconciliation replay.
+	// lease lock. A plain row lock leaves the running fixture's tuple and state
+	// intact for real completion and exact reconciliation replay.
 	gateTx, err := p.Begin(runCtx)
 	if err != nil {
 		t.Fatal(err)
@@ -75,13 +74,14 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 			_ = gateTx.Rollback(context.Background())
 		}
 	}()
-	if _, err := delivery.MarkAttemptIndeterminateTx(runCtx, gateTx, deploymentnative.TerminateAttemptInput{
-		AttemptID:    input.Commit.AttemptID,
-		OwnerID:      input.Commit.OwnerID,
-		FencingEpoch: input.Commit.FencingEpoch,
-		Evidence:     json.RawMessage(`{"gate":"canonical-delivery-attempt"}`),
-	}); err != nil {
+	var gatedAttemptID string
+	if err := gateTx.QueryRow(runCtx, `
+		SELECT attempt_id::text FROM delivery.delivery_build_attempt
+		WHERE attempt_id = $1::uuid FOR UPDATE`, input.Commit.AttemptID).Scan(&gatedAttemptID); err != nil {
 		t.Fatal(err)
+	}
+	if gatedAttemptID != input.Commit.AttemptID {
+		t.Fatalf("gated attempt = %q, want %q", gatedAttemptID, input.Commit.AttemptID)
 	}
 
 	type admissionOutcome struct {
@@ -101,17 +101,18 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 	defer waitCancel()
 	probeTicker := time.NewTicker(10 * time.Millisecond)
 	defer probeTicker.Stop()
+	var admissionPID int32
 	for {
-		var queuedOnGate bool
 		if err := p.QueryRow(waitCtx, `
-			SELECT EXISTS (
-				SELECT 1 FROM pg_stat_activity
+			SELECT COALESCE((
+				SELECT pid FROM pg_stat_activity
 				WHERE datname = current_database()
 				  AND $1::integer = ANY(pg_blocking_pids(pid))
-			)`, int(gateTx.Conn().PgConn().PID())).Scan(&queuedOnGate); err != nil {
+				LIMIT 1
+			), 0)`, int(gateTx.Conn().PgConn().PID())).Scan(&admissionPID); err != nil {
 			t.Fatalf("observe admission waiting on the delivery attempt: %v", err)
 		}
-		if queuedOnGate {
+		if admissionPID != 0 {
 			break
 		}
 		select {
@@ -160,9 +161,35 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 		reconciliationDone <- reconciliationOutcome{result: result, err: runErr}
 	}()
 
-	// Admission is already queued on the canonical attempt lock. Reconciliation
-	// must either queue behind it or read its committed result after the gate
-	// is released; scheduling its goroutine cannot change the winner.
+	// Starting a goroutine does not prove its transaction has joined the row
+	// lock queue. A newcomer can acquire the released row before a woken waiter
+	// runs, so establish the full gate -> admission -> reconciliation wait graph
+	// before releasing the gate and asserting admission is the winner.
+	reconcileWaitCtx, reconcileWaitCancel := context.WithTimeout(runCtx, 10*time.Second)
+	defer reconcileWaitCancel()
+	for {
+		var queuedBehindAdmission bool
+		if err := p.QueryRow(reconcileWaitCtx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stat_activity
+				WHERE datname = current_database()
+				  AND $1::integer = ANY(pg_blocking_pids(pid))
+			)`, admissionPID).Scan(&queuedBehindAdmission); err != nil {
+			t.Fatalf("observe reconciliation waiting behind admission: %v", err)
+		}
+		if queuedBehindAdmission {
+			break
+		}
+		select {
+		case outcome := <-admissionDone:
+			t.Fatalf("admission finished while delivery gate remained locked: %#v, %v", outcome.result, outcome.err)
+		case outcome := <-reconciliationDone:
+			t.Fatalf("reconciliation finished before queuing behind admission: %#v, %v", outcome.result, outcome.err)
+		case <-reconcileWaitCtx.Done():
+			t.Fatal("reconciliation did not queue behind admission")
+		case <-probeTicker.C:
+		}
+	}
 	if err := gateTx.Rollback(runCtx); err != nil {
 		t.Fatal(err)
 	}

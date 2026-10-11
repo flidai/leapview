@@ -91,30 +91,17 @@ model ExcelReaderOptions {
   header?: boolean;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", sourceDataIdentityCapability: "unavailable", defaults: #{ delimiter: "\t", quote: "\"", header: false } } })
-model TextReaderOptions {
-  delimiter?: string;
-  quote?: string;
-  header?: boolean;
-}
-
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", sourceDataIdentityCapability: "unavailable", defaults: #{ compression: "auto" } } })
-model BlobReaderOptions {
-  compression?: "auto" | "none" | "gzip" | "zstd";
-}
-
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", sourceDataIdentityCapability: "unavailable", defaults: #{} } })
-model VortexReaderOptions {
-  version?: string;
-}
-
 @apigen.metadata(#{ `x-leapview-format`: #{ name: "delta", extensions: #[], scanKind: "table_function", scanFunction: "delta_scan", requiredExtension: "delta", sourceDataIdentityCapability: "unavailable", tableLike: true, defaults: #{} } })
 model DeltaReaderOptions {
+  /** Nonnegative signed 64-bit Delta log version, as an exact decimal string. */
+  @pattern("^(0|[1-9][0-9]{0,18})$")
   version?: string;
 }
 
 @apigen.metadata(#{ `x-leapview-format`: #{ name: "iceberg", extensions: #[], scanKind: "table_function", scanFunction: "iceberg_scan", requiredExtension: "iceberg", sourceDataIdentityCapability: "unavailable", tableLike: true, defaults: #{} } })
 model IcebergReaderOptions {
+  /** Nonnegative signed 64-bit Iceberg snapshot ID, as an exact decimal string (not a timestamp or metadata version). */
+  @pattern("^(0|[1-9][0-9]{0,18})$")
   snapshot?: string;
 }
 
@@ -124,9 +111,6 @@ model ReaderDefaults {
   json?: JSONReaderOptions;
   parquet?: ParquetReaderOptions;
   excel?: ExcelReaderOptions;
-  text?: TextReaderOptions;
-  blob?: BlobReaderOptions;
-  vortex?: VortexReaderOptions;
   delta?: DeltaReaderOptions;
   iceberg?: IcebergReaderOptions;
 }
@@ -370,19 +354,19 @@ model ExcelPathSourceLocation extends PathSourceLocation {
   options?: ExcelReaderOptions;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", sourceDataIdentityCapability: "unavailable", allowsOptions: false, defaults: #{} } })
 model TextPathSourceLocation extends PathSourceLocation {
   format: "text";
-  options?: TextReaderOptions;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", sourceDataIdentityCapability: "unavailable", allowsOptions: false, defaults: #{} } })
 model BlobPathSourceLocation extends PathSourceLocation {
   format: "blob";
-  options?: BlobReaderOptions;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", sourceDataIdentityCapability: "unavailable", allowsOptions: false, defaults: #{} } })
 model VortexPathSourceLocation extends PathSourceLocation {
   format: "vortex";
-  options?: VortexReaderOptions;
 }
 
 model DeltaPathSourceLocation extends PathSourceLocation {

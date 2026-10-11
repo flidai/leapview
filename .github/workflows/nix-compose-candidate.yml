@@ -1,8 +1,15 @@
 name: Protected Nix Compose candidate
+run-name: Protected ${{ inputs.bundle_source }} Compose guests for release ${{ inputs.release_run_id }}
 
 on:
   workflow_dispatch:
     inputs:
+      bundle_source:
+        description: Original conventional release bundles or rebuilt Nix candidate bundles
+        required: true
+        default: nix
+        type: choice
+        options: [nix, conventional]
       release_run_id:
         description: Completed successful release.yml workflow_dispatch run on main
         required: true
@@ -12,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nix-compose-candidate-${{ inputs.release_run_id }}
+  group: nix-compose-candidate-${{ inputs.release_run_id }}-${{ inputs.bundle_source }}
   cancel-in-progress: false
 
 jobs:
@@ -44,6 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          BUNDLE_SOURCE: ${{ inputs.bundle_source }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
@@ -100,6 +108,9 @@ jobs:
               protected_revision=os.environ["GITHUB_SHA"],
               source_root=Path("."),
           )
+          if os.environ.get('BUNDLE_SOURCE', 'nix') == 'conventional':
+              receipt = qualification.select_conventional_receipt_artifact(artifacts, binding)
+              Path('conventional-receipt-artifact.json').write_text(json.dumps(receipt) + '\n')
           Path("release-run-binding.json").write_text(
               json.dumps(binding, indent=2) + "\n", encoding="utf-8"
           )
@@ -132,6 +143,23 @@ jobs:
           cp -- release-run-binding.json release-input/release-run-binding.json
           cp -- "$RUNNER_TEMP/release-candidate.zip" release-input/release-candidate.zip
 
+      - name: Preserve the authenticated original conventional builder receipt ZIP
+        if: inputs.bundle_source == 'conventional'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_id=$(jq -r .id conventional-receipt-artifact.json)
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            --output release-input/conventional-receipts.zip
+          cp conventional-receipt-artifact.json release-input/
+          digest=$(jq -r .digest conventional-receipt-artifact.json)
+          printf '%s  %s\n' "${digest#sha256:}" release-input/conventional-receipts.zip | sha256sum --check --status
+
       - name: Bind the verified protected release input
         id: binding
         run: |
@@ -140,7 +168,7 @@ jobs:
 
       - name: Retain the verified release handoff
         id: handoff
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-release-input-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-input/
@@ -173,7 +201,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download the exact authorized release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -244,7 +272,7 @@ jobs:
         if: always()
         run: docker logout ghcr.io >/dev/null 2>&1 || true
       - name: Retain immutable pre-execution admission and runtime evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-preflight-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: preflight/${{ matrix.arch }}/
@@ -253,7 +281,7 @@ jobs:
 
       - name: Retain image admission diagnostics on failure
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-preflight-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: |
@@ -301,12 +329,12 @@ jobs:
             sandbox = true
 
       - name: Download the exact Nix bundle and release handoff artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: candidate
       - name: Download the exact release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -357,7 +385,7 @@ jobs:
       - name: Retain successful native controller evidence
         if: success()
         id: evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-controller-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: controller-evidence/${{ matrix.arch }}/
@@ -366,7 +394,7 @@ jobs:
 
       - name: Retain controller evidence diagnostics on failure
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-controller-evidence-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: controller-evidence/${{ matrix.arch }}/
@@ -376,7 +404,7 @@ jobs:
   qualify:
     name: Native installed Compose candidate (${{ matrix.arch }})
     needs: [authorize, build-bundles, preflight, controller-evidence]
-    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && inputs.bundle_source != 'conventional'
     strategy:
       fail-fast: false
       matrix:
@@ -413,13 +441,13 @@ jobs:
             sandbox = true
 
       - name: Download the exact bundle artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: candidate
 
       - name: Download the exact release handoff and REST artifact bytes
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -462,7 +490,7 @@ jobs:
           PY
 
       - name: Download the exact native preflight artifact by REST ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.preflight.outputs.artifact_id }}
           path: preflight/${{ matrix.arch }}
@@ -505,7 +533,7 @@ jobs:
           PY
 
       - name: Download the exact native controller evidence by REST ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.controller-evidence.outputs.artifact_id }}
           path: controller-evidence/${{ matrix.arch }}
@@ -641,7 +669,7 @@ jobs:
       - name: Retain success-qualified exact archive and receipt
         if: success()
         id: qualified
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-qualified-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: qualified/${{ matrix.arch }}/
@@ -650,7 +678,7 @@ jobs:
 
       - name: Retain native qualification diagnostics even on failure
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: |
@@ -675,7 +703,7 @@ jobs:
       matrix:
         arch: [amd64, arm64]
         guest-os: [ubuntu2404, debian13]
-        install-mode: [bootstrap, nix-controller]
+        install-mode: ${{ fromJSON(inputs.bundle_source == 'conventional' && '["bootstrap"]' || '["bootstrap", "nix-controller"]') }}
         postgres-profile: [external, bundled]
         include:
           - arch: amd64
@@ -702,12 +730,12 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Download exact original bundle and release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: candidate
       - name: Download exact protected release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -737,7 +765,7 @@ jobs:
               output.write(f"artifact_id={matches[0]['id']}\n")
           VERIFY
       - name: Download original security evidence by immutable artifact ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.controller.outputs.artifact_id }}
           path: original-controller-evidence
@@ -781,6 +809,7 @@ jobs:
           GUEST_OS: ${{ matrix.guest-os }}
           INSTALL_MODE: ${{ matrix.install-mode }}
           POSTGRES_PROFILE: ${{ matrix.postgres-profile }}
+          BUNDLE_SOURCE: ${{ inputs.bundle_source }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
           PROTECTED_REVISION: ${{ github.sha }}
           IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
@@ -835,15 +864,16 @@ jobs:
               --controller-binary-verifier "$RUNNER_TEMP/host-controller-binary-verifier" \
               --protected-root . --protected-revision "$PROTECTED_REVISION" \
               --first-publication-verifier "$RUNNER_TEMP/host-first-publication-verifier" \
-              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE" --postgres-profile "$POSTGRES_PROFILE"
+              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE" --postgres-profile "$POSTGRES_PROFILE" \
+              --bundle-producer "$BUNDLE_SOURCE"
           '
           python3 scripts/nix_compose_host_guest.py verify-receipt \
             --receipt host-evidence/guest/host-guest-receipt.json --evidence-dir host-evidence/guest/evidence
       - name: Retain exact fresh-host receipts and diagnostics without credentials
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: nix-compose-host-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}-${{ matrix.postgres-profile }}
+          name: ${{ inputs.bundle_source == 'conventional' && 'conventional-compose-host' || 'nix-compose-host' }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}-${{ matrix.postgres-profile }}
           path: host-evidence/
           include-hidden-files: true
           if-no-files-found: warn
@@ -874,7 +904,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the exact protected release handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -923,6 +953,7 @@ jobs:
             sandbox = true
 
       - name: Build both clean-source Nix Compose controllers
+        if: inputs.bundle_source != 'conventional'
         env:
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
         run: |
@@ -933,6 +964,7 @@ jobs:
           nix build --no-update-lock-file ./source#leapviewctl-compose-linux-arm64 --out-link result-compose-cli -L
 
       - name: Assemble and verify with protected tools
+        if: inputs.bundle_source != 'conventional'
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
@@ -977,9 +1009,25 @@ jobs:
               --output "candidate/$arch/bundle-binding.json"
           done
 
-      - name: Retain the assembled bundles and original Nix build receipts
+      - name: Verify and preserve original conventional release bundles
+        if: inputs.bundle_source == 'conventional'
+        run: |
+          set -euo pipefail
+          nix develop --no-update-lock-file .#runtime-security -c python3 - <<'PYTHON'
+          import json, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import nix_compose_qualification as qualification
+          qualification.extract_conventional_bundles(
+              pathlib.Path('release-input/release-candidate.zip'),
+              pathlib.Path('release-input/conventional-receipts.zip'),
+              json.loads(pathlib.Path('release-input/conventional-receipt-artifact.json').read_text()),
+              json.loads(pathlib.Path('release-input/release-run-binding.json').read_text()),
+              pathlib.Path('source'), pathlib.Path('candidate'))
+          PYTHON
+
+      - name: Retain exact bundles and original builder receipts
         id: bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-bundles-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate/
@@ -1052,42 +1100,42 @@ jobs:
                       output.write(f"{kind.replace('-', '_')}_{arch}_id={matches[0]['id']}\n")
           PY
       - name: Download exact amd64 native qualification
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.qualified_amd64_id }}
           path: qualified/amd64
       - name: Download exact arm64 native qualification
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.qualified_arm64_id }}
           path: qualified/arm64
       - name: Download exact amd64 pre-execution artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.preflight_amd64_id }}
           path: preflight/amd64
       - name: Download exact arm64 pre-execution artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.preflight_arm64_id }}
           path: preflight/arm64
       - name: Download exact amd64 controller evidence artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_amd64_id }}
           path: original-controller-evidence/amd64
       - name: Download exact arm64 controller evidence artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_arm64_id }}
           path: original-controller-evidence/arm64
       - name: Download exact original Nix bundle artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
           path: original-build
       - name: Download exact release handoff and original REST ZIP
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
@@ -1179,7 +1227,7 @@ jobs:
           predicate-path: qualified/arm64/controller-evidence/sbom.spdx.json
       - name: Retain exact attested archives and evidence
         id: signed
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-signed-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -1219,7 +1267,7 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Download exact signed artifact by ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.sign.outputs.artifact_id }}
           path: signed
@@ -1348,7 +1396,7 @@ jobs:
           done
       - name: Retain independent read-only verification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nix-compose-attestation-verification-${{ github.run_id }}-${{ github.run_attempt }}
           path: verification/

@@ -1,38 +1,21 @@
 name: Configure hosted Docker pulls
-description: Prefer Google's Docker Hub cache on GitHub-hosted Linux runners.
+description: Prefer Google's Docker Hub cache and preload pinned PostgreSQL and Testcontainers reaper images on GitHub-hosted Linux runners.
+
+inputs:
+  postgres:
+    description: Preload the pinned PostgreSQL conformance image before concurrent database test shards.
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
-    - name: Configure Docker Hub mirror before starting containers
+    - name: Mask ambient registry credentials before Docker diagnostics
       if: runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash
-      run: |
-        set -euo pipefail
-        sudo python3 - <<'PY'
-        import json
-        from pathlib import Path
+      run: python3 scripts/mask_ci_docker_credentials.py
 
-        path = Path('/etc/docker/daemon.json')
-        config = json.loads(path.read_text()) if path.exists() else {}
-        mirror = 'https://mirror.gcr.io'
-        config['registry-mirrors'] = [mirror] + [
-            value for value in config.get('registry-mirrors', []) if value != mirror
-        ]
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(config, indent=2) + '\n')
-        PY
-        sudo systemctl restart docker
-        docker info --format '{{json .RegistryConfig.Mirrors}}'
-
-    - name: Preload the upstream Testcontainers reaper
+    - name: Configure Docker mirror and pinned test images before starting containers
       if: runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash
-      run: |
-        set -euo pipefail
-        # Testcontainers Go v0.42.0 defaults to testcontainers/ryuk:0.13.0.
-        # GHCR serves the identical manifest; update this pin and local tag when
-        # the dependency's default reaper version changes.
-        image='ghcr.io/testcontainers/ryuk:0.13.0@sha256:31b31269d06603366cbfd0284708dcd2e281e8a4188e53fce3d3304439d0df3d'
-        docker pull "$image"
-        docker tag "$image" testcontainers/ryuk:0.13.0
+      run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3 scripts/configure_ci_docker_mirror.py ${{ inputs.postgres == 'true' && '--postgres' || '' }}

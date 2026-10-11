@@ -304,7 +304,22 @@ tasks:
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
       - go test ./internal/app/cli/composectl -run '^TestBundledPostgresPrepareSeedsAppEnvBeforeCompose$' -count=1 -v
       - go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerResumesProvisioningAndPreservesVolume$' -count=1 -v
+      - go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerStopsGracefully$' -count=1 -v
       - go test ./internal/app/cli/composectl -run '^TestBundledPostgresColdSnapshotRestoreQualification$' -count=1 -v
+
+  test:qualification:managed-replacement:
+    desc: Qualify the restored application component in the managed-recovery Nix shell
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "true"
+    preconditions:
+      - test -x "$LEAPVIEW_TEST_MANAGED_RESTIC"
+      - test -x "$LEAPVIEW_TEST_MANAGED_POSTGRES_BIN/pg_ctl"
+      - test -x "$LEAPVIEW_TEST_MANAGED_PGBACKREST"
+      - test -x "$LEAPVIEW_TEST_MANAGED_BWRAP"
+    cmds:
+      - task: ci:prepare
+      - go test ./internal/app -run '^TestManagedRecoveryReplacementApplication$' -count=1 -timeout=10m -v
+      - python3 -B -m unittest discover -s deploy/managed/nixos/tests -p postgres_restore_test.py
 
   test:qualification:demo-host-recovery:
     desc: Run isolated host recovery and migration-boundary qualification with synthetic disposable fixtures
@@ -334,16 +349,16 @@ tasks:
             -run '^Test(DemoUpgrade|HostUpgrade|UpgradeBoundary)' -count=1 -timeout=5m -v
       - |
         set -eu
-        recovery_tests="$(go test -list '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' ./internal/app/cli/hostinstall)"
-        for test_name in TestColdPostgreSQLPairRecovery TestInternalNetworkRecoveryRelay TestVolumeTLSMountQualification; do
+        recovery_tests="$(go test -list '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification|AgentProviderPrivateConfigContainer)$' ./internal/app/cli/hostinstall)"
+        for test_name in TestColdPostgreSQLPairRecovery TestInternalNetworkRecoveryRelay TestVolumeTLSMountQualification TestAgentProviderPrivateConfigContainer; do
           if ! printf '%s\n' "$recovery_tests" | grep -Fx "$test_name" >/dev/null; then
             printf 'required physical recovery test missing: %s\n' "$test_name" >&2
             exit 1
           fi
         done
-        LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
+        CGO_ENABLED=0 LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
           go test ./internal/app/cli/hostinstall \
-            -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' \
+            -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification|AgentProviderPrivateConfigContainer)$' \
             -count=1 -timeout=10m -v
 
   test:qualification:historical-transition:
@@ -580,15 +595,23 @@ tasks:
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p test_dashboard_design_trials.py
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - node --test scripts/browser_test_diagnostics.test.mjs
       - node --test desktop/scripts/lifecycle-probe-policy.test.mjs desktop/scripts/lifecycle-probe-cdp.test.mjs
+      - node --test scripts/run_performance_comparison.test.mjs
+      - bun test scripts/performance_comparison_workflow.test.ts
       - node --test deploy/compose/qualification/performance-resources.test.mjs
-      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
+      - node --test scripts/performance_baseline_review.test.mjs scripts/qualify_performance_reference.test.mjs
+      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs scripts/performance_ci_events.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
-      - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_ci_contract.test.ts scripts/ci_dependency_acquisition_contract.test.ts
+      - bun test scripts/ci_docker_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_prepare_sqlc_modules.py
+      - python3 -m unittest discover -s scripts/tests -p test_prepare_ci_fixture_images.py
       - bun test scripts/nix_desktop_candidate_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
       - bun test scripts/managed_admission_contract.test.ts
@@ -596,8 +619,12 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_managed_admission_handoff.py
       - python3 -m unittest discover -s scripts/tests -p test_managed_application_inputs.py
       - python3 -m unittest discover -s scripts/tests -p test_managed_recovery_inventory.py
+      - python3 -m unittest discover -s scripts/tests -p test_ci_docker_credentials.py
       - python3 -m unittest discover -s deploy/managed/nixos/tests -p 'managed_application*_test.py'
+      - python3 -B -m unittest discover -s deploy/managed/nixos/tests -p 'postgres_*_test.py'
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p 'test_performance_*.py'
+      - node --test scripts/performance_build_inputs.test.mjs
       - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
       - python3 -m unittest discover -s scripts/tests -p 'test_ci_sqlc_hosted_*.py'
       - bun test scripts/sqlc_hosted_contract.test.ts
@@ -626,6 +653,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_docker_readiness.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_bundled_postgres.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_installer_diagnostics.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
@@ -650,6 +678,7 @@ tasks:
       - bun run typecheck:tests
       - bun run test:production-assets
       - bun run test:movielens-performance-harness
+      - bun test scripts/performance_browser_profile.test.ts
       - bun run test:viewport-qualification-harness
       - bun run test:public-site-smoke
 
@@ -1752,6 +1781,23 @@ tasks:
     cmds:
       - nix build path:./deploy/managed/nixos#fresh-install-bios path:./deploy/managed/nixos#fresh-install-uefi --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
 
+  managed:hosts:coordinator-test:
+    desc: Exercise actual installed coordinator restore, completed retry and independent admission using a private production-publication fixture
+    cmds:
+      - nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh
+
+  managed:postgres:bootstrap-test:
+    desc: Verify fresh native PostgreSQL bootstrap and privilege boundaries in the managed-recovery Nix shell
+    preconditions:
+      - test -x "$LEAPVIEW_TEST_MANAGED_POSTGRES_BIN/psql"
+    cmds:
+      - POSTGRES_BIN="$LEAPVIEW_TEST_MANAGED_POSTGRES_BIN" python3 -B -m unittest discover -s deploy/managed/postgres -p '*_test.py'
+
+  managed:hosts:postgres-promotion-test:
+    desc: Exercise actual installed PostgreSQL promotion module, private TLS and exact reboot retry in disposable guests
+    cmds:
+      - nix build path:./deploy/managed/nixos#postgres-promotion-test --no-link --no-update-lock-file --max-jobs 1 --cores 1 -L
+
   managed:hosts:network-test:
     desc: Exercise IPv4/IPv6 Docker ingress in fresh kernel namespaces (requires sudo)
     cmds:
@@ -2053,6 +2099,7 @@ tasks:
   test:go:external:
     desc: Run container-backed external-service integration tests serially
     cmds:
+      - bash scripts/prepare_ci_fixture_images.sh minio
       - go test -tags integration ./internal/platform/testminio -count=1
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
       - task: test:go:postgres-conformance

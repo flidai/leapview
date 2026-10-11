@@ -26,7 +26,7 @@ import nix_candidate_manifest as candidate
 SYFT_VERSION = '1.52.0'
 HOST_FIXTURES = (
     {'id': 'debian12', 'image': ('public.ecr.aws/docker/library/debian:bookworm-slim@sha256:'
-                                 '3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251'),
+                                 '7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587'),
      'osID': 'debian', 'versionID': '12'},
     {'id': 'ubuntu2404', 'image': ('public.ecr.aws/docker/library/ubuntu:24.04@sha256:'
                                   '534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55'),
@@ -253,14 +253,17 @@ def _run_container(args, name, *, timeout=45, limit=MAX_RUNTIME_BYTES):
             if len(errors.read(limit + 1)) > limit:
                 raise ValueError('controller host-probe stderr exceeds its byte limit')
     finally:
-        # --rm handles normal completion. This also removes a named container
-        # if the Docker client was killed at its timeout or output limit.
+        # Own removal explicitly: --rm races this request when an output limit
+        # kills the client while the daemon is still removing the container.
+        # Do not publish successful evidence if cleanup could not complete.
         try:
-            subprocess.run(['docker', 'rm', '--force', name], check=False, timeout=15,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           env=_runtime_env())
+            removed = subprocess.run(['docker', 'rm', '--force', name], check=False, timeout=15,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     env=_runtime_env())
         except (OSError, subprocess.SubprocessError):
-            pass
+            raise ValueError('controller host-probe container cleanup failed') from None
+        if removed.returncode != 0:
+            raise ValueError('controller host-probe container cleanup failed')
     if not output or len(output) > limit:
         raise ValueError('controller host-probe output is empty or exceeds its byte limit')
     return output
@@ -287,7 +290,7 @@ def _validate_os_release(data, fixture):
 
 
 def _host_command(binary, arch, fixture, name, command):
-    args = ['docker', 'run', '--rm', '--name', name, '--platform', 'linux/' + arch,
+    args = ['docker', 'run', '--name', name, '--platform', 'linux/' + arch,
             '--log-driver', 'none', '--network', 'none', '--read-only', '--user', '65534:65534',
             '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--memory', '256m', '--cpus', '1', '--pids-limit', '64', '--ulimit', 'core=0']

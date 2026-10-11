@@ -118,12 +118,12 @@ surfaces:
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
     scanners: [trivy]
-    images: ["${LEAPVIEW_IMAGE}", "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251"]
+    images: ["${LEAPVIEW_IMAGE}", "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"]
   - path: deploy/compose/qualification/Dockerfile.authoring-browser
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
     scanners: [trivy]
-    images: ["mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27"]
+    images: ["mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f"]
   - path: deploy/postgres/ha/Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/postgres/ha}
@@ -136,6 +136,12 @@ surfaces:
     scanners: [trivy]
     images:
       - public.ecr.aws/docker/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+  - path: internal/analytics/duckdb/testdata/mysql/Dockerfile
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /internal/analytics/duckdb/testdata/mysql}
+    scanners: [trivy]
+    images:
+      - docker.io/library/mysql:26.7@sha256:9d48c42f8341068f199116dfccb919b607c99765b5c61e549a548a43033471a4
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}
@@ -297,10 +303,6 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/workflows/security.yml
-    kind: github-actions
-    updater: {ecosystem: github-actions, directory: /}
-    scanners: [trivy, action-pin-policy]
-  - path: .github/workflows/site-kamal-trial.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

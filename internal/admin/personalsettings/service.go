@@ -53,6 +53,7 @@ type AuthoringReader interface {
 }
 
 type Service struct {
+	TokenIssuer        TokenIssuer
 	Repository         Repository
 	Preferences        PreferencesRepository
 	IdentityManagement IdentityManagementReader
@@ -118,8 +119,8 @@ func (s *Service) Load(ctx context.Context, principalID, currentSessionID string
 	permissionOptionsReady := false
 	if includePermissionOptions {
 		permissionOptionsReady = true
-		if s.CurrentEffectivePermissionOptions != nil {
-			effective, effectiveErr := s.CurrentEffectivePermissionOptions(ctx, principalID)
+		if s.CurrentEffectivePermissionOptions != nil || s.TokenIssuer != nil {
+			effective, effectiveErr := s.tokenCreationOptions(ctx, principalID)
 			if effectiveErr != nil {
 				return Signal{}, effectiveErr
 			}
@@ -415,6 +416,26 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		if err := access.ValidatePermissionPairs(permissions); err != nil {
 			return nil, err
 		}
+		var expiresAt time.Time
+		if strings.TrimSpace(command.ExpiresAt) != "" {
+			expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(command.ExpiresAt))
+			if err != nil {
+				return nil, fmt.Errorf("invalid token expiry: %w", err)
+			}
+			if !expiresAt.After(s.now()) {
+				return nil, fmt.Errorf("token expiry must be in the future")
+			}
+		}
+
+		if s.TokenIssuer != nil {
+			secret, handled, issueErr := s.TokenIssuer.Create(ctx, access.ScopedAPITokenInput{PrincipalID: principalID, Name: name, Description: description, Permissions: permissions, ExpiresAt: expiresAt})
+			if issueErr != nil {
+				return nil, issueErr
+			}
+			if handled {
+				return &secret, nil
+			}
+		}
 		if len(permissions) > 0 {
 			if s.CurrentEffectivePermissionOptions == nil {
 				return nil, fmt.Errorf("effective typed permission authority is unavailable")
@@ -425,16 +446,6 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 			}
 			if authorityErr := access.ValidatePermissionPairsAgainstAuthority(authority, permissions); authorityErr != nil {
 				return nil, authorityErr
-			}
-		}
-		var expiresAt time.Time
-		if strings.TrimSpace(command.ExpiresAt) != "" {
-			expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(command.ExpiresAt))
-			if err != nil {
-				return nil, fmt.Errorf("invalid token expiry: %w", err)
-			}
-			if !expiresAt.After(s.now()) {
-				return nil, fmt.Errorf("token expiry must be in the future")
 			}
 		}
 		var secret string

@@ -1,0 +1,21 @@
+{
+  "firstAttemptSourceHashes": {
+    "runs/explicit-create/dashboards/evaluation.yaml": "3666d1bbf149a765c5d41698a640954a94332f2de353e087a22a2489ac09e88f",
+    "runs/explicit-grain/dashboards/evaluation.yaml": "ae46fa447049c8f68e41951a089682ee655b1d58a24d0a662711929c26884802",
+    "runs/explicit-reuse/dashboards/evaluation.yaml": "2bb3e013cd7f8858353297253902288d249072ff3f7e407d83a4d542130c9c99",
+    "runs/fragments-create/dashboards/evaluation.yaml": "742222bef2511c77a81b86464b67d290e96b7c65d093de3b70db25d33cd43576",
+    "runs/fragments-create/dashboards/pages.yaml": "4af4c679b8cba710d1ba3b0cf3d735e070b23ed15a03174f4198f4f42888c9e7",
+    "runs/fragments-create/dashboards/visuals.yaml": "dd88ec4f4a347f718de67228cd5dae4475ad2468324f05b2d7c410986083b2a5",
+    "runs/fragments-grain/dashboards/evaluation.yaml": "742222bef2511c77a81b86464b67d290e96b7c65d093de3b70db25d33cd43576",
+    "runs/fragments-grain/dashboards/pages.yaml": "4af4c679b8cba710d1ba3b0cf3d735e070b23ed15a03174f4198f4f42888c9e7",
+    "runs/fragments-grain/dashboards/visuals.yaml": "b5cd2167790ae3aa1ee1766c0e331864e3c72d00cae31f0e545a21e556513b3f",
+    "runs/fragments-reuse/dashboards/evaluation.yaml": "742222bef2511c77a81b86464b67d290e96b7c65d093de3b70db25d33cd43576",
+    "runs/fragments-reuse/dashboards/pages.yaml": "f764ac489c7122dbcb1a299f2d2fe0c8ec4ef36ed4c269cd9dd6e0b20d711f9a",
+    "runs/fragments-reuse/dashboards/visuals.yaml": "840a20108967a7c186162ccc09d6533e07b36e737c8e1a45c5d6261cc0fc4801",
+    "runs/omitted-create/dashboards/evaluation.yaml": "1208e8b602d0f12b3a3704c57c7aa5ddba9cd3203cfe0bdac9c810fcc8c76807",
+    "runs/omitted-grain/dashboards/evaluation.yaml": "d0412f82690fc9e66234daf2ad3a04c3d915383b096933045e1afdff9e1e18db",
+    "runs/omitted-reuse/dashboards/evaluation.yaml": "0ed2548e857d581c34df7f52cfdb1d6a1d3818b3498438792b3044862f80cf73"
+  },
+  "repairs": 0,
+  "timing": "Per-trial elapsed time and tokens unavailable; no efficiency comparison claimed"
+}

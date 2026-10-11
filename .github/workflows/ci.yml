@@ -61,7 +61,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT" --github-summary "$GITHUB_STEP_SUMMARY"
       - name: Publish versioned selection evidence
         id: plan-artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-plan
           path: ci-plan.json
@@ -174,6 +174,7 @@ jobs:
         uses: ./.github/actions/setup-ci
         with:
           browser: "false"
+          postgres: "true"
 
       - name: Prepare generated and embedded assets
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
@@ -283,7 +284,7 @@ jobs:
           go test ./internal/analytics/resultcache -run '^$' -bench '^BenchmarkWarmTileByteLookup$' -benchmem -benchtime=100x -count=10 | tee spatial-tile-cache.txt
 
       - name: Upload spatial benchmark evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: spatial-tile-benchmarks
           path: |
@@ -395,6 +396,10 @@ jobs:
     needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation, host-recovery-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     steps:
       - name: Require successful planning
         env:
@@ -411,8 +416,37 @@ jobs:
         uses: ./.github/actions/setup-ci
         with:
           profile: orchestration
+      - name: Verify trusted performance reference evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_MAIN: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${TRUSTED_MAIN}"
+          trusted_scripts="${RUNNER_TEMP}/trusted-performance-evidence"
+          mkdir -p "${trusted_scripts}"
+          git show FETCH_HEAD:scripts/performance_baseline_review.mjs > "${trusted_scripts}/performance_baseline_review.mjs"
+          if git cat-file -e FETCH_HEAD:scripts/qualify_performance_reference.mjs; then
+            git show FETCH_HEAD:scripts/qualify_performance_reference.mjs > "${trusted_scripts}/qualify_performance_reference.mjs"
+          fi
+          # Use the trusted evidence API directly, including while main still has
+          # the former CLI approval check. PR review remains a GitHub merge rule.
+          node --input-type=module - "${trusted_scripts}" <<'NODE'
+          import { resolve } from 'node:path'
+          import { pathToFileURL } from 'node:url'
+          const trusted = (name) => pathToFileURL(resolve(process.argv[2], name)).href
+          const { readPerformanceReference } = await import(trusted('performance_baseline_review.mjs'))
+          const reference = readPerformanceReference()
+          if (reference) {
+            const { verifyPerformanceReferenceEvidence } = await import(trusted('qualify_performance_reference.mjs'))
+            verifyPerformanceReferenceEvidence(reference)
+            console.log(`Trusted performance reference evidence verified at ${reference.commit}.`)
+          } else {
+            console.log('No accepted performance reference; qualification remains absolute-only.')
+          }
+          NODE
       - name: Read the exact plan artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.prepare.outputs.plan_artifact_id }}
           merge-multiple: true

@@ -666,6 +666,23 @@ class SSHGuest:
         return bytes(output)
 
 
+def _wait_for_docker_active(guest: SSHGuest, *, timeout: int) -> bytes:
+    # SSH can return before Docker's enabled service finishes booting. Observe
+    # automatic startup within the existing budget; never start the service here.
+    deadline = time.monotonic() + timeout
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            observation = guest.run("systemctl is-active docker", timeout=min(20, remaining))
+            if _one_line(observation, "Docker active state") == "active":
+                return observation
+        except HostGuestError:
+            pass
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(5, remaining))
+    raise HostGuestError("Docker did not become active after reboot within the startup budget")
+
+
 def _https_readiness_command() -> str:
     request = (
         "GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"
@@ -1266,12 +1283,22 @@ def _run_host_installer(guest: SSHGuest, evidence: Path, command: str, *, timeou
         "activate-generation": "activate deployment generation",
         "deployment-environment": "install deployment environment",
         "prepare-postgres-pool": "prepare production postgresql and delivery-pool bootstrap",
+        "bundled-postgres-material": "prepare persistent postgresql credentials and tls",
+        "bundled-postgres-start": "start bundled postgresql:",
+        "bundled-postgres-reconcile": "reconcile bundled postgresql roles, databases, and schema",
         "postgres-connections": "validate first-install postgresql connections",
         "pool-identity": "validate first-install physical-pool identity",
         "pool-evidence": "validate first-install physical-pool evidence",
         "pool-artifacts": "prepare first-install physical-pool artifacts",
         "pool-dry-run": "dry-run first-install physical-pool bootstrap",
         "initialize": "initialize leapview",
+        "initialize-image-pull": "initial image pull failed; initialization can be retried",
+        "initialize-config-validation": "configuration validation failed; initialization can be retried",
+        "initialize-compose-config": "compose configuration is invalid; initialization can be retried",
+        "initialize-credentials": "instance initialization did not deliver credentials",
+        "initialize-empty-credentials": "instance initialization returned empty credentials",
+        "initialize-invalid-credentials": "instance initialization returned invalid credentials",
+        "initialize-acknowledgement": "credentials were saved but acknowledgement failed",
         "pool-apply": "apply production delivery-pool bootstrap",
         "private-marker": "write private-bootstrap installation marker",
         "private-start": "start leapview in private first-install bootstrap",
@@ -1290,6 +1317,9 @@ def _run_host_installer(guest: SSHGuest, evidence: Path, command: str, *, timeou
         "docker-unavailable": "cannot connect to the docker daemon", "image-pull": "pull access denied",
         "csrf-key": "leapview_csrf_key", "agent-key": "leapview_agent_credential_key",
         "disk-full": "no space left on device", "deadline": "deadline exceeded",
+        "container-unhealthy": "is unhealthy",
+        "postgres-connection-closed": "server closed the connection unexpectedly",
+        "postgres-secret-unavailable": "required bundled postgresql secret is unavailable",
     }
     matched_causes = [key for key, phrase in causes.items() if phrase in text]
     if code in (124, 137):
@@ -1580,7 +1610,31 @@ def _pull_payload(guest: SSHGuest, evidence: Path, *, image_reference: str, dock
     return repo_digests, pulled_image_id, payload_sha
 
 
+def _validate_conventional_producer(producer: dict, identity: dict) -> None:
+    fields = {"schemaVersion", "producer", "releaseAdmission", "nixQualification", "releaseArtifactId",
+              "releaseArtifactDigest", "receiptArtifactId", "receiptArtifactDigest", "releaseRunId",
+              "releaseRunAttempt", "bundle"}
+    if (not isinstance(producer, dict) or set(producer) != fields or producer["schemaVersion"] != 1
+            or producer["producer"] != "conventional" or producer["releaseAdmission"] is not False
+            or producer["nixQualification"] is not False):
+        raise HostGuestError("conventional producer evidence must explicitly exclude Nix qualification and admission")
+    for key in ("releaseArtifactId", "receiptArtifactId", "releaseRunId", "releaseRunAttempt"):
+        if type(producer[key]) is not int or producer[key] <= 0:
+            raise HostGuestError("conventional producer evidence lacks original release artifact identities")
+    for key in ("releaseArtifactDigest", "receiptArtifactDigest"):
+        if not isinstance(producer[key], str) or SHA256_RE.fullmatch(producer[key]) is None:
+            raise HostGuestError("conventional producer evidence lacks original artifact digests")
+    bundle = producer["bundle"]
+    for key in ("archiveSHA256", "controllerSHA256", "controllerBuildIdentitySHA256", "sourceRevision",
+                "platform", "image", "releaseIdentitySHA256"):
+        if not isinstance(bundle, dict) or bundle.get(key) != identity.get(key):
+            raise HostGuestError("conventional producer evidence differs from the exact guest bundle")
+
+
 def _install_and_collect(args) -> dict:
+    producer_kind = getattr(args, "bundle_producer", "nix")
+    if producer_kind == "conventional" and args.install_mode != "bootstrap":
+        raise HostGuestError("conventional guest qualification requires the bootstrap installer")
     if ipaddress.ip_address(args.host).is_loopback is False or args.host != "127.0.0.1":
         raise HostGuestError("guest SSH must target the IPv4 loopback address 127.0.0.1")
     if not 1024 <= args.port <= 65535:
@@ -1625,6 +1679,10 @@ def _install_and_collect(args) -> dict:
             platform=args.platform, source_revision=args.source_revision, image=args.image,
             extract_dir=Path(temporary) / "bundle",
         )
+        producer_bytes = None
+        if producer_kind == "conventional":
+            producer_bytes = _read(args.archive.parent / "bundle-producer.json", "conventional bundle producer", 64 * 1024)
+            _validate_conventional_producer(_json(producer_bytes, "conventional bundle producer"), binding)
         controller_evidence.compare_controller_evidence(
             args.archive, args.sidecar, args.controller_build_identity, source_root, args.release_identity,
             platform=args.platform, source_revision=args.source_revision, image=args.image,
@@ -1644,6 +1702,8 @@ def _install_and_collect(args) -> dict:
         os.chmod(output, 0o700)
         evidence = output / "evidence"
         evidence.mkdir(mode=0o700)
+        if producer_bytes is not None:
+            _record(evidence, "conventional-bundle-producer.json", producer_bytes)
         _record(evidence, "launcher-receipt.json", launcher_receipt_bytes)
         _record(evidence, "host-kvm-probe.json", (json.dumps(kvm, sort_keys=True) + "\n").encode())
         _record(evidence, "host-runner-architecture.txt", (host_arch + "\n").encode())
@@ -1883,7 +1943,7 @@ def _install_and_collect(args) -> dict:
 
         pid1 = _one_line(_record(evidence, "postreboot-pid1.txt", guest.run("readlink /proc/1/exe")), "PID 1")
         docker_enabled = _one_line(_record(evidence, "docker-enabled.txt", guest.run("systemctl is-enabled docker")), "Docker enabled state")
-        docker_active = _one_line(_record(evidence, "docker-active.txt", guest.run("systemctl is-active docker")), "Docker active state")
+        docker_active = _one_line(_record(evidence, "docker-active.txt", _wait_for_docker_active(guest, timeout=args.startup_timeout)), "Docker active state")
         if docker_enabled != "enabled" or docker_active != "active" or "systemd" not in pid1:
             raise HostGuestError("systemd or Docker did not remain enabled and active after reboot")
 
@@ -2295,6 +2355,9 @@ def _install_and_collect(args) -> dict:
         "excludedGates": ["two-image-upgrade-and-rollback", "full-enterprise-publication-journey"],
         "evidenceInventory": inventory,
     }
+    if producer_bytes is not None:
+        receipt["identity"].update({"bundleProducer": "conventional", "nixQualification": False,
+                                    "producerReceiptSHA256": _digest(producer_bytes)})
     if bundled_state:
         receipt["identity"]["postgresProfile"] = "bundled"
         receipt["guest"]["bundledPostgres"] = bundled_state
@@ -2495,6 +2558,9 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             or receipt["result"] != "passed" or receipt["releaseAdmission"] is not False):
         raise HostGuestError("host guest receipt is not a non-admitting successful record")
     identity = receipt["identity"]
+    if ((evidence / "conventional-bundle-producer.json").exists()
+            and (not isinstance(identity, dict) or identity.get("bundleProducer") != "conventional")):
+        raise HostGuestError("conventional producer evidence cannot be relabeled as a Nix guest")
     postgres_profile = identity.get("postgresProfile", "external") if isinstance(identity, dict) else None
     identity_keys = {
         "archiveSHA256", "controllerSHA256", "controllerBuildIdentitySHA256", "image", "sourceRevision",
@@ -2502,6 +2568,15 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
     }
     if postgres_profile == "bundled":
         identity_keys.add("postgresProfile")
+    if isinstance(identity, dict) and "bundleProducer" in identity:
+        identity_keys.update({"bundleProducer", "nixQualification", "producerReceiptSHA256"})
+        if (identity["bundleProducer"] != "conventional" or identity.get("nixQualification") is not False
+                or identity.get("installMode") != "bootstrap"):
+            raise HostGuestError("conventional guest identity must exclude Nix qualification and use bootstrap")
+        producer_bytes = _evidence_bytes(evidence, "conventional-bundle-producer.json")
+        if _digest(producer_bytes) != identity.get("producerReceiptSHA256"):
+            raise HostGuestError("conventional producer receipt digest differs from retained evidence")
+        _validate_conventional_producer(_json(producer_bytes, "conventional bundle producer"), identity)
     if not isinstance(identity, dict) or set(identity) != identity_keys:
         raise HostGuestError("host guest receipt has incomplete Compose identity")
     for key in ("archiveSHA256", "controllerSHA256", "controllerBuildIdentitySHA256", "releaseIdentitySHA256"):
@@ -2965,6 +3040,7 @@ def main() -> None:
     qualify.add_argument("--launcher-receipt", type=Path, required=True)
     qualify.add_argument("--guest-os", choices=sorted(GUEST_OS), required=True)
     qualify.add_argument("--install-mode", choices=("bootstrap", "nix-controller"), required=True)
+    qualify.add_argument("--bundle-producer", choices=("nix", "conventional"), default="nix")
     qualify.add_argument("--postgres-profile", choices=("external", "bundled"), default="external")
     qualify.add_argument("--virtualization-mode", choices=("kvm", "tcg"), required=True)
     qualify.add_argument("--config", type=Path, required=True)
