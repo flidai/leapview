@@ -64,7 +64,7 @@ func AdmitManagedRecovery(ctx context.Context, config ManagedConfig, authority M
 			return ManagedAdmissionEvidence{}, errors.New("managed admission file manifests differ from the completed handoff")
 		}
 	}
-	if validatePrivateSecretRoot(config.Postgres.Destination) != nil {
+	if config.PostgresProvider != "module-owned" && validatePrivateSecretRoot(config.Postgres.Destination) != nil {
 		return ManagedAdmissionEvidence{}, errors.New("managed admission requires the existing private restored PostgreSQL directory")
 	}
 	composition, err := prepareManagedComposition(ctx, config, authority)
@@ -72,7 +72,8 @@ func AdmitManagedRecovery(ctx context.Context, config ManagedConfig, authority M
 		return ManagedAdmissionEvidence{}, err
 	}
 	// Provider verification may read the existing immutable restore intent and
-	// launch confined PostgreSQL. Destination presence above forbids a new restore.
+	// launch private PostgreSQL. The module adapter uses check-only admission:
+	// its authenticated completed receipt forbids a missing-data provider restore.
 	return verifyManagedAdmission(ctx, config, authority, snapshot, composition.fence, composition.components)
 }
 

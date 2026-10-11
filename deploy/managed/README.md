@@ -209,10 +209,13 @@ growth. pgBackRest configuration references the external secret file through an
 `/etc` symlink; its contents are never evaluated into the Nix store. Backup commands
 use upstream NixOS services/timers; there is no LeapView backup daemon.
 
-This first scaffold does **not** provision application roles/passwords, migrate
-schemas or admit a physical pool. Integrate the canonical production bootstrap
-and capability separation as the next slice. Do not reuse `deploy/postgres/init.sh`:
-it is a development/test initializer with default passwords. Do not grant runtime
+The host module does **not** automatically provision application roles/passwords,
+migrate schemas or admit a physical pool. For a fresh qualification cluster, the
+[native PostgreSQL bootstrap](postgres/README.md) installs the production role
+boundaries from explicit private credentials and refuses existing installations.
+Complete canonical application migrations and physical-pool admission separately
+through the installer. Do not reuse `deploy/postgres/init.sh`: it is a
+development/test initializer with default passwords. Do not grant runtime
 credentials schema ownership to bypass bootstrap.
 
 pgBackRest schedules weekly full and daily differential backups with continuous

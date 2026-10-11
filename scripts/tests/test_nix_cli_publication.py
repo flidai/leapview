@@ -710,6 +710,17 @@ class CliPublicationTests(unittest.TestCase):
 
 
 class CliHostRuntimeTests(unittest.TestCase):
+    def test_cleanup_failure_cannot_publish_successful_host_output(self):
+        def docker(args, **kwargs):
+            if args[:2] == ['docker', 'run']:
+                kwargs['stdout'].write(b'valid host output\n')
+                return subprocess.CompletedProcess(args, 0)
+            return subprocess.CompletedProcess(args, 1)
+
+        with patch.object(publication.subprocess, 'run', side_effect=docker):
+            with self.assertRaisesRegex(ValueError, 'host.probe.*cleanup'):
+                publication._run_container(['docker', 'run'], 'owned-fixture')
+
     @unittest.skipUnless(os.environ.get('LEAPVIEW_TEST_NIX_CLI_RUNTIME') == '1',
                          'requires the pinned Docker host fixture')
     def test_real_host_probe_bounds_stderr_and_preserves_normal_output(self):

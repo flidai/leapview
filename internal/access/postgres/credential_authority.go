@@ -34,6 +34,16 @@ func RecheckCredentialAuthorityTx(ctx context.Context, tx pgx.Tx, issuer access.
 	return nil
 }
 
+// IsPlatformAdministratorTx reads the independent platform role through the
+// caller's transaction without acquiring a second pool connection. Callers
+// issuing authority must also lock a positive result until their commit.
+func IsPlatformAdministratorTx(ctx context.Context, tx pgx.Tx, actor string) (bool, error) {
+	if ctx == nil || typednil.IsNil(tx) {
+		return false, access.ErrForbidden
+	}
+	return (&Repository{db: tx}).IsPlatformAdmin(ctx, actor)
+}
+
 // LockPlatformAdministratorTx binds the durable instance-wide role and active
 // principal to the caller's commit boundary. An earlier request snapshot cannot
 // substitute for this check; concurrent role revocation waits for this lock.

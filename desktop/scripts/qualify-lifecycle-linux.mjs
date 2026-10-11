@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { inspectTrustedShell } from './lifecycle-probe-cdp.mjs';
+import { debugCommandError, inspectTrustedShell } from './lifecycle-probe-cdp.mjs';
 import { verifyRetainedProfile, verifyTermination } from './lifecycle-probe-policy.mjs';
 
 const [executable, profile, expectedLabel, nextLabel, termination, output] = process.argv.slice(2);
@@ -56,7 +56,7 @@ async function call(socket, method, params = {}) {
     function message(event) {
       let value;
       try { value = JSON.parse(event.data); } catch { finish(new Error('invalid debug response')); return; }
-      if (value.id === id) finish(value.error ? new Error('debug command rejected') : null, value.result);
+      if (value.id === id) finish(value.error ? debugCommandError(method, value.error) : null, value.result);
     }
     socket.addEventListener('message', message);
     socket.addEventListener('close', closed);

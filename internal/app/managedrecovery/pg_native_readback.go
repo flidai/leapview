@@ -169,7 +169,9 @@ func (config PGNativeReadbackConfig) readback(ctx context.Context, cluster *PGSt
 	listener.Close()
 	setting := func(name, value string) []string { return []string{"-c", name + "=" + value} }
 	args := []string{}
-	settings := [][2]string{{"config_file", filepath.Join(cluster.Directory(), ".managed-readback.conf")}, {"hba_file", filepath.Join(cluster.Directory(), ".managed-readback.hba")}, {"listen_addresses", "127.0.0.1"}, {"port", strconv.Itoa(port)}, {"unix_socket_directories", cluster.Directory()}, {"ssl", "on"}, {"ssl_cert_file", filepath.Join(cluster.Directory(), ".managed-readback.crt")}, {"ssl_key_file", filepath.Join(cluster.Directory(), ".managed-readback.key")}, {"ssl_min_protocol_version", "TLSv1.2"}, {"shared_preload_libraries", ""}, {"session_preload_libraries", ""}, {"local_preload_libraries", ""}, {"archive_mode", "off"}, {"logging_collector", "off"}, {"recovery_target_lsn", config.Frontier.TargetLSN}, {"recovery_target_timeline", strconv.FormatUint(uint64(config.Frontier.Timeline), 10)}, {"recovery_target_action", "pause"}, {"restore_command", shellLiteral(config.PGBackRest) + " --config=" + shellLiteral(config.ProviderConfigFile) + " --stanza=" + shellLiteral(config.Frontier.Stanza) + " --pg1-path=" + shellLiteral(cluster.Directory()) + " archive-get '%f' '%p'"}}
+	// Readback uses only verified TLS on loopback. A Unix socket is unused and
+	// would prevent startup when the private restore destination is long.
+	settings := [][2]string{{"config_file", filepath.Join(cluster.Directory(), ".managed-readback.conf")}, {"hba_file", filepath.Join(cluster.Directory(), ".managed-readback.hba")}, {"listen_addresses", "127.0.0.1"}, {"port", strconv.Itoa(port)}, {"unix_socket_directories", ""}, {"ssl", "on"}, {"ssl_cert_file", filepath.Join(cluster.Directory(), ".managed-readback.crt")}, {"ssl_key_file", filepath.Join(cluster.Directory(), ".managed-readback.key")}, {"ssl_min_protocol_version", "TLSv1.2"}, {"shared_preload_libraries", ""}, {"session_preload_libraries", ""}, {"local_preload_libraries", ""}, {"archive_mode", "off"}, {"logging_collector", "off"}, {"recovery_target_lsn", config.Frontier.TargetLSN}, {"recovery_target_timeline", strconv.FormatUint(uint64(config.Frontier.Timeline), 10)}, {"recovery_target_action", "pause"}, {"restore_command", shellLiteral(config.PGBackRest) + " --config=" + shellLiteral(config.ProviderConfigFile) + " --stanza=" + shellLiteral(config.Frontier.Stanza) + " --pg1-path=" + shellLiteral(cluster.Directory()) + " archive-get '%f' '%p'"}}
 	for _, entry := range settings {
 		args = append(args, setting(entry[0], entry[1])...)
 	}
@@ -177,6 +179,8 @@ func (config PGNativeReadbackConfig) readback(ctx context.Context, cluster *PGSt
 	if err != nil {
 		return nil, err
 	}
+	var diagnostics postgresFailureOutput
+	command.Stderr = &diagnostics
 	if err := command.Start(); err != nil {
 		return nil, errors.New("confined PostgreSQL startup failed")
 	}
@@ -187,8 +191,10 @@ func (config PGNativeReadbackConfig) readback(ctx context.Context, cluster *PGSt
 		defer cancel()
 		stop := exec.CommandContext(cleanup, filepath.Join(filepath.Dir(config.Postgres), "pg_ctl"), "-D", cluster.Directory(), "-m", "fast", "-w", "stop")
 		stop.Env = []string{"PATH=/nonexistent", "LANG=C", "TZ=UTC"}
+		var shutdownDiagnostics postgresFailureOutput
+		stop.Stderr = &shutdownDiagnostics
 		if err := stop.Run(); err != nil {
-			resultErr = errors.Join(resultErr, errors.New("pinned PostgreSQL shutdown failed"))
+			resultErr = errors.Join(resultErr, postgresProcessFailure("pinned PostgreSQL shutdown failed", err, &shutdownDiagnostics))
 			_ = command.Cancel()
 		}
 		select {
@@ -219,7 +225,7 @@ func (config PGNativeReadbackConfig) readback(ctx context.Context, cluster *PGSt
 		select {
 		case err := <-done:
 			done <- err
-			return nil, errors.New("confined PostgreSQL stopped before readback")
+			return nil, postgresProcessFailure("confined PostgreSQL stopped before readback", err, &diagnostics)
 		default:
 		}
 		control, err = pgx.ConnectConfig(ctx, controlConfig)

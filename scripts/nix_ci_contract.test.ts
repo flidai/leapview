@@ -34,6 +34,53 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('managed replacement qualification cannot silently omit native providers in hosted CI', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const taskName = 'test:qualification:managed-replacement'
+  expect(workflow.jobs.development.steps.some((step: any) =>
+    step.run === 'nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_replacement_ci.sh')).toBe(true)
+  expect(workflow.on.pull_request.paths).toContain('scripts/qualify_managed_replacement_ci.sh')
+  expect(readFileSync('scripts/qualify_managed_replacement_ci.sh', 'utf8')).toContain(`task ${taskName}`)
+  const task = parse(readFileSync('Taskfile.yml', 'utf8')).tasks[taskName]
+  expect(task.env.LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED).toBe('true')
+  expect(task.cmds).toContain("go test ./internal/app -run '^TestManagedRecoveryReplacementApplication$' -count=1 -timeout=10m -v")
+  expect(task.cmds).toContain('python3 -B -m unittest discover -s deploy/managed/nixos/tests -p postgres_restore_test.py')
+  const shell = readFileSync('flake.nix', 'utf8')
+  for (const [name, executable] of [
+    ['RESTIC', '${pkgs.restic}/bin/restic'],
+    ['POSTGRES_BIN', '${pkgs.postgresql_18}/bin'],
+    ['PGBACKREST', '${pkgs.pgbackrest}/bin/pgbackrest'],
+    ['BWRAP', '${pkgs.bubblewrap}/bin/bwrap'],
+  ]) {
+    const variable = `LEAPVIEW_TEST_MANAGED_${name}`
+    expect(shell).toContain(`${variable} = "${executable}";`)
+    expect(task.preconditions).toContain(`test -x "$${variable}${name === 'POSTGRES_BIN' ? '/pg_ctl' : ''}"`)
+  }
+})
+
+test('installed managed coordinator is a private component in a separate bounded hosted gate', () => {
+  const workflow = parse(readFileSync('.github/workflows/managed-scaffold.yml', 'utf8'))
+  expect(workflow.jobs.hosts['timeout-minutes']).toBe(60)
+  const job = workflow.jobs['installed-coordinator']
+  expect(job['runs-on']).toBe('ubuntu-24.04')
+  expect(job['timeout-minutes']).toBe(60)
+  expect(job.steps.some((step: any) => step.run === 'nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh')).toBe(true)
+  expect(job.steps.some((step: any) => step.uses?.startsWith('actions/upload-artifact@'))).toBe(false)
+  for (const event of ['pull_request', 'push']) {
+    expect(workflow.on[event].paths).toContain('scripts/qualify_managed_coordinator_ci.sh')
+    expect(workflow.on[event].paths).toContain('internal/app/**')
+  }
+  const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
+  expect(tasks['managed:hosts:coordinator-test'].cmds).toContain('nix develop --no-update-lock-file .#managed-recovery -c bash scripts/qualify_managed_coordinator_ci.sh')
+  const runner = readFileSync('scripts/qualify_managed_coordinator_ci.sh', 'utf8')
+  expect(runner).toContain('#managed-coordinator-test.driver')
+  expect(runner).toContain("-test.run '^TestManagedRecoveryInstalledPublicationExport$'")
+  expect(runner).toContain('nix-store --export "${tool_paths[@]}"')
+  expect(runner).toContain('umask 077')
+  const transport = spawnSync('python3', ['deploy/managed/nixos/tests/managed_coordinator_fixture_test.py'], { encoding: 'utf8' })
+  if (transport.status !== 0) throw new Error(transport.stdout + transport.stderr)
+  expect(transport.status).toBe(0)
+})
 
 test('Nix source-generation inputs select their consumer builds', () => {
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
@@ -1047,6 +1094,10 @@ test('image qualification rejects fixture tags and checks native platform before
     mkdirSync(join(application, 'bin'), { recursive: true })
     mkdirSync(join(application, 'share', 'leapview', 'deploy', 'compose'), { recursive: true })
     copyFileSync(resolve('scripts/check_nix_image.sh'), script)
+    copyFileSync(resolve('scripts/prepare_ci_fixture_images.sh'), join(root, 'scripts', 'prepare_ci_fixture_images.sh'))
+    mkdirSync(join(root, 'internal/app/cli/composectl'), { recursive: true })
+    copyFileSync(resolve('internal/app/cli/composectl/qualification_image.go'),
+      join(root, 'internal/app/cli/composectl/qualification_image.go'))
     writeFileSync(join(root, 'bin', 'uname'), '#!/bin/sh\nprintf "%s\\n" "$RUNNER_MACHINE"\n', { mode: 0o755 })
     writeFileSync(join(root, 'bin', 'docker'), `#!/bin/sh
 printf '%s\\n' "$*" >> '${calls}'
@@ -1055,6 +1106,9 @@ case "$1" in
   image)
     if [ "$2" = inspect ] && [ "$5" = '{{json .RepoDigests}}' ]; then
       printf '["%s"]\\n' "$REGISTRY_REFERENCE"
+    elif [ "$2" = inspect ] && [ "$5" = '{{.Id}}' ]; then
+      if [ "$REGISTRY_PULL_FAILURE" = yes ]; then exit 1; fi
+      printf '%s\\n' '${imageID}'
     elif [ "$2" = inspect ]; then
       printf '%s %s\\n' "$INSPECTED_PLATFORM" '${imageID}'
     else exit 0
@@ -1064,6 +1118,7 @@ case "$1" in
     printf '%s\\n' registry-container ;;
   port) printf '%s\\n' '127.0.0.1:5000' ;;
   tag|push|rm) exit 0 ;;
+  pull) printf '%s\\n' 'manifest verification failed for digest' >&2; exit 8 ;;
   *) exit 1 ;;
 esac
 `, { mode: 0o755 })
@@ -1073,12 +1128,12 @@ esac
     writeFileSync(join(application, 'bin', 'leapviewctl'), '#!/bin/sh\nprintf "cli %s\\n" "$*" >> "$CALLS"\n', { mode: 0o755 })
     writeFileSync(join(root, 'manifest.json'), JSON.stringify([{ Config: `${'a'.repeat(64)}.json`, RepoTags: ['leapview-nix:abcdef123456'] }]))
     expect(spawnSync('tar', ['-cf', archive, '-C', root, 'manifest.json']).status).toBe(0)
-    const invoke = (machine: string, inspectedPlatform: string) => {
+    const invoke = (machine: string, inspectedPlatform: string, registryPullFailure = 'no') => {
       rmSync(calls, { force: true })
       const run = spawnSync('bash', [script, archive, application], {
         env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`,
           RUNNER_MACHINE: machine, INSPECTED_PLATFORM: inspectedPlatform, REGISTRY_REFERENCE: registryReference,
-          CALLS: calls },
+          REGISTRY_PULL_FAILURE: registryPullFailure, CALLS: calls },
       })
       let commands: string[] = []
       try { commands = readFileSync(calls, 'utf8').trim().split('\n') } catch { /* qualification stops before Docker */ }
@@ -1108,12 +1163,22 @@ esac
       expect(native.commands[4]).toBe(
         `run --platform linux/${fixture.arch} --rm --network none --read-only --cap-drop ALL --volume ${join(root, '.tmp/nix-image-qualification/strfmon_probe')}:/tmp/strfmon_probe:ro --entrypoint /tmp/strfmon_probe ${imageID}`)
       expect(native.commands[4]).not.toContain(`sha256:${'a'.repeat(64)}`)
+      const registryPin = readFileSync('internal/app/cli/composectl/qualification_image.go', 'utf8')
+        .match(/const qualificationRegistryImage = "([^"]+)"/)![1]
+      expect(native.commands[5]).toBe(`image inspect ${registryPin} --format {{.Id}}`)
+      expect(native.commands[6]).toMatch(/^run --pull never --detach --name leapview-nix-qualification-/)
+      expect(native.commands[6]).toEndWith(registryPin)
       expect(native.commands).toContain(`tag ${imageID} 127.0.0.1:5000/leapview:nix`)
       expect(native.commands).toContain('push 127.0.0.1:5000/leapview:nix')
       expect(native.commands).toContain(`image inspect 127.0.0.1:5000/leapview:nix --format {{json .RepoDigests}}`)
       expect(native.commands).toContain(
         `cli qualify image --image 127.0.0.1:5000/leapview@${registryDigest} --require-immutable --evidence-dir ${join(root, '.tmp/nix-image-qualification/evidence')}`)
     }
+    const permanentFailure = invoke('x86_64', 'linux/amd64', 'yes')
+    expect(permanentFailure.run.status).toBe(8)
+    expect(permanentFailure.commands.filter(command => command.startsWith('pull '))).toHaveLength(1)
+    expect(permanentFailure.commands.some(command => command.startsWith('run --pull never'))).toBe(false)
+    expect(permanentFailure.commands.some(command => command.startsWith('cli qualify'))).toBe(false)
     const invalidManifest = JSON.stringify([{ Config: `${'a'.repeat(64)}.json`, RepoTags: ['postgres:18'] }])
     writeFileSync(join(root, 'manifest.json'), invalidManifest)
     expect(spawnSync('tar', ['-cf', archive, '-C', root, 'manifest.json']).status).toBe(0)

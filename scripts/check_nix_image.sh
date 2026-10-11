@@ -44,8 +44,9 @@ cleanup() {
   if [[ -n "$reference" ]]; then docker image rm "$reference" >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT
-registry_id="$(docker run --detach --name "$registry" --publish 127.0.0.1::5000 \
-  public.ecr.aws/docker/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373)"
+bash scripts/prepare_ci_fixture_images.sh registry
+registry_image="$(sed -n 's/^const qualificationRegistryImage = "\([^"]*\)"$/\1/p' internal/app/cli/composectl/qualification_image.go)"
+registry_id="$(docker run --pull never --detach --name "$registry" --publish 127.0.0.1::5000 "$registry_image")"
 address="$(docker port "$registry_id" 5000/tcp)"
 candidate_reference="$address/leapview:nix"
 for attempt in {1..30}; do

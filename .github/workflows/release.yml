@@ -351,7 +351,7 @@ jobs:
             "darwin amd64"
             "darwin arm64"
           )
-          mkdir -p "$RUNNER_TEMP/compose-controllers"
+          mkdir -p "$RUNNER_TEMP/compose-controllers" "$RUNNER_TEMP/compose-controller-identities"
           for target in "${targets[@]}"; do
             read -r os arch <<<"$target"
             package="leapview-compose-${RELEASE_TAG}-${os}-${arch}"
@@ -376,12 +376,23 @@ jobs:
               --controller "$controller" --platform "$os/$arch" \
               --image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json \
               --output "$controller.identity.json"
+            if [ "$os" = linux ]; then
+              cp -- "$controller.identity.json" "$RUNNER_TEMP/compose-controller-identities/linux-$arch.json"
+            fi
             python3 scripts/package_compose_bundle.py assemble \
               --source-root . --controller "$controller" --platform "$os/$arch" \
               --controller-build-identity "$controller.identity.json" \
               --image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json \
               --package-name "$package" --output-dir dist
           done
+
+      - name: Retain original conventional controller builder receipts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compose-controller-build-identities-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: error
+          path: ${{ runner.temp }}/compose-controller-identities/*.json
 
       - name: Upload unpublished candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

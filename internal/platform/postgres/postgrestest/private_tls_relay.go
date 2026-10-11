@@ -1,12 +1,38 @@
 package postgrestest
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/netip"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
+
+// StartPrivateTLSRelay exposes only a disposable loopback PostgreSQL process
+// through the same private-interface fixture used by Database.PrivateURL. TLS
+// remains end-to-end; production outbound destination policy is not changed.
+func StartPrivateTLSRelay(t *testing.T, target string) (string, net.IP) {
+	t.Helper()
+	if err := validatePrivateTLSRelayTarget(target); err != nil {
+		t.Fatal(err)
+	}
+	listener, privateIP := newPrivateTLSListener(t)
+	t.Cleanup(servePrivateTLSRelay(listener, target))
+	return listener.Addr().String(), privateIP
+}
+
+func validatePrivateTLSRelayTarget(target string) error {
+	host, rawPort, err := net.SplitHostPort(target)
+	ip := net.ParseIP(host)
+	port, portErr := strconv.Atoi(rawPort)
+	if err != nil || ip == nil || !ip.IsLoopback() || portErr != nil || port <= 0 || port > 65535 || rawPort != strconv.Itoa(port) {
+		return errors.New("private PostgreSQL fixture relay requires a numeric loopback target and nonzero port")
+	}
+	return nil
+}
 
 // newPrivateTLSListener binds a host-owned RFC1918 interface. The relay is
 // confined to a disposable PostgreSQL container; no customer endpoint or
@@ -47,16 +73,43 @@ func newPrivateTLSListener(t *testing.T) (net.Listener, net.IP) {
 	return nil, nil
 }
 
-func servePrivateTLSRelay(listener net.Listener, target string) {
+func servePrivateTLSRelay(listener net.Listener, target string) func() {
+	var mu sync.Mutex
+	var connections sync.WaitGroup
+	active := map[net.Conn]struct{}{}
+	closed := false
 	go func() {
 		for {
 			incoming, err := listener.Accept()
 			if err != nil {
 				return
 			}
-			go relayPrivateTLSConnection(incoming, target)
+			mu.Lock()
+			if closed {
+				mu.Unlock()
+				incoming.Close()
+				return
+			}
+			active[incoming] = struct{}{}
+			connections.Add(1)
+			mu.Unlock()
+			go func() {
+				defer connections.Done()
+				defer func() { mu.Lock(); delete(active, incoming); mu.Unlock() }()
+				relayPrivateTLSConnection(incoming, target)
+			}()
 		}
 	}()
+	return func() {
+		mu.Lock()
+		closed = true
+		_ = listener.Close()
+		for connection := range active {
+			_ = connection.Close()
+		}
+		mu.Unlock()
+		connections.Wait()
+	}
 }
 
 func relayPrivateTLSConnection(incoming net.Conn, target string) {

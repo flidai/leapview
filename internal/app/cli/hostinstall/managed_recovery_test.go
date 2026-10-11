@@ -52,10 +52,24 @@ func TestManagedRecoveryLocksActualHomeWithExternalKeyringBeforeAuthorityEffects
 		t.Fatal(err)
 	}
 	defer servingLock.Release()
-	command := Command(t.Context(), CommandOptions{})
-	command.SetArgs([]string{"restore-managed", "--input", inputPath})
-	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "exclusive instance ownership") {
-		t.Fatalf("recovery bypassed actual serving home lock: %v", err)
+	replacementPath := filepath.Join(secretRoot, "replacement.json")
+	replacement, err := json.Marshal(managedrecovery.ManagedAdoptionInput{SchemaVersion: 1, Maintenance: managedrecovery.AuthorityInput{URLFile: "/private/must-not-be-read", RootCAFile: "/private/must-not-be-read-ca", Role: "maintenance", SystemIdentifier: "1"}})
+	if err != nil || os.WriteFile(replacementPath, replacement, 0600) != nil {
+		t.Fatal("private replacement fixture unavailable")
+	}
+	for _, action := range []string{"restore-managed", "qualify-managed-recovery", "adopt-managed-recovery"} {
+		command := Command(t.Context(), CommandOptions{})
+		args := []string{action, "--input", inputPath}
+		if action == "qualify-managed-recovery" {
+			args = append(args, "--output", filepath.Join(secretRoot, "qualification.json"))
+		}
+		if action == "adopt-managed-recovery" {
+			args = append(args, "--replacement", replacementPath, "--output", filepath.Join(secretRoot, "adoption.json"))
+		}
+		command.SetArgs(args)
+		if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "exclusive instance ownership") {
+			t.Fatalf("%s bypassed actual serving home lock: %v", action, err)
+		}
 	}
 	if _, err := os.Lstat(filepath.Join(secretRoot, instancelock.FileName)); !os.IsNotExist(err) {
 		t.Fatal("recovery locked the unrelated secret directory")
