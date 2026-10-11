@@ -13,10 +13,12 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +31,13 @@ import (
 // Copy the actual publication's physical cluster, then archive and restore it
 // with the managed provider. The source uses the pinned conformance container;
 // every recovery operation uses the explicitly supplied locked native tools.
-func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney, native managedrecovery.NativePostgresReadback) {
+type managedJourneyRestoredCluster struct {
+	directory, pgbin, pgbackrest, providerFile, caFile, certFile, keyFile string
+	frontier                                                              managedrecovery.PGFrontier
+	native                                                                managedrecovery.NativePostgresReadback
+}
+
+func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney, native managedrecovery.NativePostgresReadback) managedJourneyRestoredCluster {
 	pgbin, pgbackrest, bwrap := os.Getenv("LEAPVIEW_TEST_MANAGED_POSTGRES_BIN"), os.Getenv("LEAPVIEW_TEST_MANAGED_PGBACKREST"), os.Getenv("LEAPVIEW_TEST_MANAGED_BWRAP")
 	if pgbin == "" || pgbackrest == "" || bwrap == "" {
 		t.Skip("explicit locked PostgreSQL, pgBackRest and confinement tools required")
@@ -37,11 +45,12 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 	require.NotZero(t, os.Geteuid(), "PostgreSQL must run as an unprivileged owner")
 	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
 	defer cancel()
-	base, err := os.MkdirTemp("", "lv-production-recovery-")
+	// Exercise retained data paths beyond sockaddr_un's limit. Local fixture
+	// sockets must remain independent of the provider's destination length.
+	base, err := os.MkdirTemp("", "lv-production-recovery-"+strings.Repeat("retained-", 12))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(base) })
-	source, socket := filepath.Join(base, "source"), filepath.Join(base, "socket")
-	require.NoError(t, os.Mkdir(socket, 0700))
+	source, socket := filepath.Join(base, "source"), managedJourneySocketDirectory(t)
 	run := func(program string, args ...string) []byte {
 		t.Helper()
 		command := exec.CommandContext(ctx, program, args...)
@@ -53,7 +62,9 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 	}
 	run(filepath.Join(pgbin, "pg_basebackup"), "--dbname="+f.harness.PhysicalBackupURL(t), "--pgdata="+source, "--wal-method=stream", "--checkpoint=fast")
 	providerFile := filepath.Join(base, "archive.conf")
-	provider := []byte(fmt.Sprintf("[global]\nrepo1-path=%s\nrepo1-retention-full=2\nstart-fast=y\nprocess-max=2\narchive-timeout=60\nlog-level-console=off\nlog-level-file=off\n[managed]\npg1-path=%s\npg1-port=5432\npg1-socket-path=%s\npg1-user=postgres\n", filepath.Join(base, "repository"), source, socket))
+	// Keep locks private and outside the retained base, which confinement
+	// mounts read-only. The sandbox can recreate this path in its private /tmp.
+	provider := []byte(fmt.Sprintf("[global]\nrepo1-path=%s\nlock-path=%s\nrepo1-retention-full=2\nstart-fast=y\nprocess-max=2\narchive-timeout=60\nlog-level-console=off\nlog-level-file=off\n[managed]\npg1-path=%s\npg1-port=5432\npg1-socket-path=%s\npg1-user=postgres\n", filepath.Join(base, "repository"), filepath.Join(socket, "pgbackrest-locks"), source, socket))
 	require.NoError(t, os.WriteFile(providerFile, provider, 0600))
 	configuration := fmt.Sprintf("listen_addresses=''\nport=5432\nunix_socket_directories='%s'\narchive_mode=on\narchive_command='%s --config=%s --stanza=managed archive-push %%p'\n", socket, pgbackrest, providerFile)
 	require.NoError(t, os.WriteFile(filepath.Join(source, "postgresql.conf"), []byte(configuration), 0600))
@@ -92,8 +103,14 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 		require.Equal(t, "postgres-system-id:"+frontier.SystemID, native.Set.ClusterPoints[index].ClusterIdentity, "physical backup must preserve the original system identity")
 		native.Set.ClusterPoints[index].RecoveryIdentity = identity
 	}
-	ca, cert, key := managedJourneyCertificates(t)
+	endpoint, err := url.Parse(f.config.PostgresControlURL)
+	require.NoError(t, err)
+	privateIP := net.ParseIP(endpoint.Hostname())
+	require.NotNil(t, privateIP, "production fixture must retain its admitted private endpoint")
+	ca, cert, key := managedJourneyCertificates(t, privateIP)
 	certFile, keyFile := filepath.Join(base, "server.crt"), filepath.Join(base, "server.key")
+	caFile := filepath.Join(base, "ca.crt")
+	require.NoError(t, os.WriteFile(caFile, ca, 0600))
 	require.NoError(t, os.WriteFile(certFile, cert, 0600))
 	require.NoError(t, os.WriteFile(keyFile, key, 0600))
 	for _, target := range []*string{&native.ControlURL, &native.DuckLakeURL} {
@@ -116,6 +133,18 @@ func managedJourneyPhysicalRestore(t *testing.T, f *sourceCredentialHTTPJourney,
 			require.NotEmpty(t, result.StateDigest)
 		}
 	}
+	return managedJourneyRestoredCluster{filepath.Join(base, "replacement"), pgbin, pgbackrest, providerFile, caFile, certFile, keyFile, frontier, native}
+}
+
+func managedJourneySocketDirectory(t *testing.T) string {
+	t.Helper()
+	// TMPDIR may itself exceed PostgreSQL's Unix socket path limit on CI.
+	// MkdirTemp creates a private 0700 directory; process cleanup is registered
+	// later, so PostgreSQL stops before this directory is removed.
+	directory, err := os.MkdirTemp("/tmp", "lv-pg-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(directory)) })
+	return directory
 }
 
 func managedJourneyDigest(value []byte) string {
@@ -123,7 +152,7 @@ func managedJourneyDigest(value []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func managedJourneyCertificates(t *testing.T) (ca, cert, key []byte) {
+func managedJourneyCertificates(t *testing.T, privateIPs ...net.IP) (ca, cert, key []byte) {
 	t.Helper()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -132,7 +161,7 @@ func managedJourneyCertificates(t *testing.T) (ca, cert, key []byte) {
 	require.NoError(t, err)
 	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	server := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"postgres.leapview.test"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	server := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"postgres.leapview.test"}, IPAddresses: privateIPs, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, server, caTemplate, &serverKey.PublicKey, caKey)
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)

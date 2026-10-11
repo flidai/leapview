@@ -17,7 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func managedJourneyFileRestore(t *testing.T, f *sourceCredentialHTTPJourney, set recoveryset.RecoverySet) {
+type managedJourneyRestoredRoot struct {
+	root                recoveryset.ObjectRoot
+	source, destination string
+	manifest            managedrecovery.FileManifest
+}
+
+func managedJourneyFileRestore(t *testing.T, f *sourceCredentialHTTPJourney, set recoveryset.RecoverySet) []managedJourneyRestoredRoot {
 	program := os.Getenv("LEAPVIEW_TEST_MANAGED_RESTIC")
 	if program == "" {
 		t.Skip("explicit pinned Restic integration input required")
@@ -38,6 +44,7 @@ func managedJourneyFileRestore(t *testing.T, f *sourceCredentialHTTPJourney, set
 	store, _, err := appobjectstore.New(t.Context(), f.config, f.instance, f.config.Environment)
 	require.NoError(t, err)
 	closure := managedJourneyNativeClosure(t, f, set.Serving)
+	var restoredRoots []managedJourneyRestoredRoot
 	for _, retained := range set.ObjectRoots {
 		t.Run(retained.Kind, func(t *testing.T) {
 			root := retained
@@ -111,6 +118,8 @@ func managedJourneyFileRestore(t *testing.T, f *sourceCredentialHTTPJourney, set
 				require.NoError(t, err)
 				require.Equal(t, original, restored)
 			}
+			restoredRoots = append(restoredRoots, managedJourneyRestoredRoot{root: root, source: source, destination: destination, manifest: manifest})
 		})
 	}
+	return restoredRoots
 }

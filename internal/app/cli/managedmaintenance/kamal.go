@@ -371,16 +371,19 @@ func (k *KamalEffects) CloseAdmission(ctx context.Context) error {
 }
 func (k *KamalEffects) CloseIngress(ctx context.Context) error {
 	if err := writeGate(k.Profile, false); err != nil {
-		return err
+		return &ingressFailure{stage: "gate-write", err: err}
 	}
 	if err := k.kamal(ctx, k.Request.Predecessor, "proxy", "reboot", "--confirmed"); err != nil {
-		return err
+		return &ingressFailure{stage: "proxy-reboot", err: err}
 	}
 	items, err := k.inventory(ctx, true)
 	if err != nil {
-		return err
+		return &ingressFailure{stage: "inventory", err: err}
 	}
-	return requireProxy(items)
+	if err := requireProxy(items); err != nil {
+		return &ingressFailure{stage: "proxy-running", err: err}
+	}
+	return nil
 }
 func (k *KamalEffects) DrainAndStop(ctx context.Context) error {
 	items, err := k.inventory(ctx, true)
@@ -617,10 +620,11 @@ func runCommandWithLock(ctx context.Context, bin string, args, env []string, dir
 	}
 	configureCommandCancellation(command)
 	var stdout boundedOutput
-	command.Stdout = &stdout
-	command.Stderr = io.Discard
+	var diagnostic diagnosticTail
+	command.Stdout = io.MultiWriter(&stdout, &diagnostic)
+	command.Stderr = &diagnostic
 	if err := command.Run(); err != nil {
-		return nil, fmt.Errorf("managed %s command failed: %w", bin, err)
+		return nil, newCommandFailure(ctx, bin, err, diagnostic.data)
 	}
 	if stdout.overflow {
 		return nil, errors.New("managed command output exceeded limit")

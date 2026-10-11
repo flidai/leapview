@@ -673,6 +673,36 @@ class HostGuestReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(host_guest.HostGuestError, "exact source-tree installer"):
             host_guest._validate_receipt(invalid, self.evidence)
 
+    def test_conventional_guest_receipt_binds_original_producer_without_nix_claim(self):
+        receipt = self._receipt("bootstrap")
+        producer = {"schemaVersion": 1, "producer": "conventional", "releaseAdmission": False,
+                    "nixQualification": False, "releaseArtifactId": 11, "receiptArtifactId": 12,
+                    "releaseRunId": 13, "releaseRunAttempt": 1,
+                    "releaseArtifactDigest": "sha256:" + "a" * 64,
+                    "receiptArtifactDigest": "sha256:" + "b" * 64,
+                    "bundle": dict(receipt["identity"])}
+        data = json.dumps(producer).encode()
+        self._write("conventional-bundle-producer.json", data)
+        receipt["identity"].update({"bundleProducer": "conventional", "nixQualification": False,
+                                    "producerReceiptSHA256": host_guest._digest(data)})
+        receipt["evidenceInventory"] = qualification._qualification_evidence_inventory(self.evidence)
+        self.assertIs(host_guest._validate_receipt(receipt, self.evidence), receipt)
+        invalid = json.loads(json.dumps(receipt))
+        del invalid["identity"]["bundleProducer"]
+        with self.assertRaisesRegex(host_guest.HostGuestError, "relabeled"):
+            host_guest._validate_receipt(invalid, self.evidence)
+        invalid = json.loads(json.dumps(receipt))
+        invalid["identity"]["nixQualification"] = True
+        with self.assertRaisesRegex(host_guest.HostGuestError, "exclude Nix"):
+            host_guest._validate_receipt(invalid, self.evidence)
+        producer["bundle"]["controllerSHA256"] = "sha256:" + "f" * 64
+        data = json.dumps(producer).encode()
+        self._write("conventional-bundle-producer.json", data)
+        receipt["identity"]["producerReceiptSHA256"] = host_guest._digest(data)
+        receipt["evidenceInventory"] = qualification._qualification_evidence_inventory(self.evidence)
+        with self.assertRaisesRegex(host_guest.HostGuestError, "exact guest bundle"):
+            host_guest._validate_receipt(receipt, self.evidence)
+
     def test_first_publication_subreport_binds_request_commit_reviewer_and_readyz(self):
         report = self._first_publication_report()
         self.assertIs(host_guest._validate_first_publication_report(

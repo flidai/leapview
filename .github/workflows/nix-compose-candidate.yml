@@ -1,8 +1,15 @@
 name: Protected Nix Compose candidate
+run-name: Protected ${{ inputs.bundle_source }} Compose guests for release ${{ inputs.release_run_id }}
 
 on:
   workflow_dispatch:
     inputs:
+      bundle_source:
+        description: Original conventional release bundles or rebuilt Nix candidate bundles
+        required: true
+        default: nix
+        type: choice
+        options: [nix, conventional]
       release_run_id:
         description: Completed successful release.yml workflow_dispatch run on main
         required: true
@@ -12,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nix-compose-candidate-${{ inputs.release_run_id }}
+  group: nix-compose-candidate-${{ inputs.release_run_id }}-${{ inputs.bundle_source }}
   cancel-in-progress: false
 
 jobs:
@@ -44,6 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          BUNDLE_SOURCE: ${{ inputs.bundle_source }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
@@ -100,6 +108,9 @@ jobs:
               protected_revision=os.environ["GITHUB_SHA"],
               source_root=Path("."),
           )
+          if os.environ.get('BUNDLE_SOURCE', 'nix') == 'conventional':
+              receipt = qualification.select_conventional_receipt_artifact(artifacts, binding)
+              Path('conventional-receipt-artifact.json').write_text(json.dumps(receipt) + '\n')
           Path("release-run-binding.json").write_text(
               json.dumps(binding, indent=2) + "\n", encoding="utf-8"
           )
@@ -131,6 +142,23 @@ jobs:
             --release-authorization release-run-binding.json
           cp -- release-run-binding.json release-input/release-run-binding.json
           cp -- "$RUNNER_TEMP/release-candidate.zip" release-input/release-candidate.zip
+
+      - name: Preserve the authenticated original conventional builder receipt ZIP
+        if: inputs.bundle_source == 'conventional'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_id=$(jq -r .id conventional-receipt-artifact.json)
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            --output release-input/conventional-receipts.zip
+          cp conventional-receipt-artifact.json release-input/
+          digest=$(jq -r .digest conventional-receipt-artifact.json)
+          printf '%s  %s\n' "${digest#sha256:}" release-input/conventional-receipts.zip | sha256sum --check --status
 
       - name: Bind the verified protected release input
         id: binding
@@ -376,7 +404,7 @@ jobs:
   qualify:
     name: Native installed Compose candidate (${{ matrix.arch }})
     needs: [authorize, build-bundles, preflight, controller-evidence]
-    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && inputs.bundle_source != 'conventional'
     strategy:
       fail-fast: false
       matrix:
@@ -675,7 +703,7 @@ jobs:
       matrix:
         arch: [amd64, arm64]
         guest-os: [ubuntu2404, debian13]
-        install-mode: [bootstrap, nix-controller]
+        install-mode: ${{ fromJSON(inputs.bundle_source == 'conventional' && '["bootstrap"]' || '["bootstrap", "nix-controller"]') }}
         postgres-profile: [external, bundled]
         include:
           - arch: amd64
@@ -781,6 +809,7 @@ jobs:
           GUEST_OS: ${{ matrix.guest-os }}
           INSTALL_MODE: ${{ matrix.install-mode }}
           POSTGRES_PROFILE: ${{ matrix.postgres-profile }}
+          BUNDLE_SOURCE: ${{ inputs.bundle_source }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
           PROTECTED_REVISION: ${{ github.sha }}
           IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
@@ -835,7 +864,8 @@ jobs:
               --controller-binary-verifier "$RUNNER_TEMP/host-controller-binary-verifier" \
               --protected-root . --protected-revision "$PROTECTED_REVISION" \
               --first-publication-verifier "$RUNNER_TEMP/host-first-publication-verifier" \
-              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE" --postgres-profile "$POSTGRES_PROFILE"
+              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE" --postgres-profile "$POSTGRES_PROFILE" \
+              --bundle-producer "$BUNDLE_SOURCE"
           '
           python3 scripts/nix_compose_host_guest.py verify-receipt \
             --receipt host-evidence/guest/host-guest-receipt.json --evidence-dir host-evidence/guest/evidence
@@ -843,7 +873,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: nix-compose-host-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}-${{ matrix.postgres-profile }}
+          name: ${{ inputs.bundle_source == 'conventional' && 'conventional-compose-host' || 'nix-compose-host' }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}-${{ matrix.postgres-profile }}
           path: host-evidence/
           include-hidden-files: true
           if-no-files-found: warn
@@ -923,6 +953,7 @@ jobs:
             sandbox = true
 
       - name: Build both clean-source Nix Compose controllers
+        if: inputs.bundle_source != 'conventional'
         env:
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
         run: |
@@ -933,6 +964,7 @@ jobs:
           nix build --no-update-lock-file ./source#leapviewctl-compose-linux-arm64 --out-link result-compose-cli -L
 
       - name: Assemble and verify with protected tools
+        if: inputs.bundle_source != 'conventional'
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
@@ -977,7 +1009,23 @@ jobs:
               --output "candidate/$arch/bundle-binding.json"
           done
 
-      - name: Retain the assembled bundles and original Nix build receipts
+      - name: Verify and preserve original conventional release bundles
+        if: inputs.bundle_source == 'conventional'
+        run: |
+          set -euo pipefail
+          nix develop --no-update-lock-file .#runtime-security -c python3 - <<'PYTHON'
+          import json, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import nix_compose_qualification as qualification
+          qualification.extract_conventional_bundles(
+              pathlib.Path('release-input/release-candidate.zip'),
+              pathlib.Path('release-input/conventional-receipts.zip'),
+              json.loads(pathlib.Path('release-input/conventional-receipt-artifact.json').read_text()),
+              json.loads(pathlib.Path('release-input/release-run-binding.json').read_text()),
+              pathlib.Path('source'), pathlib.Path('candidate'))
+          PYTHON
+
+      - name: Retain exact bundles and original builder receipts
         id: bundles
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

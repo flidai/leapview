@@ -13,9 +13,38 @@ const workflowInlinePython = (run: string): string => {
   return match[1]
 }
 
+test('conventional guests preserve original release outputs and bypass deferred Nix production', () => {
+  const inputs = composeCandidateWorkflow.on.workflow_dispatch.inputs
+  expect(inputs.bundle_source.default).toBe('nix')
+  expect(inputs.bundle_source.options).toEqual(['nix', 'conventional'])
+  const build = composeCandidateWorkflow.jobs['build-bundles']
+  for (const name of ['Build both clean-source Nix Compose controllers', 'Assemble and verify with protected tools']) {
+    expect(build.steps.find((step: any) => step.name === name).if).toBe("inputs.bundle_source != 'conventional'")
+  }
+  const original = build.steps.find((step: any) => step.name === 'Verify and preserve original conventional release bundles')
+  expect(original.if).toBe("inputs.bundle_source == 'conventional'")
+  expect(original.run).toContain('qualification.extract_conventional_bundles(')
+  expect(original.run).not.toContain('nix build')
+  expect(original.run).not.toContain('record-build-identity')
+  expect(composeCandidateWorkflow.jobs.qualify.if).toContain("inputs.bundle_source != 'conventional'")
+  const host = composeCandidateWorkflow.jobs['host-qualification']
+  expect(host.needs).toEqual(['authorize', 'build-bundles', 'preflight', 'controller-evidence'])
+  expect(host.strategy.matrix['guest-os']).toEqual(['ubuntu2404', 'debian13'])
+  expect(host.strategy.matrix.arch).toEqual(['amd64', 'arm64'])
+  expect(host.strategy.matrix['postgres-profile']).toEqual(['external', 'bundled'])
+  const guest = host.steps.find((step: any) => step.name === 'Verify pinned vendor image and qualify a fresh disposable guest')
+  expect(guest.run).toContain('--bundle-producer "$BUNDLE_SOURCE"')
+  const release = parse(readFileSync('.github/workflows/release.yml', 'utf8'))
+  const receipts = release.jobs.image.steps.find((step: any) => step.name === 'Retain original conventional controller builder receipts')
+  expect(receipts.with.name).toBe('compose-controller-build-identities-' + ghExpr('github.run_id') + '-' + ghExpr('github.run_attempt'))
+  expect(receipts.with.path).toBe(ghExpr('runner.temp') + '/compose-controller-identities/*.json')
+  const compile = release.jobs.image.steps.find((step: any) => step.name === 'Build candidate Compose archives')
+  expect(compile.run).toContain('cp -- "$controller.identity.json" "$RUNNER_TEMP/compose-controller-identities/linux-$arch.json"')
+})
+
 test('Compose release authorization binds successful main run, source ancestry and exact artifact attempt', () => {
   expect(Object.keys(composeCandidateWorkflow.on)).toEqual(['workflow_dispatch'])
-  expect(Object.keys(composeCandidateWorkflow.on.workflow_dispatch.inputs)).toEqual(['release_run_id'])
+  expect(Object.keys(composeCandidateWorkflow.on.workflow_dispatch.inputs)).toEqual(['bundle_source', 'release_run_id'])
   const authorizeJob = composeCandidateWorkflow.jobs.authorize
   expect(authorizeJob.if).toBe("github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'")
   const checkout = authorizeJob.steps.find((step: any) => step.uses?.startsWith('actions/checkout@'))
@@ -48,15 +77,16 @@ test('Compose release authorization binds successful main run, source ancestry a
       expired: false,
       workflow_run: { id: releaseRunId, head_branch: 'main', head_sha: revision },
     }
-    const execute = (run: any, artifactValue: any) => {
+    const execute = (run: any, artifactValue: any, bundleSource = 'nix', receiptArtifact?: any) => {
       writeFileSync(join(root, 'release-run-api.json'), JSON.stringify(run))
       writeFileSync(join(root, 'release-workflow-api.json'), JSON.stringify(workflowData))
-      writeFileSync(join(root, 'release-artifact-pages.json'), JSON.stringify([{ artifacts: [artifactValue] }]))
+      writeFileSync(join(root, 'release-artifact-pages.json'), JSON.stringify([{ artifacts: [artifactValue, ...(receiptArtifact ? [receiptArtifact] : [])] }]))
       let script = workflowInlinePython(authorize.run)
       script = script
         .replace('sys.path.insert(0, "scripts")', 'sys.path.insert(0, ' + JSON.stringify(resolve('scripts')) + ')')
         .replace('source_root=Path("."),', 'source_root=Path(' + JSON.stringify(process.cwd()) + '),')
         .replace('Path("release-run-binding.json").write_text(', 'Path(os.environ["TEST_OUTPUT_DIR"], "release-run-binding.json").write_text(')
+        .replace("Path('conventional-receipt-artifact.json').write_text(", "Path(os.environ['TEST_OUTPUT_DIR'], 'conventional-receipt-artifact.json').write_text(")
       return spawnSync('python3', ['-c', script], {
         cwd: process.cwd(),
         encoding: 'utf8',
@@ -66,11 +96,18 @@ test('Compose release authorization binds successful main run, source ancestry a
           TEST_OUTPUT_DIR: root,
           GITHUB_SHA: revision,
           GITHUB_OUTPUT: join(root, 'outputs'),
+          BUNDLE_SOURCE: bundleSource,
         },
       })
     }
     const accepted = execute(runData, artifact)
     if (accepted.status !== 0) throw new Error(accepted.stdout + accepted.stderr)
+    expect(execute(runData, artifact, 'conventional').status).not.toBe(0)
+    const receiptArtifact = { ...artifact, id: 902, name: `compose-controller-build-identities-${releaseRunId}-${runAttempt}` }
+    const conventional = execute(runData, artifact, 'conventional', receiptArtifact)
+    if (conventional.status !== 0) throw new Error(conventional.stdout + conventional.stderr)
+    expect(JSON.parse(readFileSync(join(root, 'conventional-receipt-artifact.json'), 'utf8'))).toEqual(receiptArtifact)
+    expect(execute(runData, artifact, 'conventional', { ...receiptArtifact, workflow_run: { ...receiptArtifact.workflow_run, head_sha: 'b'.repeat(40) } }).status).not.toBe(0)
     const binding = JSON.parse(readFileSync(join(root, 'release-run-binding.json'), 'utf8'))
     expect(binding).toMatchObject({
       releaseRunId, releaseRunAttempt: runAttempt, releaseArtifactId: artifact.id,
@@ -288,7 +325,7 @@ test('fresh-host qualification exercises both production PostgreSQL profiles wit
   expect(host.strategy.matrix['postgres-profile']).toEqual(['external', 'bundled'])
   expect(host.strategy.matrix.arch).toEqual(['amd64', 'arm64'])
   expect(host.strategy.matrix['guest-os']).toEqual(['ubuntu2404', 'debian13'])
-  expect(host.strategy.matrix['install-mode']).toEqual(['bootstrap', 'nix-controller'])
+  expect(host.strategy.matrix['install-mode']).toBe(ghExpr(`fromJSON(inputs.bundle_source == 'conventional' && '["bootstrap"]' || '["bootstrap", "nix-controller"]')`))
   const qualify = host.steps.find((step: any) => step.name?.includes('qualify a fresh disposable guest'))
   expect(qualify.env.POSTGRES_PROFILE).toBe(ghExpr('matrix.postgres-profile'))
   expect(qualify.run).toContain('--postgres-profile "$POSTGRES_PROFILE"')

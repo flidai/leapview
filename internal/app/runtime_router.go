@@ -382,8 +382,9 @@ type workflowAssemblyInputs struct {
 }
 
 type runtimeAssemblyInputs struct {
-	Prewarm     dashboardmodule.PrewarmConfig
-	RuntimeHost *runtimehostmodule.Module
+	FirstSourceTokenIssuer *firstSourceTokenIssuer
+	Prewarm                dashboardmodule.PrewarmConfig
+	RuntimeHost            *runtimehostmodule.Module
 	// Production selects the fail-closed native module admission path. It is
 	// intentionally separate from SealedServing, which is also used by local
 	// evaluation fixtures to exercise sealed-runtime behavior.
@@ -1850,6 +1851,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			CurrentEffectiveCapabilities:      routes.accessModule.CurrentEffectiveCapabilities,
 			CurrentEffectivePermissionOptions: routes.accessModule.CurrentEffectivePermissionOptions,
+			PersonalTokenIssuer:               runtimeConfig.FirstSourceTokenIssuer,
 			RoleBindingAdministration: func(ctx context.Context) (access.RoleBindingAdministrationState, error) {
 				state, err := routes.accessModule.RoleBindingAdministration(ctx)
 				// The instance user directory is needed to prepare the first

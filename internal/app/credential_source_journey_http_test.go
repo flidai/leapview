@@ -38,6 +38,10 @@ func (f *sourceCredentialHTTPJourney) transport(token string) clienttransport.Tr
 }
 
 func (f *sourceCredentialHTTPJourney) bootstrapProject(t *testing.T) string {
+	return f.bootstrapProjectCredential(t, false)
+}
+
+func (f *sourceCredentialHTTPJourney) bootstrapProjectCredential(t *testing.T, publisherOnly bool) string {
 	t.Helper()
 	ctx := t.Context()
 	identity, err := f.graph.Access.CredentialForAPIToken(ctx, f.initial.ProjectClaimToken)
@@ -77,10 +81,6 @@ func (f *sourceCredentialHTTPJourney) bootstrapProject(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.authoringToken, _, err = f.graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: owner, Name: "source-authoring", Permissions: permissions, ExpiresAt: time.Now().Add(time.Hour)})
-	if err != nil {
-		t.Fatal(err)
-	}
 	resource, err := access.NewResourceRef("connection:warehouse", projectgraph.KindConnection)
 	if err != nil {
 		t.Fatal(err)
@@ -89,10 +89,24 @@ func (f *sourceCredentialHTTPJourney) bootstrapProject(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	permissions = append(permissions, manage)
-	token, _, err := f.graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: owner, Name: "source-journey", Permissions: permissions, ExpiresAt: time.Now().Add(time.Hour)})
-	if err != nil {
-		t.Fatal(err)
+	var token string
+	if publisherOnly {
+		response, exchangeErr := accessgen.NewGenClient(f.transport(f.initial.ProjectClaimToken)).ExchangeProjectClaimPublisher(ctx, accessgen.GenExchangeProjectClaimPublisherClientRequest{Project: sourceJourneyProject, Headers: accessgen.GenExchangeProjectClaimPublisherClientHeaders{IdempotencyKey: "first-source-supported-publisher"}})
+		if exchangeErr != nil {
+			t.Fatalf("exchange initial publisher: %v", exchangeErr)
+		}
+		token, f.authoringToken = response.Body.PublisherToken, response.Body.PublisherToken
+	} else {
+		f.authoringToken, _, err = f.graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: owner, Name: "source-authoring", Permissions: permissions, ExpiresAt: time.Now().Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		permissions = append(permissions, manage)
+		token, _, err = f.graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: owner, Name: "source-journey", Permissions: permissions, ExpiresAt: time.Now().Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+
 	}
 	client := accessgen.NewGenClient(f.transport(token))
 	for index, role := range []struct {

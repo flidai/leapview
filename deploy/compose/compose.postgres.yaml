@@ -13,7 +13,8 @@ services:
     init: true
     read_only: true
     cap_drop: [ALL]
-    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    # The root init process must forward stop signals after PostgreSQL drops UID.
+    cap_add: [CHOWN, DAC_OVERRIDE, KILL, SETGID, SETUID]
     security_opt: [no-new-privileges:true]
     pids_limit: 512
     mem_limit: ${POSTGRES_MEMORY_LIMIT:-2g}

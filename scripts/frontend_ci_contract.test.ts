@@ -272,6 +272,7 @@ test('native PostgreSQL qualification generates the complete application fixture
     "go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v",
     "go test ./internal/app/cli/composectl -run '^TestBundledPostgresPrepareSeedsAppEnvBeforeCompose$' -count=1 -v",
     "go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerResumesProvisioningAndPreservesVolume$' -count=1 -v",
+    "go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerStopsGracefully$' -count=1 -v",
     "go test ./internal/app/cli/composectl -run '^TestBundledPostgresColdSnapshotRestoreQualification$' -count=1 -v",
   ])
 })

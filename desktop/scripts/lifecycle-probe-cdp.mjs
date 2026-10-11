@@ -16,6 +16,16 @@ const functions = {
   }` },
 };
 
+export function debugCommandError(method, error) {
+  const knownMethod = ['Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.releaseObject', 'Browser.close'].includes(method)
+    ? method : 'unknown';
+  const code = Number.isInteger(error?.code) && error.code >= -(2 ** 31) && error.code < 2 ** 31
+    ? error.code : 'unknown';
+  // Protocol messages/data can contain profile values or URLs. Keep only the
+  // fixed method vocabulary and numeric protocol code, without the raw cause.
+  return new Error(`debug command rejected (${knownMethod}; code ${code})`);
+}
+
 export async function inspectTrustedShell(call, action, values) {
   const fn = Object.hasOwn(functions, action) ? functions[action] : null;
   if (!fn || !Array.isArray(values) || values.length !== fn.count || values.some(value => typeof value !== 'string')) {
@@ -35,6 +45,11 @@ export async function inspectTrustedShell(call, action, values) {
     if (result.exceptionDetails) throw new Error('trusted UI evaluation failed');
     return result.result?.value;
   } finally {
-    await call('Runtime.releaseObject', { objectId });
+    // Real form submission navigates to the operation page and destroys the
+    // old context. Releasing that obsolete object can fail after a successful
+    // submission; cleanup must not replace the probe result or its real error.
+    // The caller still requires UI acknowledgement, durable readback, and full
+    // process-group termination before it can issue a lifecycle receipt.
+    await call('Runtime.releaseObject', { objectId }).catch(() => {});
   }
 }

@@ -12,6 +12,7 @@ import (
 )
 
 type ManagedPostgresInput struct {
+	Provider                string     `json:"provider,omitempty"`
 	Frontier                PGFrontier `json:"frontier"`
 	Postgres                string     `json:"postgres"`
 	PGControlData           string     `json:"pgControlData"`
@@ -25,6 +26,16 @@ type ManagedPostgresInput struct {
 	ServerCertificateDigest string     `json:"serverCertificateDigest"`
 	ServerKeyFile           string     `json:"serverKeyFile"`
 	ServerKeyDigest         string     `json:"serverKeyDigest"`
+}
+
+func (input ManagedPostgresInput) validateProvider() error {
+	if input.Provider == "" {
+		return nil
+	}
+	if input.Provider != "module-owned" || input.Postgres != "" || input.PGControlData != "" || input.PGBackRest != "" || input.Bubblewrap != "" || input.ConfigFile != "" || input.ConfigDigest != "" || input.ServerCertificateFile != "" || input.ServerCertificateDigest != "" || input.ServerKeyFile != "" || input.ServerKeyDigest != "" {
+		return errors.New("module-owned provider forbids caller tools, configuration and service TLS keys")
+	}
+	return nil
 }
 
 // ManagedInput is a private operator document. It names retained secrets by
@@ -60,6 +71,9 @@ func ReadManagedInput(path string) (ManagedInput, error) {
 	if strictjson.DecodeWithOptions(value, &input, strictjson.Options{MaxBytes: 16 << 20}) != nil || input.SchemaVersion != 1 || input.Profile != providerrestore.ManagedLocalProfile || input.RecoverySetID == "" || input.OccurrenceID == "" || input.ValidationAttemptID == "" || input.Validator == "" || input.Publisher == "" || !filepath.IsAbs(input.InstanceHome) || filepath.Clean(input.InstanceHome) != input.InstanceHome || input.InstanceHome == "/" {
 		return ManagedInput{}, errors.New("exact managed-local recovery input required")
 	}
+	if err := input.Postgres.validateProvider(); err != nil {
+		return ManagedInput{}, err
+	}
 	input.Closure, err = metadata.NativeSnapshotClosureEvidenceFromValues(input.Closure)
 	if err != nil {
 		return ManagedInput{}, errors.New("exact canonical managed DuckLake closure required")
@@ -71,6 +85,9 @@ func (input ManagedInput) Configuration(ctx context.Context) (ManagedConfig, err
 	if err := ctx.Err(); err != nil {
 		return ManagedConfig{}, err
 	}
+	if err := input.Postgres.validateProvider(); err != nil {
+		return ManagedConfig{}, err
+	}
 	value, err := readBoundedManagedPrivateFile(input.CredentialsFile, maxManagedCredentialsBytes)
 	if err != nil {
 		return ManagedConfig{}, errors.New("retained private managed credentials unavailable")
@@ -80,7 +97,7 @@ func (input ManagedInput) Configuration(ctx context.Context) (ManagedConfig, err
 		return ManagedConfig{}, errors.New("retained managed credentials invalid")
 	}
 	p := input.Postgres
-	return ManagedConfig{Enrollment: input.Enrollment, RecoverySetID: input.RecoverySetID, OccurrenceID: input.OccurrenceID, InstanceHome: input.InstanceHome, Artifact: input.Artifact, Credentials: credentials, Roles: input.Roles, Roots: input.Roots, Closure: input.Closure, PrimaryFence: input.PrimaryFence, EvidenceRoot: input.EvidenceRoot, SecretRoot: input.SecretRoot,
+	return ManagedConfig{PostgresProvider: input.Postgres.Provider, Enrollment: input.Enrollment, RecoverySetID: input.RecoverySetID, OccurrenceID: input.OccurrenceID, InstanceHome: input.InstanceHome, Artifact: input.Artifact, Credentials: credentials, Roles: input.Roles, Roots: input.Roots, Closure: input.Closure, PrimaryFence: input.PrimaryFence, EvidenceRoot: input.EvidenceRoot, SecretRoot: input.SecretRoot,
 		Postgres: PGBackRestConfig{TargetID: credentials.TargetID, RecoverySetID: input.RecoverySetID, Frontier: p.Frontier, PGBackRest: p.PGBackRest, Bubblewrap: p.Bubblewrap, ConfigFile: p.ConfigFile, ConfigDigest: p.ConfigDigest, Destination: p.Destination},
 		Readback: PGNativeReadbackConfig{Native: NativePostgresReadback{MetadataSchema: p.MetadataSchema}, Frontier: p.Frontier, Postgres: p.Postgres, PGControlData: p.PGControlData, PGBackRest: p.PGBackRest, ProviderConfigFile: p.ConfigFile, ProviderConfigDigest: p.ConfigDigest, ServerCertificateFile: p.ServerCertificateFile, ServerCertificateDigest: p.ServerCertificateDigest, ServerKeyFile: p.ServerKeyFile, ServerKeyDigest: p.ServerKeyDigest}}, nil
 }

@@ -19,7 +19,8 @@ func Command(ctx context.Context) *cobra.Command {
 	command := &cobra.Command{Use: "managed-release", Short: "Maintain a compatible image on an enrolled managed application host"}
 	for _, action := range []string{"run", "enroll", "recover", "status", "inspect", "capacity"} {
 		var profilePath, requestPath, image, revision string
-		child := &cobra.Command{Use: action, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		child := &cobra.Command{Use: action, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) (result error) {
+			defer func() { writeFailureDiagnostic(cmd.ErrOrStderr(), result) }()
 			if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 				return errors.New("managed release control requires root on the enrolled Linux host")
 			}

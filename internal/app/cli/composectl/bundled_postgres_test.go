@@ -215,6 +215,7 @@ func TestBundledPostgresDockerResumesProvisioningAndPreservesVolume(t *testing.T
 
 	first, err := controller.ensureBundledPostgres(ctx)
 	require.NoError(t, err, "retry must reconcile an initialized volume despite initdb.d being skipped")
+	assertBundledPostgresControlBaselineRoles(t, ctx, root)
 	persistedSecrets := make(map[string][]byte, len(bundledPostgresRoleSecrets))
 	for _, name := range bundledPostgresRoleSecrets {
 		before, readErr := os.ReadFile(filepath.Join(secretRoot, name))
@@ -225,6 +226,7 @@ func TestBundledPostgresDockerResumesProvisioningAndPreservesVolume(t *testing.T
 	require.NoError(t, controller.compose(ctx, nil, io.Discard, io.Discard, "stop", "postgres"))
 	second, err := controller.ensureBundledPostgres(ctx)
 	require.NoError(t, err, "restart must keep reconciling the persistent PostgreSQL volume")
+	assertBundledPostgresControlBaselineRoles(t, ctx, root)
 	require.Equal(t, first, second, "serving and migration URLs must retain the generated credentials")
 	for _, name := range bundledPostgresRoleSecrets {
 		after, readErr := os.ReadFile(filepath.Join(secretRoot, name))
@@ -245,9 +247,19 @@ func TestBundledPostgresDockerResumesProvisioningAndPreservesVolume(t *testing.T
 	freshHookRoles, err := bundledPostgresQuery(ctx, freshRoot, "postgres", "SELECT count(*) FROM pg_roles WHERE rolname = 'leapview_control_runtime'")
 	require.NoError(t, err)
 	require.Equal(t, "1", freshHookRoles, "the official initdb.d script must provision roles on a fresh volume")
+	assertBundledPostgresControlBaselineRoles(t, ctx, freshRoot)
 	if _, err := freshController.ensureBundledPostgres(ctx); err != nil {
 		t.Fatalf("fresh-volume retryable reconciliation failed after initdb hook: %v", err)
 	}
+}
+
+func assertBundledPostgresControlBaselineRoles(t *testing.T, ctx context.Context, root string) {
+	t.Helper()
+	count, err := bundledPostgresQuery(ctx, root, "postgres", `
+		SELECT count(*) FROM pg_roles WHERE rolname IN ('leapview_control_readonly', 'leapview_control_backup')
+		AND NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit`)
+	require.NoError(t, err)
+	require.Equal(t, "2", count, "fresh and reconciled clusters must include restricted baseline authorities")
 }
 
 func TestBundledPostgresPrepareSeedsAppEnvBeforeCompose(t *testing.T) {
@@ -299,6 +311,11 @@ func TestBundledPostgresPrepareSeedsAppEnvBeforeCompose(t *testing.T) {
 
 func newBundledPostgresDockerProject(t *testing.T, repository, project string) (string, string, *Controller) {
 	t.Helper()
+	return newBundledPostgresDockerProjectWithDiagnostics(t, repository, project, os.Stderr)
+}
+
+func newBundledPostgresDockerProjectWithDiagnostics(t *testing.T, repository, project string, diagnostics io.Writer) (string, string, *Controller) {
+	t.Helper()
 	root := t.TempDir()
 	compose := filepath.Join(repository, "deploy", "compose")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "postgres"), 0o700))
@@ -325,7 +342,7 @@ func newBundledPostgresDockerProject(t *testing.T, repository, project string) (
 		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		if t.Failed() {
-			if err := controller.compose(cleanup, nil, os.Stderr, os.Stderr, "logs", "--no-color", "postgres"); err != nil {
+			if err := controller.compose(cleanup, nil, diagnostics, diagnostics, "logs", "--no-color", "postgres"); err != nil {
 				t.Errorf("read isolated PostgreSQL startup logs: %v", err)
 			}
 		}

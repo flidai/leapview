@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +19,46 @@ class LocalGuest:
 
 
 class InstallerDiagnosticsTests(unittest.TestCase):
+    def test_bundled_and_initialization_failures_retain_specific_fixed_boundaries(self):
+        cases = [
+            ("prepare production PostgreSQL and delivery-pool bootstrap: prepare bundled PostgreSQL: "
+             "start bundled PostgreSQL: container private-container is unhealthy",
+             ["prepare-postgres-pool", "bundled-postgres-start"], ["container-unhealthy"]),
+            ("initialize LeapView: prepare bundled PostgreSQL for control initialization: "
+             "reconcile bundled PostgreSQL roles, databases, and schema: server closed the connection unexpectedly",
+             ["bundled-postgres-reconcile", "initialize"], ["postgres-connection-closed"]),
+            ("initialize LeapView: prepare persistent PostgreSQL credentials and TLS: "
+             "required bundled PostgreSQL secret is unavailable: private-secret-name",
+             ["bundled-postgres-material", "initialize"], ["postgres-secret-unavailable"]),
+            ("initialize LeapView: initial image pull failed; initialization can be retried: exit status 1",
+             ["initialize", "initialize-image-pull"], ["unclassified"]),
+            ("initialize LeapView: configuration validation failed; initialization can be retried: exit status 1",
+             ["initialize", "initialize-config-validation"], ["unclassified"]),
+            ("initialize LeapView: Compose configuration is invalid; initialization can be retried: exit status 1",
+             ["initialize", "initialize-compose-config"], ["unclassified"]),
+            ("initialize LeapView: instance initialization did not deliver credentials; initialization can be retried: exit status 1",
+             ["initialize", "initialize-credentials"], ["unclassified"]),
+            ("initialize LeapView: instance initialization returned empty credentials; initialization can be retried",
+             ["initialize", "initialize-empty-credentials"], ["unclassified"]),
+            ("initialize LeapView: instance initialization returned invalid credentials; initialization can be retried",
+             ["initialize", "initialize-invalid-credentials"], ["unclassified"]),
+            ("initialize LeapView: credentials were saved but acknowledgement failed; rerun init to complete initialization",
+             ["initialize", "initialize-acknowledgement"], ["unclassified"]),
+        ]
+        for message, boundaries, causes in cases:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory)
+                command = "printf '%s\\n' " + shlex.quote(message + " postgres://private-url generated-private-secret") + " >&2; exit 1"
+                with self.assertRaisesRegex(guest.HostGuestError, r"installer failed \(1\)"):
+                    guest._run_host_installer(LocalGuest(), evidence, command, timeout=10,
+                        fixture_secrets=["private-url", "generated-private-secret"])
+                record = json.loads((evidence / "host-install-diagnostic.json").read_bytes())
+                self.assertEqual(record["boundaries"], boundaries)
+                self.assertEqual(record["causes"], causes)
+                retained = b"".join(path.read_bytes() for path in evidence.iterdir())
+                for private in (b"private-url", b"generated-private-secret", b"private-container", b"private-secret-name"):
+                    self.assertNotIn(private, retained)
+
     def test_actual_controller_argv_failure_retains_only_classifications(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
