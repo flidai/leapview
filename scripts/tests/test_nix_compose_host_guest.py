@@ -1343,6 +1343,18 @@ esac
                 host_guest._assert_no_secrets_in_evidence(evidence, ["private-url", "private-password"])
 
 class FirstPublicationDiagnosticTests(unittest.TestCase):
+    def test_phase_timeout_code_survives_a_killed_subprocess(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            output = (b"1\nqualification phase browser and client setup failed [TIMEOUT]: "
+                      b"pull qualification browser: signal: killed")
+            with self.assertRaisesRegex(host_guest.HostGuestError, "first-publication verifier failed"):
+                host_guest._run_first_publication_verifier(
+                    SimpleNamespace(run=lambda *a, **k: output), evidence, "verifier")
+            diagnostic = json.loads((evidence / "first-publication-diagnostic.json").read_text())
+            self.assertEqual(diagnostic["boundaries"], ["browser-pull"])
+            self.assertEqual(diagnostic["causes"], ["phase-timeout"])
+
     def test_stderr_failure_is_classified_without_retaining_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory)

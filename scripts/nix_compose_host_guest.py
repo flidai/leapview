@@ -922,7 +922,7 @@ def _run_first_publication_verifier(guest: SSHGuest, evidence: Path, command: st
     }
     causes = {
         "registry-limit": "toomanyrequests", "deadline": "deadline exceeded",
-        "timeout": "timed out", "permission-denied": "permission denied",
+        "timeout": "timed out", "phase-timeout": "[timeout]", "permission-denied": "permission denied",
         "connection-refused": "connection refused", "dns": "no such host",
         "tls-certificate": "certificate", "disk-full": "no space left on device",
     }
