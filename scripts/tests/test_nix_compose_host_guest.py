@@ -1342,6 +1342,45 @@ esac
             with self.assertRaisesRegex(host_guest.HostGuestError, "credential appeared"):
                 host_guest._assert_no_secrets_in_evidence(evidence, ["private-url", "private-password"])
 
+class FirstPublicationDiagnosticTests(unittest.TestCase):
+    def test_stderr_failure_is_classified_without_retaining_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+
+            def run(command, **_):
+                result = subprocess.run(["bash", "-c", command], capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0)
+                return result.stdout
+
+            command = "printf '%070000d' 0; printf '%s' 'private-credential-xyz pull qualification browser: context deadline exceeded' >&2; exit 7"
+            with self.assertRaisesRegex(host_guest.HostGuestError, "first-publication verifier failed"):
+                host_guest._run_first_publication_verifier(SimpleNamespace(run=run), evidence, command)
+            diagnostic = json.loads((evidence / "first-publication-diagnostic.json").read_text())
+            self.assertEqual(diagnostic["exitCode"], 7)
+            self.assertEqual(diagnostic["outputTailBytes"], 65536)
+            self.assertEqual(diagnostic["boundaries"], ["browser-pull"])
+            self.assertEqual(diagnostic["causes"], ["deadline"])
+            self.assertNotIn(b"private-credential-xyz", b"".join(path.read_bytes() for path in evidence.iterdir()))
+
+    def test_success_keeps_only_bounded_metadata_and_invalid_framing_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            host_guest._run_first_publication_verifier(
+                SimpleNamespace(run=lambda *a, **k: b"0\nprivate-credential-xyz"), evidence, "verifier")
+            diagnostic = json.loads((evidence / "first-publication-diagnostic.json").read_text())
+            self.assertEqual(diagnostic["exitCode"], 0)
+            self.assertEqual(diagnostic["boundaries"], [])
+            self.assertEqual(diagnostic["causes"], [])
+            self.assertNotIn("private-credential-xyz", json.dumps(diagnostic))
+        for output in (b"invalid\nsecret", b"256\nsecret", b"0\n" + b"x" * 65537):
+            with self.subTest(size=len(output)), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory)
+                with self.assertRaisesRegex(host_guest.HostGuestError, "invalid exit status or output bound"):
+                    host_guest._run_first_publication_verifier(
+                        SimpleNamespace(run=lambda *a, **k: output), evidence, "verifier")
+                self.assertEqual(list(evidence.iterdir()), [])
+
+
 class ReadyControllerStatusTests(unittest.TestCase):
     def test_status_runs_only_after_readiness_and_retains_its_real_exit_code(self):
         for exit_code in ("0", "1"):
