@@ -2,6 +2,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,51 @@ class BundledPostgresTests(unittest.TestCase):
         self.assertEqual(value['dataVolume'], 'leapview_leapview-postgres-data')
         self.assertEqual(value['privateNetwork'], 'leapview_postgres-private')
         self.assertFalse(value['publishedPorts'])
+
+    def test_inspection_template_executes_with_docker_json_function(self):
+        go = shutil.which('go')
+        self.assertIsNotNone(go, 'the controller verifier requires a trusted Go toolchain')
+        expected = self.inspection()
+        inspection = {'Id': expected['id'], 'Image': expected['imageID'],
+            'Config': {'Image': expected['configuredImage'], 'Labels': {
+                'com.docker.compose.project': expected['project'],
+                'com.docker.compose.service': expected['service']}},
+            'Name': expected['name'], 'State': {'Status': expected['state']},
+            'HostConfig': {'RestartPolicy': {'Name': expected['restartPolicy']}},
+            'NetworkSettings': {'Ports': expected['ports'], 'Networks': expected['networks']},
+            'Mounts': expected['mounts']}
+        command = shlex.split(bundled.inspection_command('DOCKER_CONFIG=/private'))
+        template = command[command.index('--format') + 1]
+        # Docker inspect uses Go text/template and a single-argument JSON helper.
+        # Execute that contract so malformed nested function calls cannot pass
+        # merely because the generated command contains the expected strings.
+        source = r'''package main
+import (
+    "encoding/json"
+    "os"
+    "text/template"
+)
+func main() {
+    var inspection any
+    if err := json.NewDecoder(os.Stdin).Decode(&inspection); err != nil { panic(err) }
+    functions := template.FuncMap{"json": func(value any) (string, error) {
+        encoded, err := json.Marshal(value)
+        return string(encoded), err
+    }}
+    compiled, err := template.New("inspect").Funcs(functions).Parse(os.Args[1])
+    if err != nil { panic(err) }
+    if err := compiled.Execute(os.Stdout, inspection); err != nil { panic(err) }
+}
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'inspect.go'
+            path.write_text(source)
+            result = subprocess.run([go, 'run', str(path), template],
+                input=json.dumps(inspection), text=True, capture_output=True, timeout=120,
+                env=dict(os.environ, GOTOOLCHAIN='local', CGO_ENABLED='0'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+        self.validate(json.loads(result.stdout))
 
     def test_wrong_image_service_public_listener_or_secret_mount_fail_closed(self):
         original = self.inspection()

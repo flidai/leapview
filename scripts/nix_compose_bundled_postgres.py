@@ -44,8 +44,8 @@ def validate_inspection(value, image, image_id):
 def inspection_command(docker_env):
     fields = {'id': '.Id', 'imageID': '.Image', 'configuredImage': '.Config.Image',
         'name': '.Name', 'state': '.State.Status', 'restartPolicy': '.HostConfig.RestartPolicy.Name',
-        'project': 'index .Config.Labels "com.docker.compose.project"',
-        'service': 'index .Config.Labels "com.docker.compose.service"',
+        'project': '(index .Config.Labels "com.docker.compose.project")',
+        'service': '(index .Config.Labels "com.docker.compose.service")',
         'ports': '.NetworkSettings.Ports', 'networks': '.NetworkSettings.Networks', 'mounts': '.Mounts'}
     template = '{' + ','.join('"' + key + '":{{json ' + expression + '}}' for key, expression in fields.items()) + '}'
     return ('set -eu; id=$(env ' + docker_env + ' docker ps --quiet --no-trunc '
