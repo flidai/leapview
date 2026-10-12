@@ -1332,5 +1332,53 @@ esac
             with self.assertRaisesRegex(host_guest.HostGuestError, "credential appeared"):
                 host_guest._assert_no_secrets_in_evidence(evidence, ["private-url", "private-password"])
 
+class ReadyControllerStatusTests(unittest.TestCase):
+    def test_status_runs_only_after_readiness_and_retains_its_real_exit_code(self):
+        for exit_code in ("0", "1"):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory)
+                events = []
+
+                def run(command, **_):
+                    if "/readyz" in command:
+                        status = "503" if not events else "200"
+                        events.append(status)
+                        return (status + "\n").encode()
+                    self.assertIn("/opt/leapview/current/leapviewctl status", command)
+                    self.assertEqual(events[-1], "200")
+                    events.append("status")
+                    return (exit_code + "\n").encode()
+
+                with patch.object(host_guest.time, "sleep"):
+                    if exit_code == "0":
+                        host_guest._capture_ready_controller_status(
+                            SimpleNamespace(run=run), evidence, "DOCKER_CONFIG=/private", timeout=5)
+                    else:
+                        with self.assertRaisesRegex(host_guest.HostGuestError, "controller status failed"):
+                            host_guest._capture_ready_controller_status(
+                                SimpleNamespace(run=run), evidence, "DOCKER_CONFIG=/private", timeout=5)
+                self.assertEqual(events, ["503", "200", "status"])
+                self.assertEqual((evidence / "public-reboot-readyz.txt").read_text(), "200\n")
+                self.assertEqual((evidence / "controller-status.txt").read_text(), exit_code + "\n")
+
+    def test_unready_application_never_produces_successful_controller_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            commands = []
+
+            def run(command, **_):
+                commands.append(command)
+                return b"503\n"
+
+            with patch.object(host_guest.time, "sleep"), \
+                    patch.object(host_guest.time, "monotonic", side_effect=[0, 0, 2]):
+                with self.assertRaisesRegex(host_guest.HostGuestError, "did not reach 200"):
+                    host_guest._capture_ready_controller_status(
+                        SimpleNamespace(run=run), evidence, "DOCKER_CONFIG=/private", timeout=1)
+            self.assertEqual(len(commands), 1)
+            self.assertIn("/readyz", commands[0])
+            self.assertFalse((evidence / "controller-status.txt").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

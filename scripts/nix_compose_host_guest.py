@@ -785,6 +785,26 @@ def _wait_for_http_status(guest: SSHGuest, *, path: str, expected: str, timeout:
     raise HostGuestError(f"private application {path} did not reach {expected} before timeout")
 
 
+def _capture_ready_controller_status(guest: SSHGuest, evidence: Path, docker_env: str, *, timeout: int) -> None:
+    # Controller status includes /readyz. A private first install deliberately
+    # returns 503 until the first publication, so qualify status after the
+    # published application has recovered from its public-phase reboot.
+    _wait_for_http_status(
+        guest, path="/readyz", expected="200", timeout=timeout,
+        evidence=evidence, filename="public-reboot-readyz.txt",
+    )
+    result = guest.run(
+        "set +e; env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview "
+        "/opt/leapview/current/leapviewctl status >/dev/null 2>&1; "
+        "result=$?; printf '%s\\n' \"$result\"; exit 0",
+        timeout=120,
+    )
+    status = _one_line(result, "installed controller status result")
+    _record(evidence, "controller-status.txt", (status + "\n").encode("ascii"))
+    if status != "0":
+        raise HostGuestError("installed controller status failed after published application restart")
+
+
 def _capture_host_install_marker(guest: SSHGuest, evidence: Path, *, filename: str, phase: str,
                                 image: str, target_id: str) -> tuple[dict, bytes]:
     raw = guest.run("cat /opt/leapview/.host-install.json")
@@ -2024,15 +2044,6 @@ def _install_and_collect(args) -> dict:
             guest, path="/readyz", expected="503", timeout=args.startup_timeout,
             evidence=evidence, filename="private-bootstrap-readyz-after-reboot.txt",
         )
-        status_result = guest.run(
-            "set +e; env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview "
-            "/opt/leapview/current/leapviewctl status >/dev/null 2>&1; "
-            "result=$?; printf '%s\\n' \"$result\"; exit \"$result\"",
-            timeout=120,
-        )
-        if _one_line(status_result, "installed controller status result") != "0":
-            raise HostGuestError("installed controller status failed after automatic restart")
-        _record(evidence, "controller-status.txt", b"0\n")
         current_target = _one_line(_record(evidence, "current-generation-link.txt", guest.run("readlink /opt/leapview/current")), "active generation link")
         wrapper_target = _one_line(_record(evidence, "controller-wrapper-link.txt", guest.run("readlink /usr/local/sbin/leapviewctl")), "host controller wrapper link")
         expected_generation = "sha256-" + args.image.rsplit("sha256:", 1)[1]
@@ -2161,10 +2172,7 @@ def _install_and_collect(args) -> dict:
             guest, path="/healthz", expected="200", timeout=args.startup_timeout,
             evidence=evidence, filename="public-reboot-healthz.txt",
         )
-        _wait_for_http_status(
-            guest, path="/readyz", expected="200", timeout=args.startup_timeout,
-            evidence=evidence, filename="public-reboot-readyz.txt",
-        )
+        _capture_ready_controller_status(guest, evidence, docker_env, timeout=args.startup_timeout)
         _wait_for_https_readiness(
             guest, expected="200", timeout=args.startup_timeout, evidence=evidence,
             filename="public-reboot-https-readiness.txt",
