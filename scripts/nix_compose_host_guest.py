@@ -2047,7 +2047,7 @@ def _install_and_collect(args) -> dict:
         current_target = _one_line(_record(evidence, "current-generation-link.txt", guest.run("readlink /opt/leapview/current")), "active generation link")
         wrapper_target = _one_line(_record(evidence, "controller-wrapper-link.txt", guest.run("readlink /usr/local/sbin/leapviewctl")), "host controller wrapper link")
         expected_generation = "sha256-" + args.image.rsplit("sha256:", 1)[1]
-        if current_target != "releases/" + expected_generation or wrapper_target != "../../../opt/leapview/current/leapviewctl":
+        if current_target != "releases/" + expected_generation or wrapper_target != "../../../opt/leapview/current/leapviewctl-wrapper":
             raise HostGuestError("installed generation or controller wrapper link differs from the image")
         payload_installed_line = _one_line(_record(evidence, "installed-controller-sha256.txt", guest.run(
             "sha256sum /opt/leapview/current/leapviewctl",
@@ -2698,7 +2698,7 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
     expected_generation = "sha256-" + identity["image"].rsplit("sha256:", 1)[1]
     if guest.get("generation") != expected_generation or guest.get("links") != {
         "current": "releases/" + expected_generation,
-        "controllerWrapper": "../../../opt/leapview/current/leapviewctl",
+        "controllerWrapper": "../../../opt/leapview/current/leapviewctl-wrapper",
     }:
         raise HostGuestError("host guest receipt generation or wrapper links do not match the image")
     controllers = guest.get("controllers")

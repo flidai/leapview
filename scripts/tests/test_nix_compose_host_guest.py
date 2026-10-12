@@ -203,7 +203,7 @@ class HostGuestReceiptTests(unittest.TestCase):
             **{key: value for key, value in self.host_marker_private.items()}, "markerSHA256": self.marker_sha,
         }, sort_keys=True).encode() + b"\n")
         self._write("docker-inspect-placeholder.txt", b"unused\n")
-        self.wrapper_target = "../../../opt/leapview/current/leapviewctl"
+        self.wrapper_target = "../../../opt/leapview/current/leapviewctl-wrapper"
         self._write("current-generation-link.txt", (self.current_target + "\n").encode())
         self._write("controller-wrapper-link.txt", (self.wrapper_target + "\n").encode())
         self._write("installed-controller-sha256.txt", (self.oci_sha + "\n").encode())
@@ -598,6 +598,16 @@ class HostGuestReceiptTests(unittest.TestCase):
         invalid["evidenceInventory"] = qualification._qualification_evidence_inventory(self.evidence)
         with self.assertRaisesRegex(host_guest.HostGuestError, "preinstall-boot-id.txt"):
             host_guest._validate_receipt(invalid, self.evidence)
+
+    def test_receipt_rejects_controller_link_that_bypasses_installed_wrapper(self):
+        receipt = self._receipt()
+        self.assertIs(host_guest._validate_receipt(receipt, self.evidence), receipt)
+        raw_binary = "../../../opt/leapview/current/leapviewctl"
+        receipt["guest"]["links"]["controllerWrapper"] = raw_binary
+        self._write("controller-wrapper-link.txt", (raw_binary + "\n").encode())
+        receipt["evidenceInventory"] = qualification._qualification_evidence_inventory(self.evidence)
+        with self.assertRaisesRegex(host_guest.HostGuestError, "wrapper links"):
+            host_guest._validate_receipt(receipt, self.evidence)
 
     def test_receipt_binds_canonical_pool_probe_to_candidate_and_fresh_target(self):
         receipt = self._receipt()
