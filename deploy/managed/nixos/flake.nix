@@ -48,22 +48,30 @@
       nixosModules = {
         app = import ./modules/app.nix;
         database = import ./modules/database.nix;
+        single-host = import ./modules/single-host.nix;
       };
       nixosConfigurations = {
         example-app = mkHost "app";
         example-database = mkHost "database";
+        example-single-host = mkHost "single-host";
       };
-      deploy.nodes = nixpkgs.lib.mapAttrs (name: host: {
-        hostname = host.config.networking.hostName + ".invalid";
-        sshUser = "root";
-        profiles.system = {
-          user = "root";
-          path = deploy-rs.lib.${system}.activate.nixos host;
+      # The example app and database configurations remain useful as isolated
+      # component contracts. V1 deploys only the combined single-host profile.
+      deploy.nodes.example-single-host =
+        let
+          host = self.nixosConfigurations.example-single-host;
+        in
+        {
+          hostname = host.config.networking.hostName + ".invalid";
+          sshUser = "root";
+          profiles.system = {
+            user = "root";
+            path = deploy-rs.lib.${system}.activate.nixos host;
+          };
+          # This confirms activation/connectivity, not database/application health.
+          magicRollback = true;
+          autoRollback = true;
         };
-        # This confirms activation/connectivity, not database/application health.
-        magicRollback = true;
-        autoRollback = true;
-      }) self.nixosConfigurations;
       checks.${system} = deploy-rs.lib.${system}.deployChecks self.deploy // {
         host-contracts = import ./tests/contracts.nix {
           inherit pkgs;
@@ -127,6 +135,10 @@
           inherit pkgs disko;
           host = self.nixosConfigurations.example-app;
           bootMode = "uefi";
+        };
+        single-host-test = import ./tests/single-host.nix {
+          inherit pkgs;
+          module = self.nixosModules.single-host;
         };
       };
       formatter.${system} = pkgs.nixfmt;
