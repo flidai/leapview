@@ -25,7 +25,7 @@ require (
 	github.com/eduardolat/gomponents-lucide v1.5.0
 	github.com/elimity-com/scim v0.0.0-20260506142751-830e1caafcc3
 	github.com/fsnotify/fsnotify v1.6.0
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-chi/httprate v0.15.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/go-cmp v0.7.0
