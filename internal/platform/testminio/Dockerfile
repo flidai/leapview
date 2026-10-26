@@ -1,6 +1,6 @@
 # Source commit from RELEASE.2025-09-07T16-13-09Z; builder toolchain pinned below.
 # Build our disposable test fixture without pulling a prebuilt MinIO image.
-FROM docker.io/library/golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132 AS build
+FROM docker.io/library/golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS build
 WORKDIR /src
 COPY download-modules.sh /usr/local/bin/download-modules
 RUN curl --fail --location --retry 3 https://codeload.github.com/minio/minio/tar.gz/07c3a429bfed433e49018cb0f78a52145d4bedeb -o /tmp/minio.tar.gz \
