@@ -18,4 +18,10 @@
     leapview.database.backupEndpoint = "fsn1.your-objectstorage.com";
     leapview.database.backupRegion = "fsn1";
   };
+  single-host = {
+    networking.hostName = "example-single-host";
+    # The one-host profile reaches PostgreSQL through its pinned Kamal bridge.
+    # A customer inventory supplies the PostgreSQL TLS certificate with IP SAN
+    # 172.30.0.1 and runtime URLs using that address with sslmode=verify-full.
+  };
 }

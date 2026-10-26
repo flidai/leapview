@@ -11,6 +11,17 @@ Bora. The service, infrastructure, database and recovery owners must be named in
 each installation's record before handover; code review does not assign those
 operational responsibilities.
 
+For the Nix deployment project's v1 closeout, use the
+[amended v1 scope record](managed/v1-scope-20261012.md): one VPS runs both
+LeapView and PostgreSQL. Ganesh Kambli is first
+responder, GitHub supplies deployment secrets, and off-host backup storage and
+independent recovery-key custody are explicitly deferred. Mark those portions
+of the installation record as deferred/unproven rather than leaving an implied
+backup guarantee. This scoped project decision does not remove backups from
+existing installations or establish a customer recovery SLA. The broader
+profile adoption criteria below still describe what must be proven before
+claiming those capabilities.
+
 ## Select one adoption boundary
 
 | Target | Qualification required before handover | Operating and recovery instructions |
@@ -20,7 +31,7 @@ operational responsibilities.
 | Public Compose | Exact image and package, protected first publication, public dependency boundaries, compatible upgrade, persistent data and offline recovery; include Nix output qualification when adopting a Nix-built replacement | [Compose runbook](compose/README.md), [qualification](compose/QUALIFICATION.md), [host runbook](host/README.md) |
 | Public site | Exact site image, platform, capacity/topology and recovery receipts; a Nix replacement needs its own build-output qualification | [Manual site operator](kamal-site/README.md), [observation and acceptance](kamal-site/observation.md) |
 | Linux desktop | Exact archive/package hash, native/Electron security and installation/use/upgrade/recovery evidence for the advertised Linux matrix | [Desktop output qualification](../nix/README.md), [desktop runbook](../desktop/README.md) |
-| Managed installation | Exact app image and configuration, accepted deployment/credential decisions, protected two-host installation, host/database/app maintenance, credential lifecycle, coordinated recovery, monitoring and owner-approved eligibility/recovery bounds; add Nix output admission for a Nix image | [Managed host runbook](managed/README.md), [application maintenance](managed/maintenance.md), [remaining profile gates](managed/completion-plan.md) |
+| Managed installation (v1) | Exact app image and single-VPS configuration, installation/update/reboot and failed-update recovery, accepted bounded app maintenance, credential lifecycle and handover evidence; mark split-host and off-host backup/key recovery deferred | [Managed host runbook](managed/README.md), [application maintenance](managed/maintenance.md), [v1 scope](managed/v1-scope-20261012.md) |
 
 Outputs and profiles advance independently. A qualified conventional managed
 image need not wait for a Nix desktop build. Site acceptance does not admit a new

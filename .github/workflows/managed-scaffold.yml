@@ -83,12 +83,15 @@ jobs:
         run: nix fmt -- --check flake.nix inventory.example.nix modules/*.nix tests/*.nix
       - name: Exercise fresh native PostgreSQL role bootstrap
         run: nix develop --no-update-lock-file .#managed-recovery -c task managed:postgres:bootstrap-test
-      - name: Build both locked host closures and deploy-rs checks
+      - name: Build locked single-host and component closures and deploy-rs checks
         working-directory: deploy/managed/nixos
         run: |
           nix build .#nixosConfigurations.example-app.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
           nix build .#nixosConfigurations.example-database.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+          nix build .#nixosConfigurations.example-single-host.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
           nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - name: Exercise single-host database TLS, isolation and reboot persistence
+        run: nix build path:./deploy/managed/nixos#single-host-test --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
       - name: Exercise real Docker forwarding and daemon restart
         run: |
           python3 deploy/managed/nixos/tests/namespace_test.py

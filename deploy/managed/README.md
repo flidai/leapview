@@ -10,14 +10,24 @@ until the lifecycle integration and recovery exercises below are complete.
 
 ## Layout and ownership
 
+For the current v1 project scope, **one VPS runs LeapView and PostgreSQL**.
+Ganesh Kambli is the first responder and
+GitHub is the deployment secret store. Off-host backup storage and independent
+recovery-key custody are deferred; their absence must not be reported as
+successful backup/recovery qualification. See the
+[amended v1 scope record](v1-scope-20261012.md) for the remaining checks and
+the explicit database configuration for this deferral.
+
 | Directory | Owner and purpose | Implemented here |
 |---|---|---|
-| `hetzner/` | OpenTofu: per-customer provider resources | App/database VPSs, private network, restricted public firewalls, deletion protection, mocked plan tests |
-| `nixos/` | NixOS: host services and configuration | Locked inputs, separate host roles, installation disk layout, deploy-rs profiles, configuration checks |
+| `hetzner/` | OpenTofu: historical split-host provider scaffold, deferred for v1 | App/database VPSs, private network, restricted public firewalls, deletion protection, mocked plan tests |
+| `nixos/` | NixOS: host services and configuration | Single-VPS v1 profile, retained component roles, locked inputs, installation disk layout, deploy-rs and configuration checks |
 | `kamal/` | Kamal: application and proxy releases | Pinned Ruby dependencies, native configuration tests, runtime-only secret references and SSE/readiness baseline |
 | Existing [`../compose/`](../compose/README.md) | Public self-hosting | Unchanged; this scaffold does not require self-hosters to adopt NixOS |
 
-OpenTofu provisions two dedicated customer VPSs. NixOS runs Docker on the app host
+The retained OpenTofu scaffold provisions two dedicated customer VPSs and is
+deferred for v1; do not apply it to provision the single-host installation.
+In that historical split-host profile, NixOS runs Docker on the app host
 and PostgreSQL 18/pgBackRest on the database host. Kamal owns application and proxy
 containers. Application state is on PostgreSQL; analytical files stay on the app
 host's SSD. Restic is opt-in for inventoried irreplaceable files, not required for
@@ -26,7 +36,9 @@ customer-scoped grants are separate operator steps.
 
 Scope is x86_64 Hetzner Cloud in Europe. The disk/interface names in the sample
 must be checked against the actual machine. Sizes are examples, not capacity or
-availability promises. Both tiers have one host and no automatic failover.
+availability promises. The v1 profile has one shared failure domain and no
+automatic failover. Historical two-host tests remain component evidence, not a
+requirement to provision a second v1 VPS.
 
 ## Offline validation
 
@@ -54,7 +66,7 @@ bundle exec ruby config_test.rb
 ```
 
 The provider tests use mocks: they do not require a Hetzner token or create servers.
-The host lane now builds both complete host closures, deploy-rs activation checks
+The host lane builds the single-host and both retained component closures, deploy-rs activation checks
 and role assertions from the lockfile. It also tests IPv4/IPv6 forwarding, original
 published ports, private-network isolation and outbound responses in fresh kernel
 namespaces. Neither a closure build nor that network fixture proves that a host
@@ -105,6 +117,9 @@ It does not exercise Disko installation, provider firmware or Hetzner networking
 
 ## Infrastructure and private inventory
 
+The following OpenTofu instructions describe the deferred split-host scaffold.
+The v1 single-host profile below does not require applying it.
+
 Copy the `hetzner/` root into a private operations checkout or consume it as a
 version-pinned module. Supply `HCLOUD_TOKEN` through the protected operator/CI
 environment. Put real customer tfvars, reviewed plans and state outside public Git.
@@ -133,10 +148,50 @@ point and fence the old writer; do not disable these protections casually.
 
 The checked-in `inventory.example.nix` is evaluation-only: its SSH key, bucket and
 `.invalid` deployment names must be replaced. Keep real inventory in a private
-flake consuming the exported `nixosModules.app` and `nixosModules.database` from a
+flake consuming the exported `nixosModules.single-host` from a
 pinned revision. Import disko and `modules/disk.nix` for installation, or provide an
 appropriate customer-owned hardware configuration. Keep a separate stateVersion
 for each installed host; updating nixpkgs is not a stateVersion bump.
+
+### Single-VPS v1 profile
+
+`nixosModules.single-host` combines native PostgreSQL and the existing Docker/Kamal
+application host. The example flake deploys only `example-single-host`; the
+separate app/database configurations remain available for component tests.
+Provide the actual operator keys/CIDRs, public interface, disk and host identity
+in private inventory. A second private NIC or second server is not required.
+
+Before PostgreSQL starts, the host creates and verifies the `kamal` Docker network
+with reserved subnet `172.30.0.0/24`, gateway `172.30.0.1` and bridge
+`br-lv-kamal0`. Check that subnet against existing host/VPN routes before installation.
+An existing `kamal` network with different settings stops activation; the service
+does not remove it or disconnect running containers. Converting an existing
+installation requires a reviewed maintenance operation.
+
+Application database URLs use `172.30.0.1` with `sslmode=verify-full` and the
+existing `/etc/leapview/trust/postgres-ca.crt` trust mount. Supply a server
+certificate with IP SAN `172.30.0.1`. PostgreSQL listens on loopback and that
+bridge gateway; the firewall permits database traffic only from the Kamal bridge
+and PostgreSQL requires TLS and password authentication. The public interface
+does not expose port 5432. Bootstrap the separate database roles using the
+[native PostgreSQL runbook](postgres/README.md) before enrolling the application.
+
+This profile defaults off-host backups to disabled under the recorded v1 deferral.
+Existing backup-enabled installations must keep their explicit configuration.
+Use the bounded maintenance controller described below for application updates.
+The same VPS holds both services and their data; this is not host-loss recovery.
+
+Build the profile and run the isolated database/network/reboot fixture:
+
+```sh
+nix build path:./deploy/managed/nixos#nixosConfigurations.example-single-host.config.system.build.toplevel --no-link --no-update-lock-file -L
+nix build path:./deploy/managed/nixos#single-host-test --no-link --no-update-lock-file -L
+```
+
+The fixture checks verified TLS from a container, rejection from another network,
+Docker restart, PostgreSQL data persistence after reboot and refusal to replace a
+conflicting network. It does not qualify the application
+lifecycle or install anything on the current VPS.
 
 Operator SSH networks require explicit positive prefixes: 1–32 for canonical
 dotted-decimal IPv4 and 1–128 for IPv6 hexadecimal notation. Default routes,
@@ -147,11 +202,11 @@ For a disposable first-host rehearsal:
 
 1. Review the provisioned host identity, SSH fingerprint, disk and interface names.
 2. Build/evaluate the private flake before accessing the host.
-3. Stage TLS/backup credentials via protected runtime files (see below), using
+3. Stage TLS credentials and any explicitly enabled backup credentials via protected runtime files (see below), using
    nixos-anywhere's `--extra-files` support when needed for first activation.
 4. Install using the **locked** nixos-anywhere tool and the private host flake.
    Disko formats the selected disk; use this only on an empty replacement host.
-5. Verify boot, private DHCP addresses, SSH/Tailscale enrollment, mounts, TLS,
+5. Verify boot, the Kamal bridge, SSH/Tailscale enrollment, mounts, TLS,
    PostgreSQL and actual externally reachable ports.
 6. Use the **locked** deploy-rs tool for subsequent reviewed configuration updates.
    Do not rerun installation/disk formatting as an update operation.
@@ -193,6 +248,48 @@ arguments. Stage secret files outside the flake source directory: a `path:` flak
 copies its directory into the Nix store, including Git-ignored files. A `.gitignore`
 is not a secret boundary for Nix. GitHub environment secrets or a protected operator environment deliver
 credentials; deployed services do not fetch GitHub secrets at runtime.
+
+The read-only `managed-recovery-inventory.yml` workflow runs only on protected
+`main` in the `leapview-ephemeral-qualification` environment. It consumes
+`HCLOUD_TOKEN` through GitHub's secrets context for the capacity-read step only.
+The secret may be provided by that environment or the applicable repository or
+organization policy; an absent credential fails before a provider request.
+The workflow uploads only public capacity metadata, never credentials or host
+inventory, and does not create servers or qualify deployment. Infisical login
+and OIDC are not part of this workflow.
+This optional provider inventory workflow is not a prerequisite for single-VPS
+code completion or local guest validation.
+
+### v1 with off-host backups deferred
+
+Keep `leapview.database.backup.enable = true` (the default) for an installation
+with configured, qualified backups. For the explicitly deferred v1 profile,
+set this in its private host module (the explicit single-host profile selects
+this deferred default):
+
+```nix
+leapview.database.backup.enable = false;
+```
+
+In that mode omit `backupBucket`, `backupEndpoint` and `backupRegion`; no
+pgBackRest credentials are needed. The module omits pgBackRest backup jobs,
+WAL archive commands and the backup credential link. It rejects a recovery
+owner or `recoveryRestore` configuration that would imply backup recovery is
+available. PostgreSQL TLS, private access, persistent storage and original-writer
+fencing remain enabled. Leave app-host `leapview.fileBackup.enable` disabled
+unless separately configuring and qualifying retained-file backups.
+
+Disabling backups does not create a recovery point or permit rollback of an
+incompatible database format. Host-generation and compatible application rollback
+checks still apply; off-host restore, PITR and recovery-key retrieval remain
+deferred and unproven. Do not simply omit credentials while leaving archiving
+enabled: failed archive commands can retain WAL indefinitely. Existing
+backup-enabled installations must retain their configured backups and keys.
+
+### Runtime file inventory
+
+The pgBackRest entries apply only when database backups are enabled; the Restic
+entries apply only when retained-file backups are enabled.
 
 | File | Owner/mode | Use |
 |---|---|---|
@@ -314,6 +411,10 @@ uploads and rollback after writes still need end-to-end qualification. The scaff
 qualify and security-review this pair before enabling releases.
 
 ## Next delivery slices
+
+The amended [v1 scope record](v1-scope-20261012.md) controls project completion.
+The broader historical roadmap below includes deferred work and is not a list
+of additional v1 requirements.
 
 The [takeover review and completion plan](completion-plan.md) maps the remaining
 work to the broader Nix roadmap and distinguishes existing rehearsal evidence

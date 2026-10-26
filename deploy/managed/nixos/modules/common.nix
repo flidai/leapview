@@ -46,7 +46,15 @@ in
       type = lib.types.str;
       default = "enp7s0";
     };
-    privateAddress = lib.mkOption { type = lib.types.strMatching "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+"; };
+    privateNetwork.enable =
+      lib.mkEnableOption "a separate private interface for multi-host deployments"
+      // {
+        default = true;
+      };
+    privateAddress = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+");
+      default = null;
+    };
     diskDevice = lib.mkOption {
       type = lib.types.str;
       default = "/dev/sda";
@@ -70,19 +78,27 @@ in
         assertion = cfg.operatorCIDRs != [ ] && builtins.all restrictedCIDR cfg.operatorCIDRs;
         message = "Use restricted operator CIDRs for SSH.";
       }
+      {
+        assertion = !cfg.privateNetwork.enable || cfg.privateAddress != null;
+        message = "A private IPv4 address is required when the separate private interface is enabled.";
+      }
     ];
     networking.useDHCP = false;
     networking.useNetworkd = true;
     # Hetzner x86 virtio devices: confirm these matches during first-host qualification.
-    systemd.network.networks."10-public" = {
-      matchConfig.Name = cfg.publicInterface;
-      networkConfig.DHCP = "ipv4";
-      linkConfig.RequiredForOnline = "routable";
-    };
-    systemd.network.networks."20-private" = {
-      matchConfig.Name = cfg.privateInterface;
-      networkConfig.DHCP = "ipv4";
-      linkConfig.RequiredForOnline = "routable";
+    systemd.network.networks = {
+      "10-public" = {
+        matchConfig.Name = cfg.publicInterface;
+        networkConfig.DHCP = "ipv4";
+        linkConfig.RequiredForOnline = "routable";
+      };
+    }
+    // lib.optionalAttrs cfg.privateNetwork.enable {
+      "20-private" = {
+        matchConfig.Name = cfg.privateInterface;
+        networkConfig.DHCP = "ipv4";
+        linkConfig.RequiredForOnline = "routable";
+      };
     };
     services.openssh = {
       enable = true;

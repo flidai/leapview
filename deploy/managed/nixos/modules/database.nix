@@ -6,6 +6,17 @@
 }:
 let
   cfg = config.leapview.database;
+  kamalNetwork = {
+    name = "kamal";
+    subnet = "172.30.0.0/24";
+    gateway = "172.30.0.1";
+    bridge = "br-lv-kamal0";
+    label = "com.flidai.leapview.managed";
+  };
+  sameHostApp = cfg.appContainerNetwork.enable;
+  appCIDR = if sameHostApp then kamalNetwork.subnet else "${cfg.appAddress}/32";
+  postgresAddress = if sameHostApp then kamalNetwork.gateway else config.leapview.privateAddress;
+  databaseIngressInterface = lib.optionalString sameHostApp "-i ${kamalNetwork.bridge} ";
   fenceRoot = "/var/lib/leapview-recovery";
   promotionRoot = "/var/lib/leapview-recovery-adoption";
   promotionGroup = "leapview-recovery-adoption";
@@ -89,10 +100,29 @@ in
 {
   imports = [ ./common.nix ];
   options.leapview.database = {
-    appAddress = lib.mkOption { type = lib.types.str; };
-    backupBucket = lib.mkOption { type = lib.types.str; };
-    backupEndpoint = lib.mkOption { type = lib.types.str; };
-    backupRegion = lib.mkOption { type = lib.types.str; };
+    appAddress = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+");
+      default = null;
+      description = "The separate application host IPv4 address; unset for the single-host container network profile.";
+    };
+    appContainerNetwork.enable = lib.mkEnableOption "the fixed, isolated Kamal bridge for a same-host application";
+    backup.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable off-host PostgreSQL backups and WAL archiving. Explicitly disable only for an installation whose backup recovery is deferred.";
+    };
+    backupBucket = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+    };
+    backupEndpoint = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+    };
+    backupRegion = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+    };
     recoveryOwner = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -103,12 +133,30 @@ in
   config = {
     assertions = [
       {
+        assertion =
+          !cfg.backup.enable
+          || builtins.all (value: value != null && value != "") [
+            cfg.backupBucket
+            cfg.backupEndpoint
+            cfg.backupRegion
+          ];
+        message = "Enabled PostgreSQL backups require a bucket, endpoint and region.";
+      }
+      {
+        assertion = cfg.backup.enable || (!cfg.recoveryRestore && cfg.recoveryOwner == null);
+        message = "Backup recovery helpers require PostgreSQL backups to be enabled.";
+      }
+      {
         assertion = !cfg.recoveryRestore || cfg.recoveryOwner != null;
         message = "Module-owned restore requires an explicit provisioned recovery owner.";
       }
       {
-        assertion = builtins.match "[0-9.]+" cfg.appAddress != null;
-        message = "Use the application's private IPv4 address.";
+        assertion =
+          if sameHostApp then
+            cfg.appAddress == null && config.virtualisation.docker.enable
+          else
+            cfg.appAddress != null;
+        message = "Set either a separate application address or the same-host Kamal network; same-host mode requires Docker.";
       }
       {
         assertion =
@@ -147,8 +195,10 @@ in
     ];
     # PostgreSQL binds the private IP; wait for that interface on cold boot.
     systemd.services.postgresql = {
-      wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ] ++ lib.optional sameHostApp "leapview-kamal-network.service";
+      requires = lib.optional sameHostApp "leapview-kamal-network.service";
+      after = [ "network-online.target" ] ++ lib.optional sameHostApp "leapview-kamal-network.service";
+      partOf = lib.optional sameHostApp "docker.service";
       # A physical restore must never reactivate the original writer on reboot
       # or during deploy-rs rollback. Only a separately reviewed operator action
       # may remove this recovery fence after replacement is abandoned/fenced.
@@ -167,15 +217,15 @@ in
     systemd.targets.postgresql.wantedBy = lib.mkIf cfg.recoveryRestore (lib.mkForce [ ]);
     environment.systemPackages = [
       fence
-      promote
     ]
+    ++ lib.optionals cfg.backup.enable [ promote ]
     ++ lib.optionals cfg.recoveryRestore [ restore ];
     services.postgresql = {
       enable = true;
       package = pkgs.postgresql_18;
       enableTCPIP = true;
       settings = {
-        listen_addresses = lib.mkForce "127.0.0.1,${config.leapview.privateAddress}";
+        listen_addresses = lib.mkForce "127.0.0.1,${postgresAddress}";
         ssl = true;
         ssl_cert_file = "/var/lib/leapview-postgres-tls/server.crt";
         ssl_key_file = "/var/lib/leapview-postgres-tls/server.key";
@@ -190,15 +240,45 @@ in
         # Promotion/adoption stays loopback-only. Retained runtime and explicit
         # maintenance accounts still require password authentication over TLS.
         hostssl leapview_control,leapview_ducklake all 127.0.0.1/32 scram-sha-256
-        hostssl leapview_control,leapview_ducklake all ${cfg.appAddress}/32 scram-sha-256
+        hostssl leapview_control,leapview_ducklake all ${appCIDR} scram-sha-256
         host all all 0.0.0.0/0 reject
         host all all ::/0 reject
       '';
     };
     networking.firewall.extraCommands = lib.mkAfter ''
-      iptables -A nixos-fw -s ${cfg.appAddress}/32 -d ${config.leapview.privateAddress}/32 -p tcp --dport 5432 -j nixos-fw-accept
+      iptables -A nixos-fw ${databaseIngressInterface}-s ${appCIDR} -d ${postgresAddress}/32 -p tcp --dport 5432 -j nixos-fw-accept
     '';
-    services.pgbackrest = {
+    systemd.services.leapview-kamal-network = lib.mkIf sameHostApp {
+      description = "Create and verify LeapView's persistent same-host application network";
+      wantedBy = [ "multi-user.target" ];
+      requires = [ "docker.service" ];
+      after = [ "docker.service" ];
+      before = [ "postgresql.service" ];
+      partOf = [ "docker.service" ];
+      path = [ config.virtualisation.docker.package ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        set -eu
+        if ! docker network inspect ${kamalNetwork.name} >/dev/null 2>&1; then
+          docker network create --driver bridge \
+            --label ${kamalNetwork.label}=true \
+            --opt com.docker.network.bridge.name=${kamalNetwork.bridge} \
+            --subnet ${kamalNetwork.subnet} \
+            --gateway ${kamalNetwork.gateway} \
+            ${kamalNetwork.name} >/dev/null
+        fi
+        actual="$(docker network inspect --format '{{.Driver}} {{index .Labels "${kamalNetwork.label}"}} {{index .Options "com.docker.network.bridge.name"}} {{range .IPAM.Config}}{{.Subnet}} {{.Gateway}}{{end}}' ${kamalNetwork.name})"
+        expected="bridge true ${kamalNetwork.bridge} ${kamalNetwork.subnet} ${kamalNetwork.gateway}"
+        if [ "$actual" != "$expected" ]; then
+          echo "Existing Kamal network does not match the reviewed single-host contract" >&2
+          exit 1
+        fi
+      '';
+    };
+    services.pgbackrest = lib.mkIf cfg.backup.enable {
       enable = true;
       repos.customer = {
         type = "s3";
@@ -226,14 +306,15 @@ in
     };
     # External runtime file; no credential values are evaluated into the Nix store.
     # pgBackRest reads *.conf from its default /etc/pgbackrest/conf.d directory.
-    environment.etc."pgbackrest/conf.d/credentials.conf".source =
-      "/var/lib/leapview-backup-secrets/pgbackrest.conf";
+    environment.etc."pgbackrest/conf.d/credentials.conf" = lib.mkIf cfg.backup.enable {
+      source = "/var/lib/leapview-backup-secrets/pgbackrest.conf";
+    };
     systemd.tmpfiles.rules = [
       "d ${fenceRoot} 0700 root root -"
       "d ${promotionRoot} 0750 root ${promotionGroup} -"
       "d /var/lib/leapview-postgres-tls 0700 postgres postgres -"
-      "d /var/lib/leapview-backup-secrets 0750 root pgbackrest -"
-    ];
+    ]
+    ++ lib.optionals cfg.backup.enable [ "d /var/lib/leapview-backup-secrets 0750 root pgbackrest -" ];
     # Application roles/schema/passwords must use the qualified lifecycle adapter;
     # do not run the development init.sh or create permissive default users here.
   };
