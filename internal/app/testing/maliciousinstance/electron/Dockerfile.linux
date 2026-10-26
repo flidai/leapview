@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.3-debian@sha256:923bedb355f7746666659f71e724998159a5c8c54bd1cb1030e1975a0698415b AS electron
+FROM oven/bun:1.4.4-debian@sha256:93d5032fe06d163427822dc1598f420363759bb18155c9cc90eb1be05a64a19e AS electron
 
 WORKDIR /proof
 COPY internal/app/testing/maliciousinstance/electron/package.json ./
@@ -6,7 +6,7 @@ COPY internal/app/testing/maliciousinstance/electron/bun.lock ./
 RUN bun install --frozen-lockfile \
     && node node_modules/electron/install.js
 
-FROM golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132
+FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
