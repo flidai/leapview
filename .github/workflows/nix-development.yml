@@ -141,11 +141,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: 3.13.14
       - name: Install locked Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -207,7 +207,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install locked Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -254,7 +254,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install locked Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -313,7 +313,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install locked Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -367,7 +367,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Install locked scanner tools
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -475,7 +475,7 @@ jobs:
       - name: Configure hosted Docker pulls
         uses: ./.github/actions/setup-docker
       - name: Install Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -555,7 +555,7 @@ jobs:
       - name: Configure hosted Docker pulls
         uses: ./.github/actions/setup-docker
       - name: Install Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |

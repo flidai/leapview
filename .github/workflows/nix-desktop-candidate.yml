@@ -69,7 +69,7 @@ jobs:
           ref: ${{ inputs.source_revision }}
           persist-credentials: false
       - name: Install pinned Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -121,7 +121,7 @@ jobs:
           ref: ${{ inputs.source_revision }}
           path: source
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: 3.13.14
       - name: Set up Bun and Go from protected inputs
@@ -223,7 +223,7 @@ jobs:
           path: source
           persist-credentials: false
       - name: Install pinned protected Nix tools
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -310,7 +310,7 @@ jobs:
           path: source
           persist-credentials: false
       - name: Install pinned protected Nix tools
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |

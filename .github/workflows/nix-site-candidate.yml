@@ -68,7 +68,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install Nix
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -139,7 +139,7 @@ jobs:
           merge-multiple: true
           path: candidate
       - name: Install protected Nix tools
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -258,7 +258,7 @@ jobs:
           merge-multiple: true
           path: candidate
       - name: Install protected Nix tools
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -296,7 +296,7 @@ jobs:
             --source-revision "$SOURCE_REVISION" --protected-revision "$GITHUB_SHA" \
             --source-root source --protected-root protected --pull-requests "$pull_requests"
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -409,7 +409,7 @@ jobs:
           merge-multiple: true
           path: bindings
       - name: Install protected Nix tools
-        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
           extra_nix_config: |
@@ -453,7 +453,7 @@ jobs:
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --image "$IMAGE" --signer-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/nix-site-final-verified.json"
       - name: Log in with read-only package access
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
