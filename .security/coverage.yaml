@@ -147,8 +147,8 @@ surfaces:
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}
     scanners: [trivy]
     images:
-      - golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132
-      - oven/bun:1.4.3-debian@sha256:923bedb355f7746666659f71e724998159a5c8c54bd1cb1030e1975a0698415b
+      - golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5
+      - oven/bun:1.4.4-debian@sha256:93d5032fe06d163427822dc1598f420363759bb18155c9cc90eb1be05a64a19e
 
   - path: .github/examples/leapview-authoring.yml
     kind: github-actions
