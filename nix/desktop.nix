@@ -15,8 +15,8 @@ let
   nodeVersion = releasePolicy.runtime.node;
   electronArchive = pkgs.fetchurl {
     url = "https://github.com/electron/electron/releases/download/v${electronVersion}/electron-v${electronVersion}-linux-x64.zip";
-    # SHA-256 checked against the official v44.4.3 SHASUMS256.txt release file.
-    hash = "sha256-/ogKfjcWDP1OABk7xMcT6teneKv+dIYKLTbYb9C+SKg=";
+    # SHA-256 checked against the official v44.9.1 SHASUMS256.txt release file.
+    hash = "sha256-mUvDZkzDrFW1DCGljTRc+DIgA9N/VDmoGAHjJn5hReI=";
   };
   # Nix rejects real setuid chmod. Keep MakerDeb's chmod and archive writer in
   # one fake metadata session; its inner fakeroot invocation cannot nest.

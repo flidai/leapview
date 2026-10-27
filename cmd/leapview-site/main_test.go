@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"net"
+	"syscall"
+	"testing"
+)
 
 func TestParseBaseURL(t *testing.T) {
 	for _, test := range []struct {
@@ -76,5 +82,17 @@ func TestParseShowcaseEmbedURL(t *testing.T) {
 		if got.String() != test.want {
 			t.Errorf("parseShowcaseEmbedURL(%q) = %q, want %q", test.raw, got, test.want)
 		}
+	}
+}
+
+func TestRunReportsOccupiedListener(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	err = run(context.Background(), listener.Addr().String(), nil, nil, "")
+	if !errors.Is(err, syscall.EADDRINUSE) {
+		t.Fatalf("run error = %v, want address already in use", err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -101,10 +102,16 @@ func run(ctx context.Context, address string, baseURL, showcaseEmbedURL *url.URL
 		IdleTimeout: 2 * time.Minute,
 	}
 
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("listen for public site: %w", err)
+	}
+	defer listener.Close()
+
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Printf("LeapView site listening on %s", address)
-		serverErrors <- server.ListenAndServe()
+		log.Printf("LeapView site listening on %s", listener.Addr())
+		serverErrors <- server.Serve(listener)
 	}()
 
 	select {

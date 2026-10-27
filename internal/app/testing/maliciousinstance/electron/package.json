@@ -6,10 +6,10 @@
     "test": "node --test policy.test.mjs manifest-proof.test.mjs proof-lifecycle.test.mjs result-file.test.mjs storage-diagnostics.test.mjs"
   },
   "devDependencies": {
-    "electron": "44.4.3"
+    "electron": "44.9.1"
   },
   "overrides": {
-    "undici": "7.29.1"
+    "undici": "7.30.1"
   },
   "trustedDependencies": [
     "electron"

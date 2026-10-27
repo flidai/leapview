@@ -6,8 +6,7 @@ import { startSiteTestServer, type SiteTestServer } from './test_server'
 // site.dom.test.ts so that file stays inside the engineering quality budget,
 // and run as its own bun process by the ci:test:frontend:site task because each
 // Playwright site file owns a browser and a site server.
-const sitePort = 30000 + (process.pid % 10000)
-const baseURL = `http://127.0.0.1:${sitePort}`
+let baseURL: string
 let browser: Browser
 let siteServer: SiteTestServer | undefined
 const siteReadyTimeout = 60_000
@@ -15,8 +14,8 @@ const siteReadyTimeout = 60_000
 beforeAll(async () => {
   const startupDeadline = Date.now() + siteReadyTimeout
   try {
-    siteServer = await startSiteTestServer(sitePort, startupDeadline)
-    await waitForSite(siteServer.process, startupDeadline)
+    siteServer = await startSiteTestServer(0, startupDeadline)
+    baseURL = siteServer.baseURL
     browser = await chromium.launch()
   } catch (error) {
     await siteServer?.stop()
@@ -33,21 +32,6 @@ afterAll(async () => {
   }
 })
 
-async function waitForSite(siteProcess: Bun.Subprocess, deadline: number): Promise<void> {
-  while (Date.now() < deadline) {
-    if (siteProcess.exitCode !== null) {
-      throw new Error(`LeapView site exited before becoming ready (code ${siteProcess.exitCode})`)
-    }
-    try {
-      const response = await fetch(baseURL)
-      if (response.ok) return
-    } catch {
-      // The directly spawned site is still binding its listener.
-    }
-    await Bun.sleep(100)
-  }
-  throw new Error('LeapView site did not become ready')
-}
 
 test('mobile menu offers the hosted demo', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
