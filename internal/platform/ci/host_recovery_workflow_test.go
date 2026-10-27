@@ -83,7 +83,7 @@ func TestIsolatedHostRecoveryQualificationIsARequiredReusableContract(t *testing
 	if recovery.Name != "Isolated host recovery and migration boundary contracts" || recovery.If != "${{ !inputs.final_artifact }}" || recovery.TimeoutMinutes != "45" {
 		t.Fatal("qualification must run as a bounded required host recovery contract")
 	}
-	if len(recovery.Steps) != 4 || recovery.Steps[0].Name != "Check out the candidate" || recovery.Steps[1].Name != "Set up the pinned toolchain" || recovery.Steps[2].Uses != "docker/login-action@dbcb813823bdd20940b903addbd779551569679f" || recovery.Steps[3].Run != "task test:qualification:demo-host-recovery" {
+	if len(recovery.Steps) != 4 || recovery.Steps[0].Name != "Check out the candidate" || recovery.Steps[1].Name != "Set up the pinned toolchain" || recovery.Steps[2].Uses != "docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6" || recovery.Steps[3].Run != "task test:qualification:demo-host-recovery" {
 		t.Fatal("reusable qualification must run the canonical Taskfile contract")
 	}
 	historical := workflow.Jobs["historical-transition"]
@@ -93,7 +93,7 @@ func TestIsolatedHostRecoveryQualificationIsARequiredReusableContract(t *testing
 	var historicalLogin, requiredTransition, finalAdmission, localImage, receiptUpload bool
 	for _, step := range historical.Steps {
 		switch {
-		case step.Uses == "docker/login-action@dbcb813823bdd20940b903addbd779551569679f" && step.If == "":
+		case step.Uses == "docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6" && step.If == "":
 			historicalLogin = true
 		case step.Name == "Run the required historical transition fixture":
 			requiredTransition = step.Run == "task test:qualification:historical-transition" &&
