@@ -4,10 +4,11 @@ import { X } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import { mountVisualFocus, restoreVisualFocus, visualSourceFromEvent, type VisualFocusMount } from './visual-modal-focus'
 import { visualDataActionNotice, visualDataSummary, visualDataToDelimited } from './visual-modal-actions'
+import { downloadBlob, fileSlug, imageExtension } from '../shared/download'
 import '../shared/record-table'
 import type { VisualizationHost } from './visualization/host'
 
-type VisualActionName = 'focus' | 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'
+type VisualActionName = 'focus' | 'show-data' | 'copy-data' | 'export-csv' | 'download-image' | 'clear-selection'
 
 type VisualColumn = {
   key: string
@@ -360,7 +361,12 @@ export class VisualModal extends LitElement {
 
   private handleVisualAction = (event: CustomEvent<VisualActionDetail>): void => {
     const detail = event.detail
-    if (!detail || detail.action === 'clear-selection') return
+    if (!detail) return
+    if (detail.action === 'download-image') {
+      void this.downloadImage(detail, event)
+      return
+    }
+    if (detail.action === 'clear-selection') return
     if (detail.action === 'copy-data') {
       void this.copy(detail)
       return
@@ -526,16 +532,23 @@ export class VisualModal extends LitElement {
     area.remove()
   }
 
+  private async downloadImage(detail: VisualActionDetail, event: Event): Promise<void> {
+    const source = visualSourceFromEvent(event) as (HTMLElement & Pick<VisualizationHost, 'snapshot'>) | null
+    if (!source || typeof source.snapshot !== 'function') return
+    try {
+      const blob = await source.snapshot()
+      const extension = imageExtension(blob.type)
+      if (!extension) throw new Error(`snapshot type ${blob.type || 'unknown'} is not an image`)
+      downloadBlob(blob, `${fileSlug(detail.title || detail.visualId || 'visual')}.${extension}`)
+      this.flash(`Downloaded ${detail.title || 'visual'} image.`)
+    } catch (error) {
+      this.flash(`Could not download this image. ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   private exportCSV(detail: VisualActionDetail): void {
     const blob = new Blob([visualDataToDelimited(detail, ',')], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${slug(detail.title || detail.visualId || 'visual')}.csv`
-    document.body.append(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, `${fileSlug(detail.title || detail.visualId || 'visual')}.csv`)
     this.flash(visualDataActionNotice(detail, 'export-csv'))
   }
 
@@ -547,11 +560,6 @@ export class VisualModal extends LitElement {
       this.noticeTimer = undefined
     }, 1800)
   }
-}
-
-function slug(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-  return normalized || 'visual'
 }
 
 customElements.define('lv-visual-modal', VisualModal)
