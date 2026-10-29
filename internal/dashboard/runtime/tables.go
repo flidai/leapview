@@ -916,39 +916,61 @@ func sortAggregateTableRows(rows []map[string]any, tableSort dashboard.TableSort
 	if tableSort.Key == "" {
 		return
 	}
+	type sortableRow struct {
+		row map[string]any
+		key aggregateTableSortKey
+	}
+	sorted := make([]sortableRow, len(rows))
+	for index, row := range rows {
+		sorted[index] = sortableRow{row: row, key: newAggregateTableSortKey(row[tableSort.Key])}
+	}
 	direction := tableSort.Direction
-	sort.SliceStable(rows, func(i, j int) bool {
-		cmp := compareTableValues(rows[i][tableSort.Key], rows[j][tableSort.Key])
+	sort.SliceStable(sorted, func(i, j int) bool {
+		cmp := sorted[i].key.compare(sorted[j].key)
 		if direction == "desc" {
 			return cmp > 0
 		}
 		return cmp < 0
 	})
+	for index := range sorted {
+		rows[index] = sorted[index].row
+	}
 }
 
-func compareTableValues(a, b any) int {
-	aFloat, aNumeric := numericTableValue(a)
-	bFloat, bNumeric := numericTableValue(b)
-	if aNumeric && bNumeric {
+// aggregateTableSortKey caches the comparison form of one cell. Formatting and parsing
+// a value once per row keeps a large table sort from rebuilding the same text
+// keys on every comparison.
+type aggregateTableSortKey struct {
+	numeric   float64
+	isNumeric bool
+	text      string
+}
+
+func newAggregateTableSortKey(value any) aggregateTableSortKey {
+	numeric, ok := numericTableValue(value)
+	return aggregateTableSortKey{numeric: numeric, isNumeric: ok, text: aggregateTableSortText(value)}
+}
+
+func (key aggregateTableSortKey) compare(other aggregateTableSortKey) int {
+	if key.isNumeric && other.isNumeric {
 		switch {
-		case aFloat < bFloat:
+		case key.numeric < other.numeric:
 			return -1
-		case aFloat > bFloat:
+		case key.numeric > other.numeric:
 			return 1
 		default:
 			return 0
 		}
 	}
-	aText := strings.ToLower(fmt.Sprint(a))
-	bText := strings.ToLower(fmt.Sprint(b))
-	switch {
-	case aText < bText:
-		return -1
-	case aText > bText:
-		return 1
-	default:
-		return 0
+	return strings.Compare(key.text, other.text)
+}
+
+func aggregateTableSortText(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		text = fmt.Sprint(value)
 	}
+	return strings.ToLower(text)
 }
 
 func numericTableValue(value any) (float64, bool) {
