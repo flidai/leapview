@@ -540,15 +540,18 @@ export class VisualizationHost extends LitElement {
     const envelope = this.envelope
     if (!envelope) return null
     const dataActions = supportsHostDataActions(envelope)
-    if (!dataActions && !this.exploreHref) return null
+    const header = visualizationSharedHeader(envelope)
+    const imageAction = header === 'chart' || header === 'map'
+    if (!dataActions && !this.exploreHref && !imageAction) return null
     return html`<div class="visual-options">
       <button class="options-trigger" type="button" aria-label="Visual options" aria-haspopup="menu" aria-expanded=${String(this.optionsOpen)} popovertarget="visual-options-menu" title="Visual options" @click=${this.toggleOptions} @keydown=${this.optionsTriggerKeydown}>${lucideIcon(EllipsisVertical)}</button>
       <div id="visual-options-menu" class="menu" popover="auto" role="menu" aria-label="Visualization actions" @toggle=${this.optionsToggled} @keydown=${this.optionsKeydown}>
         ${dataActions ? html`<button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>` : null}
         ${this.exploreHref ? html`<a role="menuitem" href=${this.exploreHref}>${visualMenuIcon('explore')}<span>Explore</span></a>` : null}
         ${dataActions ? html`<button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
-        <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
-        ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" ?disabled=${this.selectionClearPending} title=${this.selectionClearPending ? 'Available when dashboard refresh finishes' : ''} @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}` : null}
+        <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>` : null}
+        ${imageAction ? html`<button type="button" role="menuitem" @click=${() => this.runAction('download-image')}>${visualMenuIcon('download-image')}<span>Download image</span></button>` : null}
+        ${dataActions && envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" ?disabled=${this.selectionClearPending} title=${this.selectionClearPending ? 'Available when dashboard refresh finishes' : ''} @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
       </div>
     </div>`
   }
@@ -628,13 +631,15 @@ export class VisualizationHost extends LitElement {
     }))
   }
 
-  private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {
+  private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection' | 'download-image'>): void {
     const envelope = this.envelope
-    if (!envelope || !supportsHostDataActions(envelope)) return
+    if (!envelope) return
+    const imageOnly = action === 'download-image'
+    if (!imageOnly && !supportsHostDataActions(envelope)) return
     if (action === 'clear-selection' && this.selectionClearPending) return
     this.closeOptions()
     this.renderRoot.querySelector<HTMLElement>('.options-trigger')?.focus({ preventScroll: true })
-    const data = exportVisualizationData(envelope, this.rendererContext())
+    const data = imageOnly ? { columns: [], rows: [], totalRows: 0, truncated: false } : exportVisualizationData(envelope, this.rendererContext())
     const metadata = resolveVisualizationMetadata(envelope)
     if (action === 'clear-selection') {
       const command = clearInteractionCommand(envelope)
