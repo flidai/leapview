@@ -1,6 +1,6 @@
 # Patroni is built locally so its PostgreSQL base and Python dependencies are
 # explicit and reviewable. The runner always rebuilds this disposable image.
-FROM docker.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+FROM docker.io/library/postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
 
 COPY requirements.lock /tmp/requirements.lock
 RUN apk add --no-cache 'python3=3.14.7-r1' \
