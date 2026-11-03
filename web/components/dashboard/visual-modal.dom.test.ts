@@ -610,6 +610,47 @@ test('show-data balances small result tables and preserves scrolling for wide re
   }
 })
 
+test('download image saves the source snapshot under the visual title', async () => {
+  const page = await setupPage()
+  try {
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+    await page.evaluate((bytes) => {
+      ;(document.getElementById('first') as any).snapshot = async () => new Blob([new Uint8Array(bytes)], { type: 'image/png' })
+    }, png)
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      dispatchVisualAction(page, 'first', 'download-image'),
+    ])
+    expect(download.suggestedFilename()).toBe('first.png')
+    expect(await page.locator('lv-visual-modal').evaluate((modal: any) => modal.notice)).toBe('Downloaded first image.')
+    await page.evaluate(() => {
+      ;(document.getElementById('first') as any).snapshot = async () => new Blob(['<svg/>'], { type: 'image/svg+xml' })
+    })
+    const [svg] = await Promise.all([
+      page.waitForEvent('download'),
+      dispatchVisualAction(page, 'first', 'download-image'),
+    ])
+    expect(svg.suggestedFilename()).toBe('first.svg')
+  } finally {
+    await page.close()
+  }
+})
+
+test('download image reports snapshots that are not images', async () => {
+  const page = await setupPage()
+  try {
+    await page.evaluate(() => {
+      ;(document.getElementById('first') as any).snapshot = async () => new Blob(['rows'], { type: 'text/plain' })
+    })
+    await dispatchVisualAction(page, 'first', 'download-image')
+    await browserExpect.poll(async () => page.locator('lv-visual-modal').evaluate((modal: any) => modal.notice))
+      .toBe('Could not download this image. snapshot type text/plain is not an image')
+    await browserExpect(page.locator('lv-visual-modal [role="status"]')).toHaveText('Could not download this image. snapshot type text/plain is not an image')
+  } finally {
+    await page.close()
+  }
+})
+
 test('a previous action timer cannot clear a newer repeated notice', async () => {
   const page = await setupPage()
   try {

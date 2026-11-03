@@ -4,6 +4,7 @@ import { Change, defaultRendererContext, normalizeRendererLocale, type RendererA
 import { clearInteractionCommand, interactionCommandForRow } from '../interaction-command'
 import { projectVisualizationHighlights } from '../highlight'
 import { baseOption } from './echarts/common'
+import { dataURLToBlob } from './echarts/data-url'
 import { waitForEChartsFrame } from './echarts/readiness'
 export { EChartsReadinessError, waitForEChartsFrame } from './echarts/readiness'
 import { CategoryColorRegistry, categoryColorRegistryFor, categoryIdentity } from './echarts/category-colors'
@@ -332,19 +333,9 @@ export class EChartsHandle implements RendererHandle {
   async snapshot(): Promise<Blob> {
     const dataURL = this.chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' })
     // SVG renderers return an SVG data URL even when the requested type is
-    // PNG. Fetching that URL can be blocked by the page's CSP, so decode it
-    // locally and preserve its actual media type.
-    if (dataURL.startsWith('data:image/svg+xml')) {
-      const comma = dataURL.indexOf(',')
-      if (comma < 0) throw new Error('invalid ECharts SVG snapshot')
-      const payload = dataURL.slice(comma + 1)
-      const bytes = dataURL.slice(0, comma).includes(';base64')
-        ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
-        : decodeURIComponent(payload)
-      return new Blob([bytes], { type: 'image/svg+xml' })
-    }
-    const response = await fetch(dataURL)
-    return response.blob()
+    // PNG. Decode every data URL locally: the product CSP only allows
+    // connect-src 'self', so fetch() cannot read a data: URL.
+    return dataURLToBlob(dataURL)
   }
 
   dispose(): void {

@@ -229,7 +229,7 @@ Deleted fields, unknown datasets, incompatible reducers, unsupported mark/featur
 
 ## Accessible visual data
 
-Inline charts offer **Show data**, **Copy data**, and **Export CSV** for a bounded preview of up to 100 rows. Multi-dataset visuals, including KPI comparison, goal, and trend data, identify each dataset explicitly and keep its fields separate; rows are not joined across datasets. The row limit applies across all datasets in declared order. The preview and action notices report omitted rows and partial or truncated source data. Server-backed tables and tiled maps use their own data-access surfaces instead of these inline actions.
+Inline charts offer **Show data**, **Copy data**, and **Export CSV** for a bounded preview of up to 100 rows. Multi-dataset visuals, including KPI comparison, goal, and trend data, identify each dataset explicitly and keep its fields separate; rows are not joined across datasets. The row limit applies across all datasets in declared order. The preview and action notices report omitted rows and partial or truncated source data. Server-backed tables and tiled maps use their own data-access surfaces instead of these inline actions. Charts and maps also offer **Download image**, which saves the rendered visual under the visual title as a PNG, or as an SVG when the editor preview renders SVG.
 
 ## Change over time
 
