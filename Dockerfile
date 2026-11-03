@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM node:26-bookworm@sha256:5c4012d11d9857c42713ba511fbc19645cac1706bb710d51d42b0d301dff7f88 AS node
+FROM node:26-bookworm@sha256:fa52d1669505e29b58c042875b1d65c229e0787a3610fd52869b22b68e480853 AS node
 
 # A caller may override this empty stage with a named build context containing
 # basemap.pmtiles. The generator verifies the pinned digest before accepting it.
 FROM scratch AS mapassetseed
 
-FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS go-deps
+FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS go-deps
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -183,7 +183,7 @@ RUN set -eu; \
       install -m 0644 "$control_dir/md5sums" "/out/runtime-security/var/lib/dpkg/status.d/$package.md5sums"; \
     done
 
-FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:1b89bf5fd2bce2d4bd25bcf083c6da90178d2cd06bfb75dc3a66bc5c3eb6c3e7 AS runtime-base
+FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:8b33d821344902366f6ac0fd2cabf4c39d5b98abe37ebc9eb8c35943f8ede923 AS runtime-base
 COPY --from=runtime-security-update /out/runtime-security/ /
 
 FROM runtime-base AS runtime
