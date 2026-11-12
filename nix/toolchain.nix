@@ -8,7 +8,7 @@ let
   );
   bunVersion = pkgs.lib.removePrefix "bun@" manifest.packageManager;
   # Keep the locked Nix packaging and host-data patches while taking the official
-  # security releases for GO-2026-6809. Hashes are from go.dev/dl/?mode=json.
+  # security releases for GO-2026-6859. Hashes are from go.dev/dl/?mode=json.
   patchedGo =
     package: version: hash:
     package.overrideAttrs {
@@ -19,8 +19,8 @@ let
       };
     };
   go =
-    assert goVersion == "1.27.3";
-    patchedGo pkgs.go_1_27 goVersion "sha256-bndJA1zzYPBrJXXRYup535/ajvZxiJ5cN1+OUHd/Jrs=";
+    assert goVersion == "1.27.4";
+    patchedGo pkgs.go_1_27 goVersion "sha256-c8+4VxrsDAEXdofbhxY9Rqog6XeWcncokaoXZU2aYJk=";
   bunArtifact =
     if pkgs.stdenv.hostPlatform.isx86_64 then
       {

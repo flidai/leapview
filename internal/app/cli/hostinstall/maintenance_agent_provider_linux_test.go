@@ -245,7 +245,7 @@ func TestAgentProviderPrivateConfigContainer(t *testing.T) {
 	if copyErr != nil || closeErr != nil {
 		t.Fatal("fixture executable copy failed")
 	}
-	const base = "docker.io/library/golang@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132"
+	const base = "docker.io/library/golang@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea"
 	dockerfile := "FROM " + base + "\nCOPY fixture /fixture\nCOPY leapviewctl /usr/local/libexec/leapviewctl\nENV LEAPVIEW_AGENT_RELAY_COMMAND_HELPER=1\nUSER 999:999\n"
 	if os.WriteFile(filepath.Join(build, "Dockerfile"), []byte(dockerfile), 0600) != nil || os.WriteFile(filepath.Join(build, "leapviewctl"), []byte("#!/bin/sh\nexec /fixture -test.run=^TestAgentRelayProductionCommandHelper$ -- \"$@\"\n"), 0755) != nil {
 		t.Fatal("fixture image setup failed")

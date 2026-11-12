@@ -121,7 +121,7 @@ func TestAgentRelayDockerIsolation(t *testing.T) {
 		raw, err := cmd.CombinedOutput()
 		return strings.TrimSpace(string(raw)), err
 	}
-	image := "docker.io/library/golang@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132"
+	image := "docker.io/library/golang@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea"
 	prefix := fmt.Sprintf("leapview-agent-relay-test-%d-%d", os.Getpid(), time.Now().UnixNano())
 	containers := []string{prefix + "-provider", prefix + "-app", prefix + "-other"}
 	defer func() {
