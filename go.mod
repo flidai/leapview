@@ -1,6 +1,6 @@
 module github.com/flidai/leapview
 
-go 1.27.3
+go 1.27.4
 
 replace github.com/Yacobolo/toolbelt/apigen => ./pkg/apigen
 
@@ -64,13 +64,13 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0
 	golang.org/x/image v0.45.0
 	golang.org/x/mod v0.41.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
-	golang.org/x/text v0.42.0
-	golang.org/x/tools v0.50.0
+	golang.org/x/text v0.43.0
+	golang.org/x/tools v0.51.0
 	gopkg.in/yaml.v3 v3.0.1
 	maragu.dev/gomponents v1.3.0
 	maragu.dev/gomponents-datastar v0.3.3
@@ -81,7 +81,7 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/CAFxX/httpcompression v0.0.9 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/andybalholm/brotli v1.2.1 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/apache/thrift v0.24.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 // indirect
@@ -148,7 +148,7 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
-	github.com/klauspost/compress v1.18.7 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
@@ -219,9 +219,9 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
-	golang.org/x/telemetry v0.0.0-20260908163034-4bcc4b2ee518 // indirect
+	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
