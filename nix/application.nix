@@ -106,7 +106,7 @@ pkgs.stdenv.mkDerivation {
     # Nix candidates export Linux binaries with a glibc 2.38 ABI baseline.
     # Keep the standard Dockerfile candidate's Debian client fixture unchanged.
     substituteInPlace "$out/share/leapview/deploy/compose/qualification/Dockerfile.authoring-client" \
-      --replace-fail 'FROM docker.io/library/debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8' \
+      --replace-fail 'FROM docker.io/library/debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc' \
       'FROM docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3'
 
   '';
