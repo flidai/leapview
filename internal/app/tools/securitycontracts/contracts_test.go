@@ -486,7 +486,7 @@ func TestSASTWorkflowPreparesEachWorkspaceAndRetainsFailureDiagnostics(t *testin
 		t.Fatal("SAST must prepare each workspace")
 	}
 	init := job.Steps[indices["Initialize selected CodeQL analysis"]]
-	if init.ID != "codeql_init" || init.Uses != "github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370" {
+	if init.ID != "codeql_init" || init.Uses != "github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066" {
 		t.Fatal("review extraction assumptions when changing the action")
 	}
 	analyze := job.Steps[indices["Analyze selected source language"]]
